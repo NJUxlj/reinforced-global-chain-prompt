@@ -77,6 +77,7 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 3. bert-base-uncased
 4. GPT4o
 
+
 ### 评价指标
 在评估模型在多项选择题回答任务上的性能时，常用的评价指标由以下几种：
 
@@ -99,6 +100,20 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 - [Evaluating QA: Metrics, Predictions, and the Null Response](https://qa.fastforwardlabs.com/no%20answer/null%20threshold/bert/distilbert/exact%20match/f1/robust%20predictions/2020/06/09/Evaluating_BERT_on_SQuAD.html)
 - [Evaluation metrics for multiple correct answers in QA problem system](https://stackoverflow.com/questions/64112565/evaluation-metrics-for-multiple-correct-answers-in-qa-problem-system)
 - [NLP Question Answering Mastery: Evaluation Metrics and Methods](https://gpttutorpro.com/nlp-question-answering-mastery-evaluation-metrics-and-methods-for-question-answering/)
+
+
+## 推送项目到仓库
+```shell
+git add .
+git rm -rf --cached save data ... 文件夹名
+git commit -m 'xxxxx'
+git push
+```
+
+
+## 运行项目
+main.py
+
 
 
 ## 实验结果
