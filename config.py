@@ -1,6 +1,7 @@
 import torch
 
 Config = {
+    "output_dir":"./output",
     "vocab":"data/chars.txt",
     "hidden_size": 256,
     "num_layers": 4,
