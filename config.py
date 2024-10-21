@@ -2,6 +2,8 @@ import torch
 
 Config = {
     "output_dir":"./output",
+    "logging_dir":"./logs",
+    "save_model_dir": "./save/model.pth",
     "vocab":"data/chars.txt",
     "train_data_path": "data/train.csv",
     "test_data_path": "data/test.csv",
@@ -100,5 +102,10 @@ Config = {
                 "model_path": "models/llama_model.pth"
             }
         }
+    },
+    
+    "datasets":{
+        "race-c":"./data/race-c",  # tasksource/race-c
+        "race":"./data/race",   # ehovy/race
     }
 }

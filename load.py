@@ -8,7 +8,7 @@ from config import Config
 
 
 # 初始化分词器  
-tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert"]["model_path"])  
+tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])  
 
 
 
@@ -97,4 +97,6 @@ if __name__ == "__main__":
     
     print("=============================")
     
-    ds=load_dataset_from_huggingface()
+    ds=load_dataset_from_huggingface(Config["datasets"]["race-c"])
+    
+    print(ds['train'][0])
