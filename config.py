@@ -3,6 +3,12 @@ import torch
 Config = {
     "output_dir":"./output",
     "vocab":"data/chars.txt",
+    "train_data_path": "data/train.csv",
+    "test_data_path": "data/test.csv",
+    "submission_path": "submission.csv",
+    
+    
+    "seed": 42,
     "hidden_size": 256,
     "num_layers": 4,
     "dropout": 0.5,
@@ -12,30 +18,87 @@ Config = {
     "num_workers": 4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "model_path": "model.pth",
-    "train_data_path": "data/train.csv",
-    "test_data_path": "data/test.csv",
-    "submission_path": "submission.csv",
-    "seed": 42,
+   
     "models":{
-        "bert": {
+        "bert-base-uncased": {
             "model_name": "bert-base-uncased",
             "max_length": 512,
             "num_labels": 1,
-            "model_path": "models/bert_model.pth"
+            "model_path": r"D:\pre-trained-models\bert-base-uncased"
+        },
+        "bert-base-NER":{
+            "model_name": "bert-base-NER",
+            "max_length": 512,
+            "num_labels": 1,
+            "model_path": r"D:\pre-trained-models\bert-base-NER"
         },
         
         "qwen":{
-            "model_name": "Qwen/Qwen-14B-Chat",
-            "max_length": 2048,
-            "num_labels": 1,
-            "model_path": "models/qwen_model.pth"
+            "Qwen2.5-0.5B":{
+                "model_name": "Qwen2.5-0.5B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": r"D:\pre-trained-models\Qwen2.5-0.5B"
+            },
+            "Qwen2.5-1.5B":{
+                "model_name": "Qwen2.5-1.5B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/qwen_model.pth"
+            },
+            "Qwen2.5-3B":{
+                "model_name": "Qwen2.5-3B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/qwen_model.pth"
+            },
+            "Qwen2.5-7B":{
+                "model_name": "Qwen2.5-7B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/qwen_model.pth"
+            },
+            "Qwen2.5-72B":{
+                "model_name": "Qwen2.5-72B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/qwen_model.pth"
+            }
+           
         },
         
         "llama":{
-            "model_name": "meta-llama/Llama-2-7b-chat-hf",
-            "max_length": 2048,
-            "num_labels": 1,
-            "model_path": "models/llama_model.pth"
+            "MobiLlama-05B":{
+                "model_name": "MobiLlama-05B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/llama_model.pth"
+            },
+            "Llama-3.2-1B":{
+                "model_name": "Llama-3.2-1B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/llama_model.pth"
+
+            },
+            "Llama-3.2-3B":{
+                "model_name": "Llama-3.2-3B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/llama_model.pth"  
+            },
+            "Llama-3.1-8B":{
+                "model_name": "Llama-3.1-8B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/llama_model.pth"
+            },
+            "Llama-3.1-70B":{
+                "model_name": "Llama-3.1-70B",
+                "max_length": 2048,
+                "num_labels": 1,
+                "model_path": "models/llama_model.pth"
+            }
         }
     }
 }
