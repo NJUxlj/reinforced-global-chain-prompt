@@ -114,7 +114,12 @@ git push
 ## 运行项目
 main.py
 
+## 训练流程
+![image](./image/Snipaste_2024-10-21_18-12-23.png)
 
+![image](./image/Snipaste_2024-10-21_18-12-33.png)
+
+![image](./image/Snipaste_2024-10-21_18-12-39.png)
 
 ## 实验结果
 
