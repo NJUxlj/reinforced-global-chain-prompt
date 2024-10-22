@@ -144,20 +144,21 @@ def main():
         current_method = method_choice.value  
 
         with gr.Column() as param_ui_container:  
-            inputs = []
+            # param_components
             for method in method_params.keys():  
                 params = method_params[method]  
-                # inputs = []  
+                inputs = []  
                 for param_name, default_value in params.items():  
                     # 设置组件的初始可见性  
                     visible = True if method == current_method else False  
                     # 选择合适的输入组件，这里使用Textbox，您可以根据需要选择合适的组件类型  
                     input_component = gr.Textbox(label=param_name, value=str(default_value), visible=visible)  
-                    inputs.append(gr.Row(input_component))  
+                    inputs.append(input_component)  
                     
                     param_components.append(input_component)  
                     param_component_methods.append(method)  
                 #param_inputs[method] = inputs  # 如需保留每个方法的参数组件列表，可以取消注释  
+
             
         with gr.Row():  
             train_button = gr.Button("开始训练")  
