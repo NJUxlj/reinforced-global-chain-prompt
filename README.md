@@ -105,8 +105,22 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 ## 推送项目到仓库
 ```shell
 git add .
+# 先将大文件移出暂存库
 git rm -rf --cached save data ... 文件夹名
-git commit -m 'xxxxx'
+# 检查暂存库的内容
+git status
+```
+
+- 然后在项目目录中创建一个.gitignore 文件，内容如下：
+
+```text
+\save\
+\data\
+```
+
+```shell
+git add .gitignore
+git commit -m 'add .gitignore'
 git push
 ```
 
