@@ -1,0 +1,176 @@
+import torch
+from datasets import load_dataset
+from transformers import AutoTokenizer
+from config import Config
+from load import (
+    preprocess_function_race_pt, 
+    load_dataset_from_huggingface,
+    preprocess_race,
+)
+
+
+from torch.utils.data import DataLoader
+from transformers import default_data_collator
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PromptEncoderConfig, get_peft_model
+from peft import PromptTuningConfig,PromptEmbedding
+from transformers import get_linear_schedule_with_warmup
+from tqdm import tqdm
+
+
+
+
+
+
+
+
+
+# 加载数据集
+
+# dataset_path = Config["datasets"]['race']
+# ds = load_dataset_from_huggingface(dataset_path,"high")
+
+# classes = [k.replace("_", " ") for k in ds["train"].features["Label"].names]
+# ds = ds.map(
+#     lambda x: {"text_label": [classes[label] for label in x["Label"]]},
+#     batched=True,
+#     num_proc=1,
+# )
+# ds["train"][0]
+
+
+
+def train(model):
+    # 加载数据集
+    dataset_name = "race"
+
+    dataset_path = Config["datasets"][dataset_name]
+    ds = load_dataset_from_huggingface(dataset_path,"high")
+    
+    # coarse-grained preprocessing
+    ds, classes, tokenizer = preprocess_race(ds)
+    
+    Config["classes"][dataset_name] = classes
+    
+    # fine-grained preprocessing
+    # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
+    
+    
+    processed_ds = ds.map(
+        preprocess_function_race_pt, # 从load.py导入
+        batched=True,
+        num_proc=1,
+        remove_columns=ds['train'].column_names,
+        load_from_cache_file=False,
+        desc="Running tokenizer on dataset",
+    )
+    
+    train_ds = processed_ds["train"]
+    eval_ds = processed_ds["test"]
+
+    batch_size = 16
+    
+    
+    # print("train_ds[0]", train_ds[0])
+    # print("eval_ds[0]",eval_ds[0])
+    
+    print("dataset is preprocessed successfully ~~~")
+    
+    
+    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
+    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
+    
+    
+    tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
+    
+    # Prompt-tuning
+    peft_config = PromptTuningConfig(
+        peft_type="PROMPT_TUNING",
+        task_type="CAUSAL_LM", 
+        num_virtual_tokens=20, 
+        token_dim=768,
+        num_transformer_submodules=1,
+        # In many cases, this is set to 1, 
+        # meaning that the prompt tuning will interact with a single submodule, 
+        # often the self-attention submodule, to inject the prompt information into the model.
+        num_attention_heads=12,
+        num_layers=12,
+        prompt_tuning_init = "TEXT",
+        prompt_tuning_init_text = "Predict if the answer of this question is A, B, C, or D",
+        tokenizer_name_or_path = tokenizer_path,
+    )
+    
+    # Input Shape: (batch_size, total_virtual_tokens)
+
+    # Output Shape: (batch_size, total_virtual_tokens, token_dim)
+    
+    model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
+    
+
+    lr = 3e-2
+    num_epochs = 5
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    lr_scheduler = get_linear_schedule_with_warmup(
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=(len(train_dataloader) * num_epochs),
+    )
+    
+    device = Config['device']
+    model = model.to(device)
+    
+    for epoch in range(num_epochs):
+        model.train()
+        total_loss = 0
+        for step, batch in enumerate(tqdm(train_dataloader)):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            outputs = model(**batch)
+            loss = outputs.loss
+            total_loss += loss.detach().float()
+            loss.backward()
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+
+        model.eval()
+        eval_loss = 0
+        eval_preds = []
+        for step, batch in enumerate(tqdm(eval_dataloader)):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            with torch.no_grad():
+                outputs = model(**batch)
+            loss = outputs.loss
+            eval_loss += loss.detach().float()
+            eval_preds.extend(
+                tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
+            )
+
+        eval_epoch_loss = eval_loss / len(eval_dataloader)
+        eval_ppl = torch.exp(eval_epoch_loss)
+        train_epoch_loss = total_loss / len(train_dataloader)
+        train_ppl = torch.exp(train_epoch_loss)
+        print(f"{epoch=}: {train_ppl=} {train_epoch_loss=} {eval_ppl=} {eval_epoch_loss=}")
+
+
+    # 保存权重
+    torch.save(model.state_dict(), Config['save_model_dir']['bert-base-uncased']['prompt-tuning']['race'])    
+
+def inference(save_path):
+    '''
+     save_path: 训练好的模型权重
+    '''
+    pass
+
+
+
+
+if __name__ == '__main__':
+    '''
+    
+    '''
+    model = AutoModelForCausalLM.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])
+    
+    train(model)
+    

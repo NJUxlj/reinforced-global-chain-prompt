@@ -270,4 +270,4 @@ print(f"Evaluation results: {eval_results}")
 
 # 12. 保存模型  
 # trainer.save_model(Config['save_model_dir'])  
-torch.save(bidirectional_prompt_model.state_dict(), Config['save_model_dir'])  
+# torch.save(bidirectional_prompt_model.state_dict(), Config['save_model_dir']['bert-base-uncased']['bidirectional-prompt-tuning']['race'])  

@@ -1,7 +1,8 @@
 import pandas as pd  
-from datasets import Dataset, load_dataset
+from datasets import Dataset, DatasetBuilder, load_dataset, load_dataset_builder
 from transformers import AutoTokenizer 
 import random
+import torch
 
 from config import Config
 
@@ -12,8 +13,23 @@ tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"][
 
 
 
-def load_dataset_from_huggingface(file_path):
-    return load_dataset(file_path)
+def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None):
+    '''
+    load dataset from huggingface hub
+    
+        dataset_path: "/your/path/glue"
+        
+        subset_name: "sst2"
+        
+        split: "train", "validation"
+    '''
+    
+    if subset_name:
+        ds = load_dataset(dataset_path, subset_name, split=split)
+    else:
+        ds = load_dataset(dataset_path, split=split)
+
+    return ds
 
 def load_dataset_from_csv(file_path):  
     """  
@@ -42,8 +58,173 @@ def preprocess_function(examples):
     return model_inputs
 
 
-def preprocess_function_pt(examples, text_column = "text", label_column  ="label"):
+def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 64):
+    
+    
+    
+    ''' 
+      iteratively modify every batch of data
+      
+      Args:
+          text_column: the column name of the text
+          
+          ds_builder: use it to get the name of dataset
+          
+          classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
+          
+    '''
+    batch_size = len(examples[text_column])
+    
+    # use hard prompt to combine [article, question, options] together
+    # race's fields are [article, question, options, answer]
+    inputs = [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
+              Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples[text_column])]  
+    targets = [str(x) for x in examples['answer']] # shape = (batch_size, )
+    
+    global tokenizer
+    
+    # return a dict with keys = ['input_ids', 'attention_mask',...]
+    # if no return_tensors = 'pt', return list as values
+    model_inputs = tokenizer(inputs)
+    labels = tokenizer(targets) # labels['input_ids'].shape = (batch_size, max_length)
+    
+    # classes = list(set(targets))
+    classes = Config['classes']['race']    
+    for i in range(batch_size):
+        sample_input_ids = model_inputs['input_ids'][i]
+        label_input_ids = labels['input_ids'][i]
+        
+        # padding
+        model_inputs["input_ids"][i] = [tokenizer.pad_token_id]*(max_length-len(sample_input_ids))+sample_input_ids
+        
+        # model_inputs["input_ids"].shape = (batch_size, max_length)
+        # model_inputs["input_ids"][i].shape = (max_length)
+        model_inputs['attention_mask'][i] = [0]*(max_length-len(label_input_ids))+model_inputs['attention_mask'][i]
+        
+        
+        labels["input_ids"][i] = [-100]*(max_length - len(label_input_ids))+label_input_ids
+        
+        # truncate and transfer to tensor
+        model_inputs["input_ids"][i] = torch.tensor(model_inputs["input_ids"][i][:max_length])
+        model_inputs["attention_mask"][i] = torch.tensor(model_inputs["attention_mask"][i][:max_length])
+        labels["input_ids"][i] = torch.tensor(labels["input_ids"][i][:max_length])
+    
+    model_inputs['labels'] = labels["input_ids"]
+        
+    return model_inputs
+    
+
+
+def preprocess_pipeline_pt(ds: Dataset):
+    '''
+        将所有数据预处理流程放到一个函数中
+    '''
+    classes = []
+    
+    dataset_name = ds.info.dataset_name 
+    
+    if dataset_name == "race":
+        preprocess_race(ds)
+        
+    elif dataset_name == "race-c":
+        classes = ds.info.features['answer'].names
+    
+        
+    elif dataset_name == "mnli":
+        classes = ds.info.features['label'].names
+        
+    elif dataset_name == "mrpc":
+        classes = ds.info.features['label'].names
+    
+    
+
+
+
+def preprocess_race(ds: Dataset):
+    # 
+    print(ds["train"].features['answer'])
+    # 提取训练集的标签列  
+    train_labels = ds['train']['answer']  
+
+    # 获取标签的唯一值集合  
+    classes = sorted(list(set(train_labels)))
+    # classes = [k.strip() for k in ds["train"].features["answer"].names]
+    
+    print("classes = ", classes)
+    
+    # race的Answer 就是 A, B, C, D. no need for mapping
+    ds = ds.map(
+        lambda x: x,
+        batched=True,
+        num_proc=1,
+    )
+    
+    global tokenizer
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        
+    # get the max length of the label's input_ids
+    target_max_length = max([len(tokenizer(class_label)["input_ids"]) for class_label in classes])
+    print(target_max_length)
+    
+    print(f"dataset \"race\" is ready to be used ~~~")
+    return ds, classes, tokenizer
+
+def preprocess_race_h(ds:Dataset):
+        
+    print(ds["train"].features)
+    # classes = [k.strip() for k in ds["train"].features["answer"].names]
+    
+    # print("classes = ", classes)
+    
+    # race的Answer 就是 A, B, C, D. no need for mapping
+    ds = ds.map(
+        lambda x: x,
+        batched=True,
+        num_proc=1,
+    )
+
+    
+    print(f"dataset \"race-high\" is ready to be used ~~~")
+    return ds
+
+
+def preprocess_race_m(ds:Dataset):
+        
+    print(ds["train"].features)
+    # classes = [k.strip() for k in ds["train"].features["answer"].names]
+    
+    # print("classes = ", classes)
+    
+    # race的Answer 就是 A, B, C, D. no need for mapping
+    ds = ds.map(
+        lambda x: x,
+        batched=True,
+        num_proc=1,
+    )
+
+    
+    print(f"dataset \"race-middle\" is ready to be used ~~~")
+    return ds
+
+
+
+
+
+
+def preprocess_race_c(dataset: Dataset):
     pass
+
+def preprocess_mnli(dataset: Dataset):
+    pass
+
+
+def preprocess_mrpc(dataset: Dataset):
+    pass
+
+
+
+
 
 
 def prepare_dataset(dataset):  
@@ -96,7 +277,19 @@ if __name__ == "__main__":
     
     
     print("=============================")
-    
-    ds=load_dataset_from_huggingface(Config["datasets"]["race-c"])
+    dataset_path = Config["datasets"]["race"]
+    ds=load_dataset_from_huggingface(dataset_path, "high")
     
     print(ds['train'][0])
+    print("answer = ", ds["train"].features)
+    
+    ds_builder = load_dataset_builder(dataset_path, "high")
+    
+    print("====================")
+    print(ds_builder.info.dataset_name) 
+    
+    
+    print("====================") 
+ 
+    preprocess_race(ds)
+    # preprocess_pipeline_pt(ds)

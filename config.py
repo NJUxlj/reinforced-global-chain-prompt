@@ -3,7 +3,6 @@ import torch
 Config = {
     "output_dir":"./output",
     "logging_dir":"./logs",
-    "save_model_dir": "./save/model.pth",
     "vocab":"data/chars.txt",
     "train_data_path": "data/train.csv",
     "test_data_path": "data/test.csv",
@@ -20,6 +19,45 @@ Config = {
     "num_workers": 4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "model_path": "model.pth",
+    
+    
+    "save_model_dir":{
+        "bert-base-uncased": {
+            "prompt-tuning":{
+                "race": "save/bert-base-uncased/prompt-tuning/race",
+                "race-c": "save/bert-base-uncased/prompt-tuning/race-c",
+                "mnli": "save/bert-base-uncased/prompt-tuning/mnli",
+                "mrpc": "save/bert-base-uncased/prompt-tuning/mrpc",
+            },
+            "bidirectional-prompt-tuning":{
+                "race": "save/bert-base-uncased/bidirectional-prompt-tuning/race",
+                "race-c": "save/bert-base-uncased/bidirectional-prompt-tuning/race-c",
+                "mnli": "save/bert-base-uncased/bidirectional-prompt-tuning/mnli",
+                "mrpc": "save/bert-base-uncased/bidirectional-prompt-tuning/mrpc",
+            }
+            
+        },
+        "bert-base-NER": {
+            
+        },
+        "qwen": {
+            'Qwen2.5-0.5B':{
+
+            },
+            'Qwen2.5-1.5B':{
+
+            },
+            'Qwen2.5-3B':{
+
+            }
+        },
+        "llama": {
+            "Llama-3.2-1B":{
+
+
+            }   
+        },
+    },
    
     "models":{
         "bert-base-uncased": {
@@ -107,5 +145,9 @@ Config = {
     "datasets":{
         "race-c":"./data/race-c",  # tasksource/race-c
         "race":"./data/race",   # ehovy/race
+    },
+    "classes":{
+        "race-c":"",
+        "race":"",
     }
 }
