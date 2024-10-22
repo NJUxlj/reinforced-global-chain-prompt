@@ -58,7 +58,7 @@ def preprocess_function(examples):
     return model_inputs
 
 
-def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 64):
+def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 512):
     
     
     
@@ -99,7 +99,7 @@ def preprocess_function_race_pt(examples, text_column = "article", label_column 
         
         # model_inputs["input_ids"].shape = (batch_size, max_length)
         # model_inputs["input_ids"][i].shape = (max_length)
-        model_inputs['attention_mask'][i] = [0]*(max_length-len(label_input_ids))+model_inputs['attention_mask'][i]
+        model_inputs['attention_mask'][i] = [0]*(max_length-len(model_inputs['attention_mask'][i]))+model_inputs['attention_mask'][i]
         
         
         labels["input_ids"][i] = [-100]*(max_length - len(label_input_ids))+label_input_ids

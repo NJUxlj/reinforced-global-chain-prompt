@@ -10,10 +10,12 @@ from load import (
 
 
 from torch.utils.data import DataLoader
+from datasets import Dataset
 from transformers import default_data_collator
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PromptEncoderConfig, get_peft_model
 from peft import PromptTuningConfig,PromptEmbedding
+from peft import AutoPeftModelForCausalLM
 from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
 
@@ -126,6 +128,7 @@ def train(model):
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
             batch = {k: v.to(device) for k, v in batch.items()}
+            # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
             outputs = model(**batch)
             loss = outputs.loss
             total_loss += loss.detach().float()
@@ -157,12 +160,32 @@ def train(model):
     # 保存权重
     torch.save(model.state_dict(), Config['save_model_dir']['bert-base-uncased']['prompt-tuning']['race'])    
 
-def inference(save_path):
+def inference_on_race(save_path, ds:Dataset):
     '''
-     save_path: 训练好的模型权重
+     inference on race dataset, just a simple test
+     
+     save_path: 训练好的模型权重, make sure it is a PeftModel
     '''
-    pass
-
+    ds.column_names
+    model = AutoPeftModelForCausalLM.from_pretrained(save_path).to("cuda")
+    
+    tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    
+    device = Config['device']   
+    i = 15
+    inputs = f"Artical:{ds['article'][i]}\n\nQuestion:{ds['question'][i]}\n\n \
+              Options:{ds['options'][i]}\n\nAnswer:"
+              
+    inputs = tokenizer(inputs, return_tensors="pt")
+    # inputs: {"input_ids": tensor([[  101, 10001, 10002,  ...,     0,     0,     0]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0]])}
+    
+    with torch.no_grad():
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        # outputs.shape = (batch_size, max_length)
+        outputs = model.generate(input_ids=inputs["input_ids"], max_new_tokens=10)
+        print(tokenizer.batch_decode(outputs.detach().cpu().numpy(), skip_special_tokens=True))
 
 
 
