@@ -110,6 +110,20 @@ git commit -m 'xxxxx'
 git push
 ```
 
+- 如果还不行，需要下额外的包：
+
+```shell
+pip install git-filter-repo
+
+# 使用 git filter-repo 移除大文件  
+git filter-repo --strip-blobs-bigger-than 20M  
+
+git remote add origin <远端仓库地址>
+git push origin --force  
+
+# 如果没有同步远端，则：
+git push --set-upstream origin main --force
+```
 
 ## 运行项目
 main.py
