@@ -147,7 +147,7 @@ main.py
 
 ![image](./image/Snipaste_2024-10-21_18-12-33.png)
 
-![image](./image/Snipaste_2024-10-21_18-12-39.png)
+![image](./image/Snipaste_2024-10-21_18-11-39.png)
 
 ## 实验结果
 
