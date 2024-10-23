@@ -58,7 +58,7 @@ def preprocess_function(examples):
     return model_inputs
 
 
-def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 512):
+def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 492):
     
     
     
@@ -79,42 +79,104 @@ def preprocess_function_race_pt(examples, text_column = "article", label_column 
     # race's fields are [article, question, options, answer]
     inputs = [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
               Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples[text_column])]  
-    targets = [str(x) for x in examples['answer']] # shape = (batch_size, )
+
+    # targets = [str(x) for x in examples['answer']] # shape = (batch_size, )
     
     global tokenizer
     
     # return a dict with keys = ['input_ids', 'attention_mask',...]
     # if no return_tensors = 'pt', return list as values
     model_inputs = tokenizer(inputs)
-    labels = tokenizer(targets) # labels['input_ids'].shape = (batch_size, max_length)
+    # labels = tokenizer(targets) 
+    
+    labels = []
+    for answer in examples['answer']:
+        labels.append(ord(answer)-ord('A'))
+    
+    # labels['input_ids'].shape = (batch_size,  1)  暂定是该形状
     
     # classes = list(set(targets))
     classes = Config['classes']['race']    
     for i in range(batch_size):
-        sample_input_ids = model_inputs['input_ids'][i]
-        label_input_ids = labels['input_ids'][i]
+        sample_input_ids = model_inputs['input_ids'][i] # shape = (seq_len)
+        
+        # 加上[CLS]
+        sample_input_ids += [tokenizer.cls_token_id]
+        # label_input_ids = labels['input_ids'][i]
+        label_input_ids = labels[i]
+        
         
         # padding
         model_inputs["input_ids"][i] = [tokenizer.pad_token_id]*(max_length-len(sample_input_ids))+sample_input_ids
         
         # model_inputs["input_ids"].shape = (batch_size, max_length)
         # model_inputs["input_ids"][i].shape = (max_length)
-        model_inputs['attention_mask'][i] = [0]*(max_length-len(model_inputs['attention_mask'][i]))+model_inputs['attention_mask'][i]
+        model_inputs['attention_mask'][i] = [0]*(max_length-len(sample_input_ids))+[1]+model_inputs['attention_mask'][i]
         
-        
-        labels["input_ids"][i] = [-100]*(max_length - len(label_input_ids))+label_input_ids
+        # labels[i] 在分类任务中不用补齐
+        # labels["input_ids"][i] = [-100]*(max_length - len(label_input_ids))+label_input_ids
         
         # truncate and transfer to tensor
         model_inputs["input_ids"][i] = torch.tensor(model_inputs["input_ids"][i][:max_length])
         model_inputs["attention_mask"][i] = torch.tensor(model_inputs["attention_mask"][i][:max_length])
-        labels["input_ids"][i] = torch.tensor(labels["input_ids"][i][:max_length])
+        # labels["input_ids"][i] = torch.tensor(labels["input_ids"][i][:max_length])
+        # labels[i] = torch.LongTensor(label_input_ids)  
+        
+    # model_inputs['labels'] = labels["input_ids"]
+    model_inputs['labels'] = labels
     
-    model_inputs['labels'] = labels["input_ids"]
+    
+    # 打印形状
+    print("batch_size = ", len(model_inputs["input_ids"]), " or ", len(model_inputs["labels"]))
+    print("seq_length for input = ", len(model_inputs['input_ids'][1]))
+    # print("seq_length for label = ", len(model_inputs["labels"][1]))
+    print("seq_length for attention_mask = ", len(model_inputs["attention_mask"][1]))
+    
+    print("=============================================================================")
+    # print("labels = \n", model_inputs["labels"])
+    print("model_inputs[\"labels\"][1]) = ", model_inputs["labels"][1])
         
     return model_inputs
     
 
+def preprocess_function_race(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 512):
+    
+    
+    
+    ''' 
+      iteratively modify every batch of data
+      
+      Args:
+          text_column: the column name of the text
+          
+          ds_builder: use it to get the name of dataset
+          
+          classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
+          
+    '''
+    batch_size = len(examples[text_column])
+    
+    
+    # 构建输入文本  
+    inputs = [  
+        f"Article: {examples['article'][i]}\n\nQuestion: {examples['question'][i]}\n\nOptions: {examples['options'][i]}\n\nAnswer:"  
+        for i in range(len(examples[text_column]))  
+    ]  
+    
+    model_inputs = tokenizer(  
+        inputs,  
+        padding = "max_length",
+        truncation=True,  
+        max_length=max_length,  
+        add_special_tokens=True  # 确保添加特殊标记  [CLS] [SEP]
+    )  
 
+
+    # 处理标签：将答案从字母转换为整数索引  
+    labels = [ord(answer) - ord('A') for answer in examples['answer']]  
+    model_inputs['labels'] = labels  # 保持为整数列表  
+
+    return model_inputs  
 def preprocess_pipeline_pt(ds: Dataset):
     '''
         将所有数据预处理流程放到一个函数中
@@ -280,7 +342,7 @@ if __name__ == "__main__":
     dataset_path = Config["datasets"]["race"]
     ds=load_dataset_from_huggingface(dataset_path, "high")
     
-    print(ds['train'][0])
+    print("ds['train'][0]  = \n", ds['train'][0])
     print("answer = ", ds["train"].features)
     
     ds_builder = load_dataset_builder(dataset_path, "high")
@@ -291,5 +353,5 @@ if __name__ == "__main__":
     
     print("====================") 
  
-    preprocess_race(ds)
+    # preprocess_race(ds)
     # preprocess_pipeline_pt(ds)

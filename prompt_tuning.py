@@ -1,22 +1,41 @@
 import torch
-from datasets import load_dataset
-from transformers import AutoTokenizer
+
 from config import Config
+
+
 from load import (
     preprocess_function_race_pt, 
+    preprocess_function_race,
     load_dataset_from_huggingface,
     preprocess_race,
 )
 
 
 from torch.utils.data import DataLoader
-from datasets import Dataset
-from transformers import default_data_collator
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PromptEncoderConfig, get_peft_model
-from peft import PromptTuningConfig,PromptEmbedding
-from peft import AutoPeftModelForCausalLM
-from transformers import get_linear_schedule_with_warmup
+from datasets import (
+    Dataset, 
+    load_dataset
+)
+
+from transformers import (
+    default_data_collator,
+    AutoModelForCausalLM, 
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    AutoModelForMultipleChoice,
+    get_linear_schedule_with_warmup
+)
+from peft import (
+    TaskType,
+    PromptEncoderConfig, 
+    get_peft_model, 
+    PromptTuningConfig,
+    PromptEmbedding,
+    AutoPeftModelForCausalLM,
+    AutoPeftModelForSequenceClassification,
+    # AutoPeftModelForMultipleChoice,
+)
+
 from tqdm import tqdm
 
 
@@ -59,18 +78,20 @@ def train(model):
     
     
     processed_ds = ds.map(
-        preprocess_function_race_pt, # 从load.py导入
+        lambda examples: preprocess_function_race(examples, max_length=492), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
         batched=True,
         num_proc=1,
         remove_columns=ds['train'].column_names,
         load_from_cache_file=False,
         desc="Running tokenizer on dataset",
-    )
+    )   
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
+    
+    # print("train_ds[0] = ", train_ds[0])
 
-    batch_size = 16
+    batch_size = 8
     
     
     # print("train_ds[0]", train_ds[0])
@@ -88,7 +109,7 @@ def train(model):
     # Prompt-tuning
     peft_config = PromptTuningConfig(
         peft_type="PROMPT_TUNING",
-        task_type="CAUSAL_LM", 
+        task_type=TaskType.SEQ_CLS, 
         num_virtual_tokens=20, 
         token_dim=768,
         num_transformer_submodules=1,
@@ -96,9 +117,9 @@ def train(model):
         # meaning that the prompt tuning will interact with a single submodule, 
         # often the self-attention submodule, to inject the prompt information into the model.
         num_attention_heads=12,
-        num_layers=12,
+        num_layers=1,
         prompt_tuning_init = "TEXT",
-        prompt_tuning_init_text = "Predict if the answer of this question is A, B, C, or D",
+        prompt_tuning_init_text = "Classify the answer of this question among  A, B, C, and D",
         tokenizer_name_or_path = tokenizer_path,
     )
     
@@ -142,6 +163,7 @@ def train(model):
         eval_preds = []
         for step, batch in enumerate(tqdm(eval_dataloader)):
             batch = {k: v.to(device) for k, v in batch.items()}
+            print("batch['input_ids'].shape = ", batch['input_ids'].shape)  
             with torch.no_grad():
                 outputs = model(**batch)
             loss = outputs.loss
@@ -167,7 +189,7 @@ def inference_on_race(save_path, ds:Dataset):
      save_path: 训练好的模型权重, make sure it is a PeftModel
     '''
     ds.column_names
-    model = AutoPeftModelForCausalLM.from_pretrained(save_path).to("cuda")
+    model = AutoPeftModelForSequenceClassification.from_pretrained(save_path).to("cuda")
     
     tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
@@ -193,7 +215,7 @@ if __name__ == '__main__':
     '''
     
     '''
-    model = AutoModelForCausalLM.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])
+    model = AutoModelForSequenceClassification.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])
     
     train(model)
     
