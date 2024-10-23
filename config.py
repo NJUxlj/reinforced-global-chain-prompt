@@ -1,4 +1,18 @@
 import torch
+import platform
+
+system_name = platform.system() 
+
+MODEL_BASE_PATH = ""
+if system_name == "Windows":
+    MODEL_BASE_PATH = "D:\\pre-trained-models"
+elif system_name == "Linux":
+    MODEL_BASE_PATH = "\\mnt\\data\\models"
+
+print("MODEL_BASE_PATH: ", MODEL_BASE_PATH)
+
+# 所有模型的上级目录
+# MODEL_BASE_PATH = "\\mnt\\data\\models"
 
 Config = {
     "output_dir":"./output",
@@ -8,6 +22,7 @@ Config = {
     "test_data_path": "data/test.csv",
     "submission_path": "submission.csv",
     
+
     
     "seed": 42,
     "hidden_size": 256,
@@ -64,13 +79,13 @@ Config = {
             "model_name": "bert-base-uncased",
             "max_length": 512,
             "num_labels": 1,
-            "model_path": r"D:\pre-trained-models\bert-base-uncased"
+            "model_path": f"{MODEL_BASE_PATH}\\bert-base-uncased"
         },
         "bert-base-NER":{
             "model_name": "bert-base-NER",
             "max_length": 512,
             "num_labels": 1,
-            "model_path": r"D:\pre-trained-models\bert-base-NER"
+            "model_path": f"{MODEL_BASE_PATH}\\bert-base-NER"
         },
         
         "qwen":{
@@ -78,7 +93,7 @@ Config = {
                 "model_name": "Qwen2.5-0.5B",
                 "max_length": 2048,
                 "num_labels": 1,
-                "model_path": r"D:\pre-trained-models\Qwen2.5-0.5B"
+                "model_path": f"{MODEL_BASE_PATH}\\Qwen2.5-0.5B"
             },
             "Qwen2.5-1.5B":{
                 "model_name": "Qwen2.5-1.5B",
