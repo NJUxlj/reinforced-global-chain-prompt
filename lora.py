@@ -43,6 +43,35 @@ def train_lora(model):
     )
     model = get_peft_model(model, config)
     model.print_trainable_parameters()
+    
+    
+    batch_size = 8
+    
+    args = TrainingArguments(
+        peft_model_id,
+        remove_unused_columns=False,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=5e-3,
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=4,
+        per_device_eval_batch_size=batch_size,
+        fp16=True,
+        num_train_epochs=5,
+        logging_steps=10,
+        load_best_model_at_end=True,
+        label_names=["labels"],
+    )
+    
+    trainer = Trainer(
+        model,
+        args,
+        train_dataset=train_ds,
+        eval_dataset=val_ds,
+        tokenizer=image_processor,
+        data_collator=collate_fn,
+    )
+    trainer.train()
 
 
 
