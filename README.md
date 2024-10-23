@@ -122,6 +122,10 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 - [Evaluation metrics for multiple correct answers in QA problem system](https://stackoverflow.com/questions/64112565/evaluation-metrics-for-multiple-correct-answers-in-qa-problem-system)
 - [NLP Question Answering Mastery: Evaluation Metrics and Methods](https://gpttutorpro.com/nlp-question-answering-mastery-evaluation-metrics-and-methods-for-question-answering/)
 
+## 生成 `requirements.txt` 文件
+```shell
+pipreqs . --force
+```
 
 ## 推送项目到仓库
 ```shell

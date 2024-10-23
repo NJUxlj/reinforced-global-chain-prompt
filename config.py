@@ -5,9 +5,9 @@ system_name = platform.system()
 
 MODEL_BASE_PATH = ""
 if system_name == "Windows":
-    MODEL_BASE_PATH = "D:\\pre-trained-models"
+    MODEL_BASE_PATH = "D:\\pre-trained-models\\"
 elif system_name == "Linux":
-    MODEL_BASE_PATH = "\\mnt\\data\\models"
+    MODEL_BASE_PATH = "/mnt/data/models/"
 
 print("MODEL_BASE_PATH: ", MODEL_BASE_PATH)
 
@@ -79,13 +79,13 @@ Config = {
             "model_name": "bert-base-uncased",
             "max_length": 512,
             "num_labels": 1,
-            "model_path": f"{MODEL_BASE_PATH}\\bert-base-uncased"
+            "model_path": f"{MODEL_BASE_PATH}bert-base-uncased"
         },
         "bert-base-NER":{
             "model_name": "bert-base-NER",
             "max_length": 512,
             "num_labels": 1,
-            "model_path": f"{MODEL_BASE_PATH}\\bert-base-NER"
+            "model_path": f"{MODEL_BASE_PATH}bert-base-NER"
         },
         
         "qwen":{
@@ -93,7 +93,7 @@ Config = {
                 "model_name": "Qwen2.5-0.5B",
                 "max_length": 2048,
                 "num_labels": 1,
-                "model_path": f"{MODEL_BASE_PATH}\\Qwen2.5-0.5B"
+                "model_path": f"{MODEL_BASE_PATH}Qwen2.5-0.5B"
             },
             "Qwen2.5-1.5B":{
                 "model_name": "Qwen2.5-1.5B",
