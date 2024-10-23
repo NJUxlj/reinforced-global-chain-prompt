@@ -101,9 +101,10 @@ def train(model):
     print("dataset is preprocessed successfully ~~~")
     
     
-    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
-    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
-    
+    # train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
+    # eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
+    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size)
+    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size)
     
     tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
     

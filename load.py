@@ -174,7 +174,12 @@ def preprocess_function_race(examples, text_column = "article", label_column  ="
 
     # 处理标签：将答案从字母转换为整数索引  
     labels = [ord(answer) - ord('A') for answer in examples['answer']]  
+
+    print("labels = ", labels)
     model_inputs['labels'] = labels  # 保持为整数列表  
+
+    # 确保标签符合n_classes，不超范围  
+    assert all(0 <= label < 4 for label in labels), "There are labels out of range." 
 
     return model_inputs  
 def preprocess_pipeline_pt(ds: Dataset):
@@ -213,6 +218,7 @@ def preprocess_race(ds: Dataset):
     # classes = [k.strip() for k in ds["train"].features["answer"].names]
     
     print("classes = ", classes)
+    print("num_classes = ", len(classes))
     
     # race的Answer 就是 A, B, C, D. no need for mapping
     ds = ds.map(
@@ -226,8 +232,8 @@ def preprocess_race(ds: Dataset):
         tokenizer.pad_token_id = tokenizer.eos_token_id
         
     # get the max length of the label's input_ids
-    target_max_length = max([len(tokenizer(class_label)["input_ids"]) for class_label in classes])
-    print(target_max_length)
+    target_max_length = max([len(tokenizer(class_label, max_length =1, padding = "max_length", truncation=True)["input_ids"]) for class_label in classes])
+    print("target_max_length = ", target_max_length)
     
     print(f"dataset \"race\" is ready to be used ~~~")
     return ds, classes, tokenizer
