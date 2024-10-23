@@ -78,7 +78,7 @@ def train(model):
     
     
     processed_ds = ds.map(
-        lambda examples: preprocess_function_race(examples, max_length=492), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
+        lambda examples: preprocess_function_race(examples, max_length=512-num_virtual_tokens), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
         batched=True,
         num_proc=1,
         remove_columns=ds['train'].column_names,
@@ -92,6 +92,7 @@ def train(model):
     # print("train_ds[0] = ", train_ds[0])
 
     batch_size = 8
+    num_virtual_tokens=10
     
     
     # print("train_ds[0]", train_ds[0])
@@ -110,7 +111,7 @@ def train(model):
     peft_config = PromptTuningConfig(
         peft_type="PROMPT_TUNING",
         task_type=TaskType.SEQ_CLS, 
-        num_virtual_tokens=20, 
+        num_virtual_tokens=num_virtual_tokens, 
         token_dim=768,
         num_transformer_submodules=1,
         # In many cases, this is set to 1, 
