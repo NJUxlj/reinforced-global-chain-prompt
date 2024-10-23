@@ -39,7 +39,7 @@ def train_lora(model):
         target_modules=["query", "value"],
         lora_dropout=0.1,
         bias="none",
-        modules_to_save=["classifier"], # 指定了哪些模块或层的权重在微调过程中不会被LoRA修改，并且在保存模型时会被单独保存。
+        modules_to_save=["classifier"], # 除了LoRA层以外, 还有哪些模块需要进行训练和保存
     )
     model = get_peft_model(model, config)
     model.print_trainable_parameters()
@@ -49,5 +49,6 @@ def train_lora(model):
 
 
 if __name__ == "__main__":
-    model =
+    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model = AutoModelForSequenceClassification.from_pretrained(model_path)
     train_lora(model)
