@@ -75,15 +75,15 @@ def train(model):
     
     # fine-grained preprocessing
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
-    
-    
+    num_virtual_tokens=10
+    max_length = 512-num_virtual_tokens
     processed_ds = ds.map(
-        lambda examples: preprocess_function_race(examples, max_length=512-num_virtual_tokens), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
+        lambda examples: preprocess_function_race(examples, max_length=max_length), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
         batched=True,
         num_proc=1,
         remove_columns=ds['train'].column_names,
         load_from_cache_file=False,
-        desc="Running tokenizer on dataset",
+        desc="Running tokenizer on dataset",    
     )   
     
     train_ds = processed_ds["train"]
@@ -92,7 +92,7 @@ def train(model):
     # print("train_ds[0] = ", train_ds[0])
 
     batch_size = 8
-    num_virtual_tokens=10
+
     
     
     # print("train_ds[0]", train_ds[0])
