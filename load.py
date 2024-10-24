@@ -1,6 +1,6 @@
 import pandas as pd  
 from datasets import Dataset, DatasetBuilder, load_dataset, load_dataset_builder
-from transformers import AutoTokenizer 
+from transformers import AutoTokenizer, AutoModel
 import random
 import torch
 
@@ -139,7 +139,7 @@ def preprocess_function_race_pt(examples, text_column = "article", label_column 
     return model_inputs
     
 
-def preprocess_function_race(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 512):
+def preprocess_function_race(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 512, tokenizer = None):
     
     
     
@@ -154,6 +154,8 @@ def preprocess_function_race(examples, text_column = "article", label_column  ="
           classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
           
     '''
+    assert tokenizer is not None, "tokenizer in \"preprocess_function_race\" is None, please assign one"
+    
     batch_size = len(examples[text_column])
     
     
@@ -174,13 +176,15 @@ def preprocess_function_race(examples, text_column = "article", label_column  ="
 
     # 处理标签：将答案从字母转换为整数索引  
     labels = [ord(answer) - ord('A') for answer in examples['answer']]  
+    
+    # 确保标签符合n_classes，不超范围  
+    assert all(0 <= label < 4 for label in labels), "There are labels out of range [0, 3]." 
 
-    print("labels = ", labels)
+    # print("labels = ", labels)
+    # labels = torch.tensor(labels, dtype=torch.long)
     model_inputs['labels'] = labels  # 保持为整数列表  
 
-    # 确保标签符合n_classes，不超范围  
-    assert all(0 <= label < 4 for label in labels), "There are labels out of range." 
-
+    
     return model_inputs  
 def preprocess_pipeline_pt(ds: Dataset):
     '''
@@ -207,7 +211,14 @@ def preprocess_pipeline_pt(ds: Dataset):
 
 
 
-def preprocess_race(ds: Dataset):
+def preprocess_race(ds: Dataset, tokenizer:AutoTokenizer):
+    '''
+        preprocess race dataset in coarse-grained manner
+        
+        model_config: model.config
+        
+        return ds, classes, tokenizer
+    '''
     # 
     print(ds["train"].features['answer'])
     # 提取训练集的标签列  
@@ -226,11 +237,12 @@ def preprocess_race(ds: Dataset):
         batched=True,
         num_proc=1,
     )
+
     
-    global tokenizer
+
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-        
+            
     # get the max length of the label's input_ids
     target_max_length = max([len(tokenizer(class_label, max_length =1, padding = "max_length", truncation=True)["input_ids"]) for class_label in classes])
     print("target_max_length = ", target_max_length)

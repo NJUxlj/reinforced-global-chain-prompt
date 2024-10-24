@@ -18,6 +18,7 @@ from datasets import (
 )
 
 from transformers import (
+    set_seed,
     default_data_collator,
     AutoModelForCausalLM, 
     AutoTokenizer,
@@ -27,9 +28,14 @@ from transformers import (
 )
 from peft import (
     TaskType,
+    PeftType,
     PromptEncoderConfig, 
     get_peft_model, 
+    get_peft_config,
+    get_peft_model_state_dict,
+    set_peft_model_state_dict,
     PromptTuningConfig,
+    PrefixTuningConfig,
     PromptEmbedding,
     AutoPeftModelForCausalLM,
     AutoPeftModelForSequenceClassification,
@@ -61,15 +67,15 @@ from tqdm import tqdm
 
 
 
-def train(model):
+def train(model, tokenizer):
     # 加载数据集
     dataset_name = "race"
 
     dataset_path = Config["datasets"][dataset_name]
     ds = load_dataset_from_huggingface(dataset_path,"high")
-    
+
     # coarse-grained preprocessing
-    ds, classes, tokenizer = preprocess_race(ds)
+    ds, classes, tokenizer = preprocess_race(ds, tokenizer)
     
     Config["classes"][dataset_name] = classes
     
@@ -77,8 +83,10 @@ def train(model):
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
     num_virtual_tokens=10
     max_length = 512-num_virtual_tokens
+    peft_type = PeftType.PROMPT_TUNING
+    
     processed_ds = ds.map(
-        lambda examples: preprocess_function_race(examples, max_length=max_length), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
+        lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
         batched=True,
         num_proc=1,
         remove_columns=ds['train'].column_names,
@@ -91,7 +99,7 @@ def train(model):
     
     # print("train_ds[0] = ", train_ds[0])
 
-    batch_size = 8
+    batch_size = 2
 
     
     
@@ -113,7 +121,7 @@ def train(model):
         peft_type="PROMPT_TUNING",
         task_type=TaskType.SEQ_CLS, 
         num_virtual_tokens=num_virtual_tokens, 
-        token_dim=768,
+        token_dim=768,  
         num_transformer_submodules=1,
         # In many cases, this is set to 1, 
         # meaning that the prompt tuning will interact with a single submodule, 
@@ -150,6 +158,7 @@ def train(model):
         model.train()
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
+            print(f"Batch labels: {batch['labels']}") 
             batch = {k: v.to(device) for k, v in batch.items()}
             # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
             outputs = model(**batch)
@@ -217,7 +226,24 @@ if __name__ == '__main__':
     '''
     
     '''
-    model = AutoModelForSequenceClassification.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])
+    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    print(f"Model's current num_labels: {model.config.num_labels}") 
+     
+    model_config = model.config
+    model_name_or_path = model_config.name_or_path
+    print("model_name_or_path = ", model_name_or_path)
     
-    train(model)
+    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
+        padding_side = "left"
+    else:
+        padding_side = "right"
+    
+    print("padding_side = ", padding_side)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
+
+    
+    train(model,tokenizer)
     
