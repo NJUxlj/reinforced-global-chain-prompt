@@ -40,15 +40,51 @@ Config = {
         "bert-base-uncased": {
             "prompt-tuning":{
                 "race": "save/bert-base-uncased/prompt-tuning/race",
+                "race-m": "save/bert-base-uncased/prompt-tuning/race-m",
+                "race-h": "save/bert-base-uncased/prompt-tuning/race-h",
                 "race-c": "save/bert-base-uncased/prompt-tuning/race-c",
                 "mnli": "save/bert-base-uncased/prompt-tuning/mnli",
                 "mrpc": "save/bert-base-uncased/prompt-tuning/mrpc",
             },
+            "prefix-tuning":{
+                "race": "save/bert-base-uncased/prefix-tuning/race",
+                "race-m": "save/bert-base-uncased/prefix-tuning/race-m",
+                "race-h": "save/bert-base-uncased/prefix-tuning/race-h",
+                "race-c": "save/bert-base-uncased/prefix-tuning/race-c",
+                "mnli": "save/bert-base-uncased/prefix-tuning/mnli",
+                "mrpc": "save/bert-base-uncased/prefix-tuning/mrpc",
+            },
             "bidirectional-prompt-tuning":{
                 "race": "save/bert-base-uncased/bidirectional-prompt-tuning/race",
+                "race-m": "save/bert-base-uncased/bidirectional-prompt-tuning/race-m",
+                "race-h": "save/bert-base-uncased/bidirectional-prompt-tuning/race-h",
                 "race-c": "save/bert-base-uncased/bidirectional-prompt-tuning/race-c",
                 "mnli": "save/bert-base-uncased/bidirectional-prompt-tuning/mnli",
                 "mrpc": "save/bert-base-uncased/bidirectional-prompt-tuning/mrpc",
+            },
+            "p-tuning-v2":{
+                "race": "save/bert-base-uncased/p-tuning-v2/race",
+                "race-h": "save/bert-base-uncased/p-tuning-v2/race-h",
+                "race-m": "save/bert-base-uncased/p-tuning-v2/race-m",
+                "race-c": "save/bert-base-uncased/p-tuning-v2/race-c",
+                "mnli": "save/bert-base-uncased/p-tuning-v2/mnli",
+                "mrpc": "save/bert-base-uncased/p-tuning-v2/mrpc",
+            },
+            "lora":{
+                "race": "save/bert-base-uncased/lora/race",
+                "race-h": "save/bert-base-uncased/lora/race-h",
+                "race-m": "save/bert-base-uncased/lora/race-m",
+                "race-c": "save/bert-base-uncased/lora/race-c",
+                "mnli": "save/bert-base-uncased/lora/mnli",
+                "mrpc": "save/bert-base-uncased/lora/mrpc",
+            },
+            "o-lora":{
+                "race": "save/bert-base-uncased/o-lora/race",
+                "race-h": "save/bert-base-uncased/o-lora/race-h",
+                "race-m": "save/bert-base-uncased/o-lora/race-m",
+                "race-c": "save/bert-base-uncased/o-lora/race-c",
+                "mnli": "save/bert-base-uncased/o-lora/mnli",
+                "mrpc": "save/bert-base-uncased/o-lora/mrpc",
             }
             
         },
