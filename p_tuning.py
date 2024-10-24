@@ -55,7 +55,6 @@ def train_p_tuning(model, tokenizer):
     batch_size = 2  
     lr = 3e-2
     num_epochs = 5
-    num_epochs = 5
     max_length = 512 - num_virtual_tokens
     
     
@@ -165,7 +164,7 @@ def train_p_tuning(model, tokenizer):
             optimizer.zero_grad()
             
             # evaluate for each 5 batch-steps
-            if global_step % 5 == 0 or step == len(train_dataloader) - 1:  
+            if step == len(train_dataloader) - 1:  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  

@@ -13,12 +13,24 @@ from peft import (
     TaskType
 )
 
-from datasets import Dataset
+from load import (
+    preprocess_function_race_pt, 
+    preprocess_function_race,
+    load_dataset_from_huggingface,
+    preprocess_race,
+)
+
+from datasets import (
+    Dataset,
+    load_dataset,
+)
 from config import Config
 
 import torch
 import torch.nn as nn
 import numpy as np
+import csv
+import evaluate
 
 device = Config['device']
 

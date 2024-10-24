@@ -169,25 +169,31 @@ def train_prompt_tuning(model, tokenizer):
             lr_scheduler.step()
             optimizer.zero_grad()
 
-        model.eval()
-        eval_loss = 0
-        eval_preds = []
-        for step, batch in enumerate(tqdm(eval_dataloader)):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            print("batch['input_ids'].shape = ", batch['input_ids'].shape)  
-            with torch.no_grad():
-                outputs = model(**batch)
-            loss = outputs.loss
-            eval_loss += loss.detach().float()
-            eval_preds.extend(
-                tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
-            )
+            # evaluate for each 5 batch-steps
+            if step == len(train_dataloader)-1:  
+                model.eval()  
+                all_preds = []  
+                all_labels = []  
+                with torch.no_grad():  
+                    for val_batch in eval_dataloader:  
+                        val_input_ids = val_batch['input_ids'].to(device)  
+                        val_attention_mask = val_batch['attention_mask'].to(device)  
+                        val_labels = val_batch['labels'].to(device)  
+                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+                        logits = val_outputs['logits']  
+                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                        labels_cpu = val_labels.cpu().numpy()  
+                        all_preds.extend(preds)  
+                        all_labels.extend(labels_cpu)  
+                # 计算评价指标  
+                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                model.train()  
+            global_step+=1
 
-        eval_epoch_loss = eval_loss / len(eval_dataloader)
-        eval_ppl = torch.exp(eval_epoch_loss)
-        train_epoch_loss = total_loss / len(train_dataloader)
-        train_ppl = torch.exp(train_epoch_loss)
-        print(f"{epoch=}: {train_ppl=} {train_epoch_loss=} {eval_ppl=} {eval_epoch_loss=}")
+        avg_loss = total_loss / len(train_dataloader)   
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
 
 
     # 保存权重

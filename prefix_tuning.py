@@ -167,7 +167,7 @@ def train_prefix_tuning(model, tokenizer):
             optimizer.zero_grad()
             
             # evaluate for each 5 batch-steps
-            if global_step % 5 == 0:  
+            if step == len(train_dataloader)-1:  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  
