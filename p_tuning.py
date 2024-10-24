@@ -1,5 +1,6 @@
 
 import torch
+import csv
 import evaluate
 import numpy as np
 from config import Config
@@ -145,6 +146,9 @@ def train_p_tuning(model, tokenizer):
     device = Config['device']
     model = model.to(device)
     global_step = 0
+
+    # 定义一个列表来存储评估结果  
+    evaluation_results = []  
     
     for epoch in range(num_epochs):
         model.train()
@@ -161,7 +165,7 @@ def train_p_tuning(model, tokenizer):
             optimizer.zero_grad()
             
             # evaluate for each 5 batch-steps
-            if global_step % 5 == 0:  
+            if global_step % 5 == 0 or step == len(train_dataloader) - 1:  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  
@@ -181,12 +185,32 @@ def train_p_tuning(model, tokenizer):
                 precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
                 print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
                 model.train()  
+
+                if step == len(train_dataloader) - 1 and epoch == num_epochs - 1:  
+                    evaluation_results.append({  
+                        'accuracy': accuracy,
+                        'precision': precision,
+                        'recall': recall,
+                        'f1': f1,
+                    })  
+
             global_step+=1
 
         avg_loss = total_loss / len(train_dataloader)   
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
             
-            
+    # 保存评估结果到 CSV 文件  
+    csv_file_path = 'evaluation_output.csv'  
+
+    with open(csv_file_path, mode='w', newline='', encoding='utf-8') as csv_file:  
+        fieldnames = ['peft_method', 'dataset','model_name','accuracy', 'precision','recall','f1']  
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)  
+
+        writer.writeheader()  
+        for result in evaluation_results:  
+            writer.writerow(result)  
+
+    print(f"Evaluation results saved to {csv_file_path}") 
 
     # 保存权重
     save_path = Config['save_model_dir']['bert-base-uncased']['p-tuning']['race']

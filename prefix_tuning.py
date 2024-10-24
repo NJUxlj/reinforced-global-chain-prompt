@@ -62,7 +62,7 @@ def train_prefix_tuning(model, tokenizer):
     model_name = 'bert-base-uncased'  
     num_labels = 4  # ['A', 'B', 'C', 'D']
     prompt_length = 30  
-    batch_size = 2  
+    batch_size = Config["batch_size"] 
     lr = 3e-2
     num_epochs = 5
     max_length = 512 - prompt_length
