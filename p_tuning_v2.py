@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 import argparse
 import evaluate
 import os
@@ -232,7 +233,8 @@ def train_p_tuning_v2(model, tokenizer):
     ], lr=learning_rate)  
 
     # 训练循环  
-    model.train()  
+    model.train() 
+    global_step = 0 
     for epoch in range(num_epochs):  
         total_loss = 0
         for batch in train_dataloader:  
@@ -244,8 +246,31 @@ def train_p_tuning_v2(model, tokenizer):
             loss = outputs['loss']  
             loss.backward()  
             optimizer.step()  
-            total_loss += loss.item()  
-        avg_loss = total_loss / len(train_dataloader)  
+            total_loss += loss.item()
+            
+            # evaluate for each 5 batch-steps
+            if global_step % 5 == 0:  
+                model.eval()  
+                all_preds = []  
+                all_labels = []  
+                with torch.no_grad():  
+                    for val_batch in eval_dataloader:  
+                        val_input_ids = val_batch['input_ids'].to(device)  
+                        val_attention_mask = val_batch['attention_mask'].to(device)  
+                        val_labels = val_batch['labels'].to(device)  
+                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+                        logits = val_outputs['logits']  
+                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                        labels_cpu = val_labels.cpu().numpy()  
+                        all_preds.extend(preds)  
+                        all_labels.extend(labels_cpu)  
+                # 计算评价指标  
+                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                model.train()  
+              
+        avg_loss = total_loss / len(train_dataloader)   
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
 
     # 保存模型
@@ -287,3 +312,6 @@ if __name__ == "__main__":
 
     # 这里传model进去只是为了符合其他fine-tuning的写法，实际上这里不需要model
     train_p_tuning_v2(model, tokenizer)
+    
+    
+    

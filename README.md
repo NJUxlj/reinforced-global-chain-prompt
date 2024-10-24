@@ -200,3 +200,27 @@ main.py
 | BlackPrompt  | RACE    | 0.85     | 0.84      | 0.83   | 0.84     |
 | BlackPrompt  | MedQA   | 0.77     | 0.76      | 0.75   | 0.76     |
 | BlackPrompt  | SQuAD   | 0.81     | 0.80      | 0.79   | 0.80     |
+
+
+
+
+
+\[  
+\centering  
+\begin{tabular}{|c|c|c|c|}  
+\hline  
+\textbf{\# Params} & \textbf{Method} & \textbf{XSum} & \textbf{CNN/DailyMail} \\ \hline  
+100\% Full FT  &  & 45.49 / 22.33 / 37.26 & 44.16 / 21.28 / 40.90 \\ \hline  
+2.20\% LoRA &  & 43.95 / 20.72 / 35.68 & 45.03 / 21.84 / 42.15 \\ \hline  
+ae AdaLoRA &  & 44.72 / 21.46 / 36.46 & 45.00 / 21.89 / 42.16 \\ \hline  
+1.10\% LoRA &  & 43.40 / 20.20 / 35.20 & 44.72 / 21.58 / 41.84 \\ \hline  
+me AdaLoRA &  & 44.35 / 21.13 / 36.13 & 44.96 / 21.77 / 42.09 \\ \hline  
+0.26\% LoRA &  & 43.18 / 19.89 / 34.92 & 43.95 / 20.91 / 40.98 \\ \hline  
+me AdaLoRA &  & 43.55 / 20.17 / 35.20 & 44.39 / 21.28 / 41.50 \\ \hline  
+0.13\% LoRA &  & 42.81 / 19.68 / 34.73 & 43.68 / 20.63 / 40.71 \\ \hline  
+ee AdaLoRA &  & 43.29 / 19.95 / 35.04 & 43.94 / 20.83 / 40.96 \\ \hline  
+\end{tabular}  
+\caption{表格标题}  
+\label{tab:my_label}  
+\end{table}  
+\]  
