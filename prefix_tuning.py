@@ -1,6 +1,9 @@
 import torch
 
 from config import Config
+import numpy as np
+import evaluate
+from sklearn.metrics import precision_recall_fscore_support
 
 
 from load import (
@@ -46,7 +49,11 @@ from tqdm import tqdm
 
 
 
+'''
+Prefix tuning prefixes a series of task-specific vectors to the input sequence that can be learned while keeping the pretrained model frozen. 
+The prefix parameters are inserted in all of the model layers.
 
+'''
 
 
 
@@ -56,8 +63,8 @@ def train_prefix_tuning(model, tokenizer):
     num_labels = 4  # ['A', 'B', 'C', 'D']
     prompt_length = 30  
     batch_size = 2  
-    num_epochs = 5  
-    learning_rate = 5e-5  
+    lr = 3e-2
+    num_epochs = 5
     max_length = 512 - prompt_length
     
     
@@ -94,34 +101,46 @@ def train_prefix_tuning(model, tokenizer):
     tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
     
     # Prompt-tuning
-    peft_config = PromptTuningConfig(
-        peft_type="PROMPT_TUNING",
+    peft_config = PrefixTuningConfig(
+        peft_type="PREFIX_TUNING",
         task_type=TaskType.SEQ_CLS, 
         num_virtual_tokens=prompt_length, 
         token_dim=768,  
         num_transformer_submodules=1,
-        # In many cases, this is set to 1, 
-        # meaning that the prompt tuning will interact with a single submodule, 
-        # often the self-attention submodule, to inject the prompt information into the model.
         num_attention_heads=12,
-        num_layers=1,
-        prompt_tuning_init = "TEXT",
-        prompt_tuning_init_text = "Classify the answer of this question among  A, B, C, and D",
-        tokenizer_name_or_path = tokenizer_path,
+        num_layers=12,
+        encoder_hidden_size=768,
+    
     )
     
     # Input Shape: (batch_size, total_virtual_tokens)
 
     # Output Shape: (batch_size, total_virtual_tokens, token_dim)
     
+    # 使用 get_peft_model 包装模型时，PEFT 库通常会自动冻结基础模型的参数，并将 PEFT 参数设置为可训练。
     model = get_peft_model(model, peft_config)
+    
+    # make sure to frozen the base model parameters
+    for param in model.base_model.parameters():  
+        param.requires_grad = False  
+        
+    # make sure that the prefix tokens is trainable
+    for name, param in model.named_parameters():  
+        if 'prefix_encoder' in name:  
+            param.requires_grad = True 
+    
+    
     model.print_trainable_parameters()
     
 
-    lr = 3e-2
-    num_epochs = 5
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    # make sure that the fine-tuning will only update virual tokens
+    # optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()), 
+        lr=lr
+    )
+    
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=0,
@@ -130,6 +149,7 @@ def train_prefix_tuning(model, tokenizer):
     
     device = Config['device']
     model = model.to(device)
+    global_step = 0
     
     for epoch in range(num_epochs):
         model.train()
@@ -145,34 +165,44 @@ def train_prefix_tuning(model, tokenizer):
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            
+            # evaluate for each 5 batch-steps
+            if global_step % 5 == 0:  
+                model.eval()  
+                all_preds = []  
+                all_labels = []  
+                with torch.no_grad():  
+                    for val_batch in eval_dataloader:  
+                        val_input_ids = val_batch['input_ids'].to(device)  
+                        val_attention_mask = val_batch['attention_mask'].to(device)  
+                        val_labels = val_batch['labels'].to(device)  
+                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+                        logits = val_outputs['logits']  
+                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                        labels_cpu = val_labels.cpu().numpy()  
+                        all_preds.extend(preds)  
+                        all_labels.extend(labels_cpu)  
+                # 计算评价指标  
+                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                model.train()  
+            global_step+=1
 
-        model.eval()
-        eval_loss = 0
-        eval_preds = []
-        for step, batch in enumerate(tqdm(eval_dataloader)):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            print("batch['input_ids'].shape = ", batch['input_ids'].shape)  
-            with torch.no_grad():
-                outputs = model(**batch)
-            loss = outputs.loss
-            eval_loss += loss.detach().float()
-            eval_preds.extend(
-                tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
-            )
-
-        eval_epoch_loss = eval_loss / len(eval_dataloader)
-        eval_ppl = torch.exp(eval_epoch_loss)
-        train_epoch_loss = total_loss / len(train_dataloader)
-        train_ppl = torch.exp(train_epoch_loss)
-        print(f"{epoch=}: {train_ppl=} {train_epoch_loss=} {eval_ppl=} {eval_epoch_loss=}")
+        avg_loss = total_loss / len(train_dataloader)   
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+            
 
 
     # 保存权重
-    torch.save(model.state_dict(), Config['save_model_dir']['bert-base-uncased']['prefix-tuning']['race']) 
-
-
-
-
+    save_path = Config['save_model_dir']['bert-base-uncased']['prefix-tuning']['race']
+    # torch.save(model.state_dict(), save_path) 
+    
+    # 直接使用 torch.save(model.state_dict(), ...) 可能不会正确保存 PEFT 模型的参数
+    
+    # we recommand to use the model.save_pretrained() method to save the model and the PEFT adapter
+    model.save_pretrained(save_path)
+    # tokenizer.save_pretrained('path_to_save_tokenizer')
 
 
 

@@ -1,23 +1,11 @@
 
-# config = PromptEncoderConfig(
-#     peft_type="P_TUNING",
-#     task_type="SEQ_2_SEQ_LM",
-#     num_virtual_tokens=20,
-#     token_dim=768,
-#     num_transformer_submodules=1,
-#     num_attention_heads=12,
-#     num_layers=12,
-#     encoder_reparameterization_type="MLP",
-#     encoder_hidden_size=768,
-# )
-
-# prompt_encoder = PromptEncoder(config)  
-
-
 import torch
+import evaluate
+import numpy as np
 from config import Config
 from load import (
     preprocess_function_race_pt, 
+    preprocess_function_race,
     load_dataset_from_huggingface,
     preprocess_race,
 )
@@ -41,6 +29,8 @@ from transformers import (
 )
 
 from peft import (
+    TaskType,
+    PeftType,
     PromptEncoder,
     PromptEncoderConfig, 
     get_peft_model,
@@ -52,11 +42,23 @@ from peft import (
 
 
 from tqdm import tqdm
+from sklearn.metrics import precision_recall_fscore_support
 
 
 
-
-def train(model):
+def train_p_tuning(model, tokenizer):
+    
+    
+    # define hyperparameters
+    num_virtual_tokens=20
+    batch_size = 2  
+    lr = 3e-2
+    num_epochs = 5
+    num_epochs = 5
+    max_length = 512 - num_virtual_tokens
+    
+    
+    
     # 加载数据集
     dataset_name = "race"
 
@@ -64,16 +66,15 @@ def train(model):
     ds = load_dataset_from_huggingface(dataset_path,"high")
     
     # coarse-grained preprocessing
-    ds, classes, tokenizer = preprocess_race(ds)
+    ds, classes, tokenizer = preprocess_race(ds, tokenizer)
     
-    Config["classes"][dataset_name] = classes
     
     # fine-grained preprocessing
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
     
     
     processed_ds = ds.map(
-        preprocess_function_race_pt, # 从load.py导入
+        lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
         batched=True,
         num_proc=1,
         remove_columns=ds['train'].column_names,
@@ -84,38 +85,27 @@ def train(model):
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
     
-    # print("train_ds[0] = ", train_ds[0])
 
-    batch_size = 16
-    
-    
-    # print("train_ds[0]", train_ds[0])
-    # print("eval_ds[0]",eval_ds[0])
-    
     print("dataset is preprocessed successfully ~~~")
     
     
-    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
-    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
+    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size)
+    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size)
     
-    
+    device = Config['device'] 
     tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
     
     # Prompt-tuning
-    peft_config = PromptTuningConfig(
-        peft_type="PROMPT_TUNING",
-        task_type="CAUSAL_LM", 
-        num_virtual_tokens=20, 
+    peft_config = PromptEncoderConfig(
+        peft_type="P_TUNING",
+        task_type= TaskType.SEQ_CLS, 
+        num_virtual_tokens=num_virtual_tokens, 
         token_dim=768,
         num_transformer_submodules=1,
-        # In many cases, this is set to 1, 
-        # meaning that the prompt tuning will interact with a single submodule, 
-        # often the self-attention submodule, to inject the prompt information into the model.
         num_attention_heads=12,
-        num_layers=12,
-        prompt_tuning_init = "TEXT",
-        prompt_tuning_init_text = "Predict if the answer of this question is A, B, C, or D",
-        tokenizer_name_or_path = tokenizer_path,
+        num_layers=1,
+        encoder_reparameterization_type="MLP",
+        encoder_hidden_size=768,
     )
     
     # Input Shape: (batch_size, total_virtual_tokens)
@@ -123,13 +113,29 @@ def train(model):
     # Output Shape: (batch_size, total_virtual_tokens, token_dim)
     
     model = get_peft_model(model, peft_config)
+    
+    
+    # make sure to frozen the base model parameters
+    for param in model.base_model.parameters():  
+        param.requires_grad = False  
+        
+    # make sure that the prefix tokens is trainable
+    for name, param in model.named_parameters():  
+        if 'prefix_encoder' in name:  
+            param.requires_grad = True
+    
+    
     model.print_trainable_parameters()
     
 
-    lr = 3e-2
-    num_epochs = 5
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+
+    # optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()), 
+        lr=lr
+    )
+
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=0,
@@ -138,6 +144,7 @@ def train(model):
     
     device = Config['device']
     model = model.to(device)
+    global_step = 0
     
     for epoch in range(num_epochs):
         model.train()
@@ -152,31 +159,42 @@ def train(model):
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            
+            # evaluate for each 5 batch-steps
+            if global_step % 5 == 0:  
+                model.eval()  
+                all_preds = []  
+                all_labels = []  
+                with torch.no_grad():  
+                    for val_batch in eval_dataloader:  
+                        val_input_ids = val_batch['input_ids'].to(device)  
+                        val_attention_mask = val_batch['attention_mask'].to(device)  
+                        val_labels = val_batch['labels'].to(device)  
+                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+                        logits = val_outputs['logits']  
+                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                        labels_cpu = val_labels.cpu().numpy()  
+                        all_preds.extend(preds)  
+                        all_labels.extend(labels_cpu)  
+                # 计算评价指标  
+                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                model.train()  
+            global_step+=1
 
-        model.eval()
-        eval_loss = 0
-        eval_preds = []
-        for step, batch in enumerate(tqdm(eval_dataloader)):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            print("batch['input_ids'].shape = ", batch['input_ids'].shape)  
-            with torch.no_grad():
-                outputs = model(**batch)
-            loss = outputs.loss
-            eval_loss += loss.detach().float()
-            eval_preds.extend(
-                tokenizer.batch_decode(torch.argmax(outputs.logits, -1).detach().cpu().numpy(), skip_special_tokens=True)
-            )
-
-        eval_epoch_loss = eval_loss / len(eval_dataloader)
-        eval_ppl = torch.exp(eval_epoch_loss)
-        train_epoch_loss = total_loss / len(train_dataloader)
-        train_ppl = torch.exp(train_epoch_loss)
-        print(f"{epoch=}: {train_ppl=} {train_epoch_loss=} {eval_ppl=} {eval_epoch_loss=}")
-
+        avg_loss = total_loss / len(train_dataloader)   
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+            
+            
 
     # 保存权重
-    torch.save(model.state_dict(), Config['save_model_dir']['bert-base-uncased']['prompt-tuning']['race'])    
-
+    save_path = Config['save_model_dir']['bert-base-uncased']['p-tuning']['race']
+    # torch.save(model.state_dict(), save_path) 
+    model.save_pretrained(save_path)
+    
+    
+    
 def inference_on_race(save_path, ds:Dataset):
     '''
      inference on race dataset, just a simple test
@@ -210,7 +228,24 @@ if __name__ == '__main__':
     '''
     
     '''
-    model = AutoModelForCausalLM.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])
+    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    print(f"Model's current num_labels: {model.config.num_labels}") 
+     
+    model_config = model.config
+    model_name_or_path = model_config.name_or_path
+    print("model_name_or_path = ", model_name_or_path)
     
-    train(model)
+    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
+        padding_side = "left"
+    else:
+        padding_side = "right"
+    
+    print("padding_side = ", padding_side)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
+
+    
+    train_p_tuning(model, tokenizer)
     

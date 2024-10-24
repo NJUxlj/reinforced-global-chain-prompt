@@ -269,6 +269,7 @@ def train_p_tuning_v2(model, tokenizer):
                 precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
                 print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
                 model.train()  
+            global_step+=1
               
         avg_loss = total_loss / len(train_dataloader)   
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
