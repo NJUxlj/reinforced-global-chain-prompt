@@ -205,7 +205,7 @@ main.py
 
 
 
-\[  
+```latex
 \centering  
 \begin{tabular}{|c|c|c|c|}  
 \hline  
@@ -223,4 +223,4 @@ ee AdaLoRA &  & 43.29 / 19.95 / 35.04 & 43.94 / 20.83 / 40.96 \\ \hline
 \caption{表格标题}  
 \label{tab:my_label}  
 \end{table}  
-\]  
+```
