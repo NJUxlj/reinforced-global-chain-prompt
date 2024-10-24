@@ -67,7 +67,7 @@ from tqdm import tqdm
 
 
 
-def train(model, tokenizer):
+def train_prompt_tuning(model, tokenizer):
     # 加载数据集
     dataset_name = "race"
 
@@ -245,5 +245,5 @@ if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
 
     
-    train(model,tokenizer)
+    train_prompt_tuning(model,tokenizer)
     
