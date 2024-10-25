@@ -10,8 +10,6 @@ model_cot = AutoModelForCausalLM.from_pretrained(model_path).cuda()
 
 
 
-
-
 # Chain-of-Thought
 def generate_reasoning_steps(question, max_length=100):  
     """  
@@ -21,7 +19,7 @@ def generate_reasoning_steps(question, max_length=100):
     inputs = tokenizer_cot.encode(prompt, return_tensors='pt').cuda()  
     outputs = model_cot.generate(  
         inputs,  
-        max_length=max_length,  
+        max_length=max_length,   
         num_return_sequences=1,  
         no_repeat_ngram_size=2,  
         early_stopping=True  

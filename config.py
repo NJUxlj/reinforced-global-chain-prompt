@@ -30,7 +30,7 @@ Config = {
     "dropout": 0.5,
     "learning_rate": 1e-3,
     "batch_size": 16,
-    "num_epochs": 100,
+    "num_epochs": 2,
     "num_workers": 4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "model_path": "model.pth",

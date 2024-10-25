@@ -64,7 +64,7 @@ def train_prefix_tuning(model, tokenizer):
     prompt_length = 30  
     batch_size = Config["batch_size"] 
     lr = 3e-2
-    num_epochs = 5
+    num_epochs = Config['num_epochs']
     max_length = 512 - prompt_length
     
     
@@ -177,7 +177,7 @@ def train_prefix_tuning(model, tokenizer):
                         val_attention_mask = val_batch['attention_mask'].to(device)  
                         val_labels = val_batch['labels'].to(device)  
                         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
-                        logits = val_outputs['logits']  
+                        logits = val_outputs['logits']  # batch_size x num_labels
                         preds = torch.argmax(logits, dim=1).cpu().numpy()  
                         labels_cpu = val_labels.cpu().numpy()  
                         all_preds.extend(preds)  

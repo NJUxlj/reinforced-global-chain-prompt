@@ -54,7 +54,7 @@ def train_p_tuning(model, tokenizer):
     num_virtual_tokens=20
     batch_size = 2  
     lr = 3e-2
-    num_epochs = 5
+    num_epochs = Config["num_epochs"]
     max_length = 512 - num_virtual_tokens
     
     

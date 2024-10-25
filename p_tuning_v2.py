@@ -188,7 +188,7 @@ def train_p_tuning_v2(model, tokenizer):
     num_labels = 4  # ['A', 'B', 'C', 'D']
     prompt_length = 30  
     batch_size = 2  
-    num_epochs = 5  
+    num_epochs = Config['num_epochs']  
     learning_rate = 5e-5  
     max_length = 512 - prompt_length
     
@@ -237,7 +237,7 @@ def train_p_tuning_v2(model, tokenizer):
     global_step = 0 
     for epoch in range(num_epochs):  
         total_loss = 0
-        for batch in train_dataloader:  
+        for epoch, batch in enumerate(tqdm(train_dataloader)):  
             optimizer.zero_grad()  
             input_ids = batch['input_ids'].to(device)  
             attention_mask = batch['attention_mask'].to(device)  
@@ -249,7 +249,7 @@ def train_p_tuning_v2(model, tokenizer):
             total_loss += loss.item()
             
             # evaluate for each 5 batch-steps
-            if global_step % 5 == 0:  
+            if epoch == len(train_dataloader) - 1:  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  

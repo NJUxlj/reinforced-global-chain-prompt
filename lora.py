@@ -112,9 +112,9 @@ def train_lora(model, tokenizer):
     
     peft_type = PeftType.LORA   
     device = Config['device']
-    num_epochs = 5
+    num_epochs = Config['num_epochs']
     lr = 3e-4
-    batch_size = 2
+    batch_size = Config['batch_size']
     max_length=512
     
     config = LoraConfig(
@@ -158,12 +158,12 @@ def train_lora(model, tokenizer):
     args = TrainingArguments(
         # peft_model_id,
         output_dir=Config["output_dir"],  # 用来存储save_strategy保存的模型检查点
-        evaluation_strategy="steps",   #  将评估策略改为每隔一定步数评估一次 
+        evaluation_strategy="epoch",   #  将评估策略改为每隔一定步数评估一次 
         eval_steps = 5,               #  每隔 5 个步骤进行一次评估 
         logging_strategy="steps",     # 日志记录策略设为每隔一定步数记录一次 
-        logging_steps=5,
+        logging_steps=100,
         remove_unused_columns=False,
-        save_strategy="steps",    #  每隔一定步数保存一次模型
+        save_strategy="epoch",    #  每隔一定步数保存一次模型
         learning_rate=lr,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=4,

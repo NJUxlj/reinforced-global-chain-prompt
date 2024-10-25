@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 from config import Config
 
 
@@ -68,6 +68,13 @@ from tqdm import tqdm
 
 
 def train_prompt_tuning(model, tokenizer):
+
+
+    lr = 3e-2
+    num_epochs = Config['num_epochs']
+    batch_size = Config['batch_size']
+
+
     # 加载数据集
     dataset_name = "race"
 
@@ -99,7 +106,7 @@ def train_prompt_tuning(model, tokenizer):
     
     # print("train_ds[0] = ", train_ds[0])
 
-    batch_size = 2
+    
 
     
     
@@ -141,8 +148,7 @@ def train_prompt_tuning(model, tokenizer):
     model.print_trainable_parameters()
     
 
-    lr = 3e-2
-    num_epochs = 5
+
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     lr_scheduler = get_linear_schedule_with_warmup(
@@ -153,12 +159,13 @@ def train_prompt_tuning(model, tokenizer):
     
     device = Config['device']
     model = model.to(device)
-    
+    global_step = 0
+
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
-            print(f"Batch labels: {batch['labels']}") 
+            # print(f"Batch labels: {batch['labels']}") 
             batch = {k: v.to(device) for k, v in batch.items()}
             # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
             outputs = model(**batch)
