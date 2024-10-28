@@ -22,6 +22,10 @@ from load import (
     preprocess_race,
 )
 
+from training_hub import (
+    prepare_model_tokenizer, 
+)
+
 from datasets import (
     # Dataset,
     load_dataset,
@@ -40,16 +44,17 @@ import csv
 import evaluate
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from typing import List, Dict
 
 
 
 
 device = Config['device']
 
-# 初始化模型  
-model_path = Config["models"]["bert-base-uncased"]["model_path"]
-model = AutoModelForSequenceClassification.from_pretrained(model_path).cuda()  
-tokenizer = AutoTokenizer.from_pretrained(model_path)
+# # 初始化模型  
+# model_path = Config["models"]["bert-base-uncased"]["model_path"]
+# model = AutoModelForSequenceClassification.from_pretrained(model_path).cuda()  
+# tokenizer = AutoTokenizer.from_pretrained(model_path)
 
 
 
@@ -141,27 +146,153 @@ class BidirectionalPromptModel(torch.nn.Module):
 
 
 
-# # 后缀Prompt Tokens（使用聚类中心）  
-# def initialize_suffix_prompts(cluster_centers):  
-#     """  
-#     将聚类中心转换为可训练的Prompt参数  
-#     """  
-#     suffix_prompts = torch.tensor(cluster_centers, requires_grad=True).cuda()  
-#     return suffix_prompt_embeddings
 
-# def initialize_prefix_prompts(classification_tokens): 
-#     """
-#     将前缀Prompt Tokens初始化为一个随机向量
-#     """
-#     prefix_prompt_embeddings = torch.nn.Parameter(torch.zeros(num_prefix_tokens, embedding_size,requires_grad=True, device= device),   # (num_prefix_tokens, embedding_size)
-#     )
+def initialize_suffix_prompts(ds, tokenizer, num_suffix_tokens, embedding_size):  
+    """  
+     use Auto-CoT reasoning steps as the suffix prompts
+    """  
+    # 假设我们已经有AutoCoT生成的推理步骤steps，并将其保存为文本列表  
+    steps_list: List[str] = []  
     
-#     return prefix_prompt_embeddings
+    for sample in tqdm(ds['train']):
+        # generate AutoCoT-style input  
+        text = f"Article: {sample['article']}\n\nQuestion: {sample['question']}\n\nOptions: {', '.join(sample['options'])}\n\nAnswer:" 
+        
+        # use pretrained model to generate reasoning steps as a string
+        steps = "Generated reasoning steps for the sample."  
+    
+    
+    suffix_prompt_embeddings = torch.tensor(cluster_centers, requires_grad=True).cuda()  
+    return suffix_prompt_embeddings
+    
 
 
 
+def initialize_prefix_prompts(ds, tokenizer, num_prefix_tokens, embedding_size, classes, K=5): 
+    """
+    use article classification tokens' weighted sum as prefix prompts
+    """
+    
+    # import the article classification model
+    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    num_classes = 10
+    device = Config['device']
+    classification_model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_classes).to(device)  
+
+    
+    # get all articles
+    articles:List[str] = ds['train']['article']   # shape = (n,)
+    encoded_articles:Dict[str, torch.Tensor] = tokenizer(articles, padding=True, truncation=True, return_tensors = 'pt') 
+    input_ids:torch.Tensor = encoded_articles['input_ids'].to(device) # shape = (n, max_length)
+    attention_mask = encoded_articles['attention_mask'].to(device)
+        
+    # get classification scores
+    with torch.no_grad():
+        # outputs = {"logits", "hidden_states", "attentions"}
+        # logits：形状为 (n, 10) 的张量，表示每个输入样本在每个类别的 logits。
+        # hidden_states (if open, it represents the hidden states of all layers)：一个包含多个张量的元组，每个张量的形状为 (n, max_length, hidden_size)。
+        # attentions (if open, it represents the attention weights of all layers)：一个包含多个张量的元组，每个张量的形状为 (n, num_heads, max_length, max_length)。
+        outputs:Dict = classification_model(input_ids=input_ids, attention_mask=attention_mask)
+        logits = outputs.logits
+        predictions = torch.argmax(logits, dim=-1)
+    
+    # map the predictions to the textual labels
+    labels:List[str] = [classes[[pred]] for pred in predictions]
+    
+    # transfer textual labels to embeddings
+    encoded_labels = tokenizer(labels, padding="max_length", truncation=True, max_length=1, return_tensors = 'pt')
+    labels_input_ids = encoded_labels['input_ids'].to(device) # shape = (n, 1)
+    
+    print("labels_input_ids = ", labels_input_ids)
+    
+    # get the embeddings of all examples' labels
+    embeddings = classification_model.get_input_embeddings()(labels_input_ids).mean(dim=1)  # (n, embedding_size)  
+    
+    # get the pooled embedding of all the class label embeddings
+    pooled_embedding = embeddings.mean(dim=0) # shape = (embedding_size)
+    
+    prefix_embeddings = torch.zeros(num_prefix_tokens, embedding_size, device=device)
+    
+    for i in range(num_prefix_tokens):  
+        prefix_embeddings[i] = pooled_embedding
+    
+    prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
+
+    return prefix_prompt_embeddings
 
 
+
+def get_classes_for_dataset(dataset_path, K=5):
+    '''
+    get the label collection of some specific dataset
+        
+    Args:
+        dataset_path: the path of dataset, should be in [race, race-m, race-h, multirc, arc]
+        K: number of classes in the dataset
+    
+    Procedure:
+        1. load the dataset
+        2. load the first 1000 examples from the training set.
+        3. get the sequence embedding of each example.
+        4. get the avearage pooling of the 1000 sequence embeddings, for every 1000 examples, so there are in total len(train_data)//1000 pooled embeddings.
+        5. calculate the cosine similarity between the pooled embedding and every token in the vocab, average the similarity on len(train_data)//1000 pooled embeddings.
+        6. for each token in the vocab, we multiply the similarity by the frequency of the token in the training set. (TF-AS)
+        6. select the top-K tokens in the vocab as the class labels, with the highest TF-AS score.
+    
+    Return:
+        classes: a list of str, which contains the class labels
+    '''
+    ds = None
+    classes = None
+    
+    def reformat_input(dataset_path, ds):
+        if dataset_path == Config["datasets"]["race"]:
+            
+        elif dataset_path == Config["datasets"]["race-m"]:
+            
+        elif dataset_path == Config["datasets"]["race-h"]:
+            
+        elif dataset_path == Config["datasets"]["multirc"]:
+        elif dataset_path == Config["datasets"]["arc"]:
+        elif dataset_path == Config["datasets"]["dream"]:
+        else:
+            raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, race-m, race-h, multirc, arc]")
+        
+    
+    def extract_labels(ds):
+        '''
+        get the label collection of the dataset
+        ''' 
+        
+    
+    if dataset_path == Config["datasets"]["race"]:
+        ds = load_dataset_from_huggingface(dataset_path, "all")
+        
+    elif dataset_path == Config["datasets"]["race-m"]:
+        ds = load_dataset_from_huggingface(dataset_path, "middle")
+        
+    elif dataset_path == Config["datasets"]["race-h"]:
+        ds = load_dataset_from_huggingface(dataset_path, "high")
+        
+    elif dataset_path == Config["datasets"]["multirc"]:
+        ds = load_dataset_from_huggingface(dataset_path)
+    elif dataset_path == Config["datasets"]["arc"]:
+        ds = load_dataset_from_huggingface(dataset_path)
+    elif dataset_path == Config["datasets"]["dream"]:
+        ds = load_dataset_from_huggingface(dataset_path)
+    else:
+        raise ValueError("dataset_path not supported, plase change another in [race, race-m, race-h, multirc, arc]")
+    
+    return classes
+
+
+def get_label_collection_for_class(dataset_path, classes:List[str]):
+    '''
+    将原标签列表中的每个标签扩展成一个标签集合
+    1. 训练一个线性层，将经过MLM的mask token分类到原有的标签
+    
+    return dict["class1" : set(label1, label2, ...)]
+    '''
 
 def train_bidirectional_prompt_tuning(model, tokenizer):
     device = Config['device']
@@ -226,59 +357,6 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     
     train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size)
     eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size)
-
-
-
-    
-    # training_args = TrainingArguments(  
-    #     output_dir=Config["output_dir"],  
-    #     evaluation_strategy='epoch',  
-    #     learning_rate=5e-5,  
-    #     per_device_train_batch_size=batch_size,  
-    #     per_device_eval_batch_size=batch_size,  
-    #     num_train_epochs=5,  
-    #     weight_decay=0.01,  
-    #     logging_dir=Config["logging_dir"],  
-    #     logging_steps=5,
-    #     fp16=True
-    # )  
-
-    # # 8. 定义评估指标  
-    # def compute_metrics(eval_pred):  
-    #     logits, labels = eval_pred  
-    #     predictions = np.argmax(logits, axis=-1)  
-    #     accuracy_metric = evaluate.load("accuracy")  
-    #     # f1_metric = evaluate.load("f1")  
-
-    #     accuracy = accuracy_metric.compute(predictions=predictions, references=labels)  
-    #     precision, recall, f1, _ = precision_recall_fscore_support(  
-    #         labels, predictions, average='weighted'  
-    #     ) 
-
-    #     return {  
-    #         'accuracy': accuracy['accuracy'],  
-    #         'precision': precision,  
-    #         'recall': recall,  
-    #         'f1': f1  
-    #     }
-
-
-    # # 9. 创建Trainer实例  
-    # trainer = Trainer(  
-    #     model=bidirectional_prompt_model,  
-    #     args=training_args,  
-    #     train_dataset=train_dataloader,  
-    #     eval_dataset=eval_dataloader,  
-    #     tokenizer=tokenizer,  
-    #     compute_metrics=compute_metrics,  
-    # )  
-
-    # # 10. 开始训练  
-    # trainer.train()  
-
-    # # 11. 评估模型  
-    # eval_results = trainer.evaluate()  
-    # print(f"Evaluation results: {eval_results}") 
 
 
     
@@ -379,23 +457,36 @@ if __name__ == "__main__":
     
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    print(f"Model's current num_labels: {model.config.num_labels}") 
+    # model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
+    # tokenizer = AutoTokenizer.from_pretrained(model_path)
+    # print(f"Model's current num_labels: {model.config.num_labels}") 
      
-    model_config = model.config
-    model_name_or_path = model_config.name_or_path
-    print("model_name_or_path = ", model_name_or_path)
+    # model_config = model.config
+    # model_name_or_path = model_config.name_or_path
+    # print("model_name_or_path = ", model_name_or_path)
     
-    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-        padding_side = "left"
-    else:
-        padding_side = "right"
+    # if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
+    #     padding_side = "left"
+    # else:
+    #     padding_side = "right"
     
-    print("padding_side = ", padding_side)
+    # print("padding_side = ", padding_side)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
+    # tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
 
+    model, tokenizer = prepare_model_tokenizer(model_path)
 
+    # train_bidirectional_prompt_tuning(model, tokenizer)
+    
+    
+    
+    
+    # 加载数据集
+    dataset_name = "race"
 
-    train_bidirectional_prompt_tuning(model, tokenizer)
+    dataset_path = Config["datasets"][dataset_name]
+    ds = load_dataset_from_huggingface(dataset_path,"high")
+    
+    
+    classes= get_classes_for_dataset(dataset_path)
+    initialize_prefix_prompts(ds, tokenizer,20, 768, classes)

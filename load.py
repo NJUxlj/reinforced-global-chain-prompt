@@ -6,6 +6,8 @@ import torch
 
 from config import Config
 
+from typing import List, Dict, Union
+
 
 
 # 初始化分词器  
@@ -40,6 +42,9 @@ def load_dataset_from_csv(file_path):
     
     print(dataset[0])
     return dataset  
+
+def load_dataset_from_json(file_path):
+    pass
 
 
 def preprocess_function(examples):  
@@ -139,7 +144,8 @@ def preprocess_function_race_pt(examples, text_column = "article", label_column 
     return model_inputs
     
 
-def preprocess_function_race(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 512, tokenizer = None):
+def preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
+                             dataset_name = 'race', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
     
     
     
@@ -152,6 +158,14 @@ def preprocess_function_race(examples, text_column = "article", label_column  ="
           ds_builder: use it to get the name of dataset
           
           classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
+        
+    return: 
+  
+          {  
+                'input_ids': [[101, ..., 102], [101, ..., 102], ...],          # 每个子列表对应一个样本的 token IDs  
+                'attention_mask': [[1, ..., 1], [1, ..., 0], ...],             # 1 表示实际 token，0 表示填充  
+                'labels': [0, 2, 3, ...]                                        # 标签的整数索引表示  
+            }  
           
     '''
     assert tokenizer is not None, "tokenizer in \"preprocess_function_race\" is None, please assign one"
@@ -186,6 +200,35 @@ def preprocess_function_race(examples, text_column = "article", label_column  ="
 
     
     return model_inputs  
+
+
+def preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
+                                dataset_name = 'multirc', max_length = 512)->Dict[str,Union[List,List[List]]]:
+    """ 
+    处理multirc数据集的预处理函数，将问题和选项合并为一个句子，并添加特殊标记。
+    """
+    
+
+
+def preprocess_function_arc(examples, text_column = "article", label_column  ="answer", 
+                            dataset_name = 'arc', max_length = 512)->Dict[str,Union[List,List[List]]]:
+    pass
+
+
+
+
+def preprocess_function_record(examples, text_column = "article", label_column  ="answer", 
+                               dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
+    pass
+
+
+
+
+def preprocess_function_dream(examples, text_column = "article", label_column  ="answer", 
+                              dataset_name = 'dream', max_length = 512)->Dict[str,Union[List,List[List]]]:
+    pass
+
+
 def preprocess_pipeline_pt(ds: Dataset):
     '''
         将所有数据预处理流程放到一个函数中
@@ -295,12 +338,6 @@ def preprocess_race_m(ds:Dataset):
 def preprocess_race_c(dataset: Dataset):
     pass
 
-def preprocess_mnli(dataset: Dataset):
-    pass
-
-
-def preprocess_mrpc(dataset: Dataset):
-    pass
 
 
 

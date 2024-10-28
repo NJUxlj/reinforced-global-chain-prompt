@@ -7,7 +7,7 @@ MODEL_BASE_PATH = ""
 if system_name == "Windows":
     MODEL_BASE_PATH = "D:\\pre-trained-models\\"
 elif system_name == "Linux":
-    MODEL_BASE_PATH = "/mnt/data/models/"
+    MODEL_BASE_PATH = "/mnt/data/models/"   
 
 print("MODEL_BASE_PATH: ", MODEL_BASE_PATH)
 
@@ -43,48 +43,53 @@ Config = {
                 "race-m": "save/bert-base-uncased/prompt-tuning/race-m",
                 "race-h": "save/bert-base-uncased/prompt-tuning/race-h",
                 "race-c": "save/bert-base-uncased/prompt-tuning/race-c",
-                "mnli": "save/bert-base-uncased/prompt-tuning/mnli",
-                "mrpc": "save/bert-base-uncased/prompt-tuning/mrpc",
+                "record": "save/bert-base-uncased/prompt-tuning/record", # ReCoRD
+                "multirc": "save/bert-base-uncased/prompt-tuning/multirc",  #MultiRC
+                "arc": "save/bert-base-uncased/prompt-tuning/arc",   #ARC
+                "dream": "save/bert-base-uncased/prompt-tuning/dream", # DREAM
             },
             "prefix-tuning":{
                 "race": "save/bert-base-uncased/prefix-tuning/race",
                 "race-m": "save/bert-base-uncased/prefix-tuning/race-m",
                 "race-h": "save/bert-base-uncased/prefix-tuning/race-h",
                 "race-c": "save/bert-base-uncased/prefix-tuning/race-c",
-                "mnli": "save/bert-base-uncased/prefix-tuning/mnli",
-                "mrpc": "save/bert-base-uncased/prefix-tuning/mrpc",
+                "record": "save/bert-base-uncased/prefix-tuning/record",
+                "multirc": "save/bert-base-uncased/prefix-tuning/multirc",
+                "arc": "save/bert-base-uncased/prefix-tuning/arc",
+                "dream": "save/bert-base-uncased/prefix-tuning/dream",
+
             },
             "bidirectional-prompt-tuning":{
                 "race": "save/bert-base-uncased/bidirectional-prompt-tuning/race",
                 "race-m": "save/bert-base-uncased/bidirectional-prompt-tuning/race-m",
                 "race-h": "save/bert-base-uncased/bidirectional-prompt-tuning/race-h",
                 "race-c": "save/bert-base-uncased/bidirectional-prompt-tuning/race-c",
-                "mnli": "save/bert-base-uncased/bidirectional-prompt-tuning/mnli",
-                "mrpc": "save/bert-base-uncased/bidirectional-prompt-tuning/mrpc",
+                "record": "save/bert-base-uncased/bidirectional-prompt-tuning/record",
+                "multirc": "save/bert-base-uncased/bidirectional-prompt-tuning/multirc",
+                "arc": "save/bert-base-uncased/bidirectional-prompt-tuning/arc",
+                "dream": "save/bert-base-uncased/bidirectional-prompt-tuning/dream",
+
             },
             "p-tuning-v2":{
                 "race": "save/bert-base-uncased/p-tuning-v2/race",
                 "race-h": "save/bert-base-uncased/p-tuning-v2/race-h",
                 "race-m": "save/bert-base-uncased/p-tuning-v2/race-m",
                 "race-c": "save/bert-base-uncased/p-tuning-v2/race-c",
-                "mnli": "save/bert-base-uncased/p-tuning-v2/mnli",
-                "mrpc": "save/bert-base-uncased/p-tuning-v2/mrpc",
+
             },
             "lora":{
                 "race": "save/bert-base-uncased/lora/race",
                 "race-h": "save/bert-base-uncased/lora/race-h",
                 "race-m": "save/bert-base-uncased/lora/race-m",
                 "race-c": "save/bert-base-uncased/lora/race-c",
-                "mnli": "save/bert-base-uncased/lora/mnli",
-                "mrpc": "save/bert-base-uncased/lora/mrpc",
+
             },
             "o-lora":{
                 "race": "save/bert-base-uncased/o-lora/race",
                 "race-h": "save/bert-base-uncased/o-lora/race-h",
                 "race-m": "save/bert-base-uncased/o-lora/race-m",
                 "race-c": "save/bert-base-uncased/o-lora/race-c",
-                "mnli": "save/bert-base-uncased/o-lora/mnli",
-                "mrpc": "save/bert-base-uncased/o-lora/mrpc",
+
             }
             
         },
@@ -196,6 +201,12 @@ Config = {
     "datasets":{
         "race-c":"./data/race-c",  # tasksource/race-c
         "race":"./data/race",   # ehovy/race
+        "race-m":"./data/race",
+        "race-h":"./data/race",
+        "record": "./data/record", # ReCoRD
+        "multirc": "./data/eraser_multi_rc",  #MultiRC
+        "arc": "./data/ai2_arc",   #ARC
+        "dream": "./data/dream", # DREAM   https://github.com/nlpdata/dream
     },
     "classes":{
         "race-c":"",
