@@ -3,11 +3,14 @@ import platform
 
 system_name = platform.system() 
 
+# AutoDL: /root/autodl-tmp/models/
+# aliyun-dsw: "/mnt/data/models/"   
+
 MODEL_BASE_PATH = ""
 if system_name == "Windows":
     MODEL_BASE_PATH = "D:\\pre-trained-models\\"
 elif system_name == "Linux":
-    MODEL_BASE_PATH = "/mnt/data/models/"   
+    MODEL_BASE_PATH = "/root/autodl-tmp/models/"   
 
 print("MODEL_BASE_PATH: ", MODEL_BASE_PATH)
 
@@ -119,16 +122,23 @@ Config = {
         "bert-base-uncased": {
             "model_name": "bert-base-uncased",
             "max_length": 512,
-            "num_labels": 1,
+            "num_labels": 4,
             "model_path": f"{MODEL_BASE_PATH}bert-base-uncased"
         },
         "bert-base-NER":{
             "model_name": "bert-base-NER",
             "max_length": 512,
-            "num_labels": 1,
+            "num_labels": 4,
             "model_path": f"{MODEL_BASE_PATH}bert-base-NER"
         },
         
+        "bert-large-uncased":{
+            "model_name": "bert-large-uncased",
+            "max_length": 1024,
+            "num_labels": 4,
+            "model_path": f"{MODEL_BASE_PATH}bert-large-uncased"
+        },
+    
         "qwen":{
             "Qwen2.5-0.5B":{
                 "model_name": "Qwen2.5-0.5B",
