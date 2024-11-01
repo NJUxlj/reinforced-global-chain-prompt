@@ -1,5 +1,6 @@
 
 import torch
+import torch.nn as nn
 import csv
 import evaluate
 import numpy as np
@@ -41,6 +42,10 @@ from peft import (
     AutoPeftModelForSequenceClassification,
 )
 
+
+from accelerate import (
+    Accelerator,
+)
 
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
@@ -149,16 +154,30 @@ def train_p_tuning(model, tokenizer):
     # 定义一个列表来存储评估结果  
     evaluation_results = []  
     
+    accelerator = Accelerator()
+    model, optimizer, train_dataloader, scheduler = accelerator.prepare(
+            model, optimizer, train_dataloader, lr_scheduler
+        )
+    
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
             batch = {k: v.to(device) for k, v in batch.items()}
-            # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
+            # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), 
+            #           "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]]),
+            #          "labels": tensor([0, 1, 2, ...])}
             outputs = model(**batch)
-            loss = outputs.loss
+            # use CrossEntropy
+            criterion = nn.CrossEntropyLoss
+            # loss = outputs.loss
+            logits = outputs.logits # shape = [batch_size, num_labels]
+            loss = criterion(logits, batch['labels'])
+            # use distributed training
+            accelerator.backward(loss)
+            # loss.backward()
+            
             total_loss += loss.detach().float()
-            loss.backward()
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()

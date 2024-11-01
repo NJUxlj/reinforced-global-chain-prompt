@@ -16,6 +16,10 @@ from peft import (
     TaskType
 )
 
+from accelerate import(
+    Accelerator,
+)
+
 from load import (
     preprocess_function_race_pt, 
     preprocess_function_race,
