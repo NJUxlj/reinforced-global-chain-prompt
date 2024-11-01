@@ -204,7 +204,10 @@ Config = {
         "race-m":"./data/race",
         "race-h":"./data/race",
         "record": "./data/record", # ReCoRD
-        "multirc": "./data/eraser_multi_rc",  #MultiRC
+        "multirc": {
+                    "all":"./data/mutlirc-v2",
+                    "train":"./data/mutlirc-v2/train_456-fixedIds.json",
+                    "validation":"./data/mutlirc-v2/dev_83-fixedIds.json"} , #MultiRC
         "arc": "./data/ai2_arc",   #ARC
         "dream": "./data/dream", # DREAM   https://github.com/nlpdata/dream
     },

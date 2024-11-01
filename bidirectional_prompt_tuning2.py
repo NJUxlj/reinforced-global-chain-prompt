@@ -2,6 +2,7 @@ from transformers import (
     default_data_collator,
     get_linear_schedule_with_warmup,
     BertForSequenceClassification,
+    AutoModel,
     AutoTokenizer,  
     AutoModelForSequenceClassification,  
     Trainer,  
@@ -39,12 +40,14 @@ from config import Config
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  
 import numpy as np
 import csv
 import evaluate
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
 from typing import List, Dict
+from collections import defaultdict
 
 
 
@@ -222,13 +225,14 @@ def initialize_prefix_prompts(ds, tokenizer, num_prefix_tokens, embedding_size, 
 
 
 
-def get_classes_for_dataset(dataset_path, K=5):
+def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512):
     '''
     get the label collection of some specific dataset
         
     Args:
         dataset_path: the path of dataset, should be in [race, race-m, race-h, multirc, arc]
         K: number of classes in the dataset
+        model: we need to get the embedding weight to calc cosine similarity
     
     Procedure:
         1. load the dataset
@@ -242,53 +246,151 @@ def get_classes_for_dataset(dataset_path, K=5):
     Return:
         classes: a list of str, which contains the class labels
     '''
-    ds = None
     classes = None
+    model = model.eval()
+    device = Config['device']
+    model.to(device)
     
-    def reformat_input(dataset_path, ds):
-        if dataset_path == Config["datasets"]["race"]:
+    all_pooled_embeddings = [] # store the pooled embeddings of every 1000 examples
+    
+    vocab_size = tokenizer.vocab_size
+    # count the word frequency of each word in vocab on the training set
+    word_freq = {token_id:0 for token_id in range(vocab_size)}
+    
+    
+    def reformat_input(dataset_path, tokenizer, max_length=max_length):
+        '''
+        根据数据集的格式将问题格式化为相应的字符串
+         e.g. if dataset = race: "Article: ... Question: ... Options: ... Answer:"
+        '''
+        if dataset_path == Config["datasets"]["race"] or \
+                dataset_path == Config["datasets"]["race-m"] or \
+                    dataset_path == Config["datasets"]["race-h"]:
+                        
+            ds = load_dataset_from_huggingface(dataset_path, "all")
             
-        elif dataset_path == Config["datasets"]["race-m"]:
+            # corse-grained preprocessing
+            ds, classes, tokenizer = preprocess_race(ds, tokenizer)
             
-        elif dataset_path == Config["datasets"]["race-h"]:
+            # fine-grained preprocessing
+            processed_ds = ds.map(
+                lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
+                batched=True,
+                num_proc=1,
+                remove_columns=ds['train'].column_names,
+                load_from_cache_file=False,
+                desc="Running tokenizer on dataset",
+            )
             
+            train_ds = processed_ds["train"]
+                       
+           
         elif dataset_path == Config["datasets"]["multirc"]:
+            pass
         elif dataset_path == Config["datasets"]["arc"]:
+            pass
         elif dataset_path == Config["datasets"]["dream"]:
+            pass
         else:
             raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, race-m, race-h, multirc, arc]")
         
+        return train_ds
     
-    def extract_labels(ds):
-        '''
-        get the label collection of the dataset
-        ''' 
-        
+    train_ds = reformat_input(dataset_path, tokenizer)
     
-    if dataset_path == Config["datasets"]["race"]:
-        ds = load_dataset_from_huggingface(dataset_path, "all")
+    train_data_loader = DataLoader(train_ds, batch_size=1000, 
+                                   collate_fn=default_data_collator, 
+                                   num_workers=0, # use as your need
+                                   shuffle=False)
+
+    
+    with torch.no_grad():
+        for index, batch in enumerate(tqdm(train_data_loader)):
+            # get the average embedding of each batch
+            batch = {k:v.to(device) for k, v in batch.items()}
+            
+            input_ids = batch['input_ids']
+            input_ids_np = input_ids.cpu().numpy()
+            for ids in input_ids_np:  
+                for id in ids:
+                    id = int(id)  
+                    word_freq[id] += 1
+            
+            # outputs = model(**batch)
+            embeddings = model.embeddings(input_ids) # shape = (batch_size, seq_len, hidden_size)
+            # firstly, pooling on the seq_len dimension
+            pooled_embedding = embeddings.mean(dim=1) # shape = (batch_size, hidden_size)
+            # then, pooling on the batch_size dimension
+            all_pooled_embeddings.append(pooled_embedding.mean(dim=0).cpu()) # shape = (hidden_size)
+    
+    # vertically stack all the pooled embeddings into a matrix
+    pooled_embeddings_matrix = torch.cat(all_pooled_embeddings, dim=0) # shape = (num_examples, hidden_size)
+
+    num_pooled = len(train_data_loader) // 1000  
+    if num_pooled == 0:
+        num_pooled = 1
+    vocab_size =  tokenizer.vocab_size
+    token_embeddings = model.embeddings.weight_embeddings.weight # [vocab_size, hidden_size]
+
+    # 计算池化嵌入与词汇表中每个词嵌入的余弦相似度，并取平均值
+    cosine_similarities = F.cosine_similarity(
+        x1=pooled_embeddings_matrix,
+        x2 =token_embeddings,
+        dim=1
+    ) # shape = (num_pooled, vocab_size)
+    
+    avg_similarities = cosine_similarities.mean(dim=0) # shape = (vocab_size)
+    
+    
+    # transfer the word frequency to tensor
+    freq_tensor = torch.zeros(vocab_size) 
+    for token_id, freq in word_freq.items():  
+        if token_id < vocab_size:  
+            freq_tensor[token_id] = freq  
+    
+    # calculate TF-AS score
+    tf_as_scores = avg_similarities * freq_tensor
+    
+    
+    # choose Top-K as class labels
+    topk_scores, topk_indices = tf_as_scores.topk(K)
+    for idx in topk_indices:    
+        classes.append(tokenizer.decode(idx)) # here idx can be a integer or list of integers
+
+    # remove special possible characters
+    tmp_classes=[]
+    for label in classes:
+        if label.strip() and not label.startswith("["):
+            tmp_classes.append(label.strip())
+    classes = tmp_classes
+    
+    # get the label collections expanded from the class labels
+ 
+    
+    # if dataset_path == Config["datasets"]["race"]:
+    #     ds = load_dataset_from_huggingface(dataset_path, "all")
         
-    elif dataset_path == Config["datasets"]["race-m"]:
-        ds = load_dataset_from_huggingface(dataset_path, "middle")
+    # elif dataset_path == Config["datasets"]["race-m"]:
+    #     ds = load_dataset_from_huggingface(dataset_path, "middle")
         
-    elif dataset_path == Config["datasets"]["race-h"]:
-        ds = load_dataset_from_huggingface(dataset_path, "high")
+    # elif dataset_path == Config["datasets"]["race-h"]:
+    #     ds = load_dataset_from_huggingface(dataset_path, "high")
         
-    elif dataset_path == Config["datasets"]["multirc"]:
-        ds = load_dataset_from_huggingface(dataset_path)
-    elif dataset_path == Config["datasets"]["arc"]:
-        ds = load_dataset_from_huggingface(dataset_path)
-    elif dataset_path == Config["datasets"]["dream"]:
-        ds = load_dataset_from_huggingface(dataset_path)
-    else:
-        raise ValueError("dataset_path not supported, plase change another in [race, race-m, race-h, multirc, arc]")
+    # elif dataset_path == Config["datasets"]["multirc"]:
+    #     ds = load_dataset_from_huggingface(dataset_path)
+    # elif dataset_path == Config["datasets"]["arc"]:
+    #     ds = load_dataset_from_huggingface(dataset_path)
+    # elif dataset_path == Config["datasets"]["dream"]:
+    #     ds = load_dataset_from_huggingface(dataset_path)
+    # else:
+    #     raise ValueError("dataset_path not supported, plase change another in [race, race-m, race-h, multirc, arc]")
     
     return classes
 
 
 def get_label_collection_for_class(dataset_path, classes:List[str]):
     '''
-    将原标签列表中的每个标签扩展成一个标签集合
+    将原问题分类标签列表中的每个标签扩展成一个标签集合
     1. 训练一个线性层，将经过MLM的mask token分类到原有的标签
     
     return dict["class1" : set(label1, label2, ...)]
@@ -474,7 +576,7 @@ if __name__ == "__main__":
 
     # tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
 
-    model, tokenizer = prepare_model_tokenizer(model_path)
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModel)
 
     # train_bidirectional_prompt_tuning(model, tokenizer)
     
@@ -485,8 +587,12 @@ if __name__ == "__main__":
     dataset_name = "race"
 
     dataset_path = Config["datasets"][dataset_name]
-    ds = load_dataset_from_huggingface(dataset_path,"high")
+    # ds = load_dataset_from_huggingface(dataset_path,"high")
     
     
-    classes= get_classes_for_dataset(dataset_path)
-    initialize_prefix_prompts(ds, tokenizer,20, 768, classes)
+    # classes= get_classes_for_dataset(dataset_path)
+    # initialize_prefix_prompts(ds, tokenizer,20, 768, classes)
+    
+    classes = get_classes_for_dataset(dataset_path,model, tokenizer)
+    
+    print("classes = ", classes)

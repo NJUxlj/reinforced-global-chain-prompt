@@ -43,10 +43,34 @@ def load_dataset_from_csv(file_path):
     print(dataset[0])
     return dataset  
 
-def load_dataset_from_json(file_path):
-    pass
+def load_dataset_from_json(train_data_path = None, validation_data_path=None, data_files:Union[str, Dict[str,str]]=None, split = None):
+    
+    if data_files is not None:
+        
+        if isinstance(data_files, dict):
+            print("data_files is a dict")
+        else:
+            print("data_files is a str")
+        
+        ds = load_dataset('json', data_files=data_files, split=split)  
 
-
+        print(ds[0])
+    else:
+        if train_data_path and validation_data_path:
+            ds = load_dataset('json', data_files={'train':train_data_path, 'validation':validation_data_path}, split= split)
+        else:
+            if train_data_path:
+                if split!='train':
+                    raise ValueError(f"train_data_path and split={split} are not compatible !!!")
+                ds = load_dataset('json', data_files=train_data_path)
+            elif validation_data_path:
+                if split!='validation':
+                    raise ValueError(f"dev_data_path and split={split} are not compatible !!!")
+                ds = load_dataset('json', data_files=validation_data_path)
+            else:
+                raise ValueError("train_data_path or dev_data_path or data_files must be provided !!!")
+        
+    return ds
 def preprocess_function(examples):  
     """  
     将输入文本进行分词编码  
@@ -393,20 +417,30 @@ if __name__ == "__main__":
     # valid_dataset = train_testvalid['test']  
     
     
-    print("=============================")
-    dataset_path = Config["datasets"]["race"]
-    ds=load_dataset_from_huggingface(dataset_path, "high")
+    # print("=============================")
+    # dataset_path = Config["datasets"]["race"]
+    # ds=load_dataset_from_huggingface(dataset_path, "high")
     
-    print("ds['train'][0]  = \n", ds['train'][0])
-    print("answer = ", ds["train"].features)
+    # print("ds['train'][0]  = \n", ds['train'][0])
+    # print("answer = ", ds["train"].features)
     
-    ds_builder = load_dataset_builder(dataset_path, "high")
+    # ds_builder = load_dataset_builder(dataset_path, "high")
     
-    print("====================")
-    print(ds_builder.info.dataset_name) 
+    # print("====================")
+    # print(ds_builder.info.dataset_name) 
     
     
-    print("====================") 
+    # print("====================") 
  
     # preprocess_race(ds)
     # preprocess_pipeline_pt(ds)
+    
+    
+    dataset_name = "multirc"
+    train_data_path = Config['datasets']['multirc']['train']
+    validation_data_path = Config['datasets']['multirc']['validation']
+    ds = load_dataset_from_json(train_data_path=train_data_path, validation_data_path=validation_data_path, split="train")
+    
+    print(ds[0])
+    print("=====================================")
+    print('len(ds[0]) = ',len(ds[0]))

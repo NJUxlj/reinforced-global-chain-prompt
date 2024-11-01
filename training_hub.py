@@ -19,6 +19,7 @@ from datasets import (
 )
 
 from transformers import (
+    AutoModel,
     AutoTokenizer,
     AutoModelForSequenceClassification,
 )
@@ -43,11 +44,11 @@ peft_dict = {
     "lora": train_lora
 }
 
-def prepare_model_tokenizer(model_path):
+def prepare_model_tokenizer(model_path, auto_model_class = AutoModel):
     '''
      return model, tokenizer
     '''
-    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
+    model = auto_model_class.from_pretrained(model_path, num_labels=4)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     print(f"Model's current num_labels: {model.config.num_labels}") 
      
