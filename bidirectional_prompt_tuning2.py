@@ -48,10 +48,23 @@ import torch.nn.functional as F
 import numpy as np
 import csv
 import evaluate
+import gensim
+from gensim import corpora, models
+import nltk
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.cluster import KMeans
 from typing import List, Dict
 from collections import defaultdict
+
+
+import nltk  
+nltk.download('punkt') 
+nltk.download('punkt_tab') 
+nltk.download('stopwords')  
+from nltk.corpus import stopwords  
+from nltk.tokenize import word_tokenize
+stop_words = set(stopwords.words('english')) 
 
 
 
@@ -227,7 +240,83 @@ def initialize_prefix_prompts(ds, tokenizer, num_prefix_tokens, embedding_size, 
 
     return prefix_prompt_embeddings
 
-
+def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "normal"):
+    '''
+       This function will be used when generating class labels for each sample in the dataset.
+        
+       根据数据集的格式将问题格式化为相应的字符串
+        e.g. if dataset = race: "Article: ... Question: ... Options: ... Answer:"
+        
+        
+        reformat_type: "normal" or "lda" or "cluster":
+        
+            "normal": use the get_classes_for_dataset() to get class labels
+            "lda": use the get_classes_lda() to get class labels
+            "cluster": use the get_classes_cluster() to get class labels
+    '''
+    if dataset_path == Config["datasets"]["race"] or \
+            dataset_path == Config["datasets"]["race-m"] or \
+                dataset_path == Config["datasets"]["race-h"]:
+                    
+        ds = load_dataset_from_huggingface(dataset_path, "all")
+        
+        if reformat_type == "normal":
+            # corse-grained preprocessing
+            ds, classes, tokenizer = preprocess_race(ds, tokenizer)
+            
+            # fine-grained preprocessing
+            processed_ds = ds.map(
+                lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), 
+                batched=True,
+                num_proc=1,
+                remove_columns=ds['train'].column_names,
+                load_from_cache_file=False,
+                desc="Running tokenizer on dataset",
+            )
+            train_ds = processed_ds["train"]
+            
+        elif reformat_type == "lda":
+            processed_ds = ds.map(
+                lambda examples: {
+                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
+                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
+                },
+                batched=True,
+                num_proc=1,
+                remove_columns=ds['train'].column_names,
+                load_from_cache_file=False,
+                desc="Running tokenizer on dataset",
+            )
+            
+            # transfer the dataset into List[str]
+            processed_ds = [text for text in processed_ds['train']['combined_input']]  
+            
+            
+            train_ds: List[List[str]] = []
+            for text in processed_ds:
+                text = text.lower()
+                tokens = word_tokenize(text)
+                # remove stopwords and non-alphabetic characters
+                tokens = [token for token in tokens if token.isalpha()]
+                train_ds.append(tokens)
+            
+        elif reformat_type == "cluster":
+            pass
+        else:
+            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
+        
+                    
+        
+    elif dataset_path == Config["datasets"]["multirc"]:
+        pass
+    elif dataset_path == Config["datasets"]["arc"]:
+        pass
+    elif dataset_path == Config["datasets"]["dream"]:
+        pass
+    else:
+        raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, race-m, race-h, multirc, arc]")
+    
+    return train_ds
 
 def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512):
     '''
@@ -261,47 +350,8 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     # count the word frequency of each word in vocab on the training set
     word_freq = {token_id:0 for token_id in range(vocab_size)}
     
-
     
-    def reformat_input(dataset_path, tokenizer, max_length=max_length):
-        '''
-        根据数据集的格式将问题格式化为相应的字符串
-         e.g. if dataset = race: "Article: ... Question: ... Options: ... Answer:"
-        '''
-        if dataset_path == Config["datasets"]["race"] or \
-                dataset_path == Config["datasets"]["race-m"] or \
-                    dataset_path == Config["datasets"]["race-h"]:
-                        
-            ds = load_dataset_from_huggingface(dataset_path, "all")
-            
-            # corse-grained preprocessing
-            ds, classes, tokenizer = preprocess_race(ds, tokenizer)
-            
-            # fine-grained preprocessing
-            processed_ds = ds.map(
-                lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
-                batched=True,
-                num_proc=1,
-                remove_columns=ds['train'].column_names,
-                load_from_cache_file=False,
-                desc="Running tokenizer on dataset",
-            )
-            
-            train_ds = processed_ds["train"]
-                       
-           
-        elif dataset_path == Config["datasets"]["multirc"]:
-            pass
-        elif dataset_path == Config["datasets"]["arc"]:
-            pass
-        elif dataset_path == Config["datasets"]["dream"]:
-            pass
-        else:
-            raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, race-m, race-h, multirc, arc]")
-        
-        return train_ds
-    
-    train_ds = reformat_input(dataset_path, tokenizer)
+    train_ds = reformat_input(dataset_path, tokenizer, max_length=max_length)
     
     train_data_loader = DataLoader(train_ds, batch_size=1000, 
                                    collate_fn=default_data_collator, 
@@ -427,7 +477,66 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, K=5, max_length=51
 
 
 def get_classes_by_lda(dataset_path, model, tokenizer, K=5, max_length=512):
-    pass
+    '''
+    use the LDA model to extract the class labels
+    
+    K: number of class labels to be extracted
+    '''
+    classes = []
+    model = model.eval()
+    device = Config['device']
+    model.to(device)
+    
+    all_pooled_embeddings = [] # store the pooled embeddings of every 1000 examples
+    
+    vocab_size = tokenizer.vocab_size
+    # count the word frequency of each word in vocab on the training set
+    word_freq = {token_id:0 for token_id in range(vocab_size)}
+    
+    
+    train_ds = reformat_input(dataset_path, tokenizer, max_length=max_length)
+    
+    train_data_loader = DataLoader(train_ds, batch_size=1000, 
+                                   collate_fn=default_data_collator, 
+                                   num_workers=0, # use as your need
+                                   shuffle=False)
+    
+    
+    processed_questions: List[List[str]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'lda')
+
+    print("create dictionary and corpus...")  
+    # 创建词典：词语到id的映射  
+    dictionary = corpora.Dictionary(processed_questions)  
+    # 过滤极端词汇（可选）  
+    dictionary.filter_extremes(no_below=2, no_above=0.5)  
+    # 将文档转换为词袋(Bag-of-Words)表示  
+    corpus: List[List[tuple]] = [dictionary.doc2bow(text) for text in processed_questions]  
+        
+    
+    # train LDA model  
+    print(f"Training LDA model, class label number = {K}...")  
+    lda_model = models.ldamodel.LdaModel(  
+        corpus=corpus,  
+        id2word=dictionary,  
+        num_topics=K,  
+        random_state=42,  
+        passes=10,  # training epochs
+        iterations=50  
+    )  
+  
+    print("Extract the class labels...")  
+    for idx, topic in lda_model.show_topics(formatted=False, num_words=K, num_topics=K):  
+        topic_words = [word for word, prob in topic]  
+        # print(", ".join(topic_words))  
+        classes.append(topic_words[0])
+    
+    print("class labels = ", classes)
+        
+    return classes
+
+
+
+
 def get_label_collection_for_class(dataset_path, classes:List[str]):
     '''
     将原问题分类标签列表中的每个标签扩展成一个标签集合
@@ -633,6 +742,7 @@ if __name__ == "__main__":
     # classes= get_classes_for_dataset(dataset_path)
     # initialize_prefix_prompts(ds, tokenizer,20, 768, classes)
     
-    classes = get_classes_for_dataset(dataset_path,model, tokenizer)
+    # classes = get_classes_for_dataset(dataset_path,model, tokenizer)
+    classes = get_classes_by_lda(dataset_path, model, tokenizer)
     
     print("classes = ", classes)
