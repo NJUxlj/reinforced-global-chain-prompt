@@ -261,6 +261,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     # count the word frequency of each word in vocab on the training set
     word_freq = {token_id:0 for token_id in range(vocab_size)}
     
+
     
     def reformat_input(dataset_path, tokenizer, max_length=max_length):
         '''
@@ -306,9 +307,19 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
                                    collate_fn=default_data_collator, 
                                    num_workers=0, # use as your need
                                    shuffle=False)
+    
+    # record whether this token occurs in this example or not, 1 for yes, 0 for no
+    word_occurence_per_example:Dict[int, Dict[int, int]] = {
+                                                                token_id:{
+                                                                    example_id:0 
+                                                                        for example_id in range(len(train_ds))
+                                                                    } 
+                                                                for token_id in range(vocab_size)
+                                                            }
 
     
     with torch.no_grad():
+        global_step = 0
         for index, batch in enumerate(tqdm(train_data_loader)):
             # get the average embedding of each batch
             batch = {k:v.to(device) for k, v in batch.items()}
@@ -319,6 +330,9 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
                 for id in ids:
                     id = int(id)  
                     word_freq[id] += 1
+                    word_occurence_per_example[id][global_step] = 1
+                
+                global_step += 1
             
             # outputs = model(**batch)
             embeddings = model.embeddings(input_ids) # shape = (batch_size, seq_len, hidden_size)
@@ -378,8 +392,16 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
         if token_id < vocab_size:  
             freq_tensor[token_id] = freq  
     
-    # calculate TF-AS score
-    tf_as_scores = all_similarities_token_to_corpus * freq_tensor
+    # store the total occurence number of each token on all examples
+    word_occurence_total = [0]*len(train_ds)
+    
+    # calculate the total occurence in all examples of each token
+    for token_id in range(vocab_size):
+        for example_id in range(len(train_ds)):
+            word_occurence_total[token_id] += word_occurence_per_example[token_id][example_id]
+    
+    # calculate TF-IQF-AS score
+    tf_as_scores = all_similarities_token_to_corpus * freq_tensor * torch.tensor(word_occurence_total/len(train_ds))
     
     
     # choose Top-K as class labels
@@ -399,7 +421,13 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     
     return classes
 
+def get_classes_by_clustering(dataset_path, model, tokenizer, K=5, max_length=512):
+    pass
 
+
+
+def get_classes_by_lda(dataset_path, model, tokenizer, K=5, max_length=512):
+    pass
 def get_label_collection_for_class(dataset_path, classes:List[str]):
     '''
     将原问题分类标签列表中的每个标签扩展成一个标签集合
