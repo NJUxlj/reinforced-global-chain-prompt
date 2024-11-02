@@ -250,7 +250,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     Return:
         classes: a list of str, which contains the class labels
     '''
-    classes = None
+    classes = []
     model = model.eval()
     device = Config['device']
     model.to(device)
@@ -325,25 +325,51 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
             # firstly, pooling on the seq_len dimension
             pooled_embedding = embeddings.mean(dim=1) # shape = (batch_size, hidden_size)
             # then, pooling on the batch_size dimension
-            all_pooled_embeddings.append(pooled_embedding.mean(dim=0).cpu()) # shape = (hidden_size)
+            # all_pooled_embeddings.append(pooled_embedding.mean(dim=0).cpu()) # shape = (hidden_size)
+            all_pooled_embeddings.append(pooled_embedding.mean(dim=0).unsqueeze(0)) # shape = (1, hidden_size)
+            
     
+    # print("all_pooled_embeddings = ", all_pooled_embeddings)
+    print("=================================")
+    print("all_pooled_embeddings[0].shape = ", all_pooled_embeddings[0].shape)
+    print("all_pooled_embeddings[10].shape = ", all_pooled_embeddings[10].shape)
+    print("all_pooled_embeddings[20].shape = ", all_pooled_embeddings[20].shape)
+    
+    
+    print("all_pooled_embeddings.length = ", len(all_pooled_embeddings))
+    print("len(train_data) = ", len(train_data_loader)) # 88
+    print("len(train_data)//1000 = ", len(train_data_loader)//1000) # 0
+    print("==================================")
     # vertically stack all the pooled embeddings into a matrix
-    pooled_embeddings_matrix = torch.cat(all_pooled_embeddings, dim=0) # shape = (num_examples, hidden_size)
+    # "dim" points to the dimension of each pooled embedding
+    pooled_embeddings_matrix = torch.cat(all_pooled_embeddings, dim=0) # shape = (len(train)//1000, hidden_size)
 
-    num_pooled = len(train_data_loader) // 1000  
+    num_pooled = len(train_ds)//1000
     if num_pooled == 0:
         num_pooled = 1
+        
     vocab_size =  tokenizer.vocab_size
-    token_embeddings = model.embeddings.weight_embeddings.weight # [vocab_size, hidden_size]
+    token_embeddings = model.embeddings.word_embeddings.weight # [vocab_size, hidden_size]
 
-    # 计算池化嵌入与词汇表中每个词嵌入的余弦相似度，并取平均值
-    cosine_similarities = F.cosine_similarity(
-        x1=pooled_embeddings_matrix,
-        x2 =token_embeddings,
-        dim=1
-    ) # shape = (num_pooled, vocab_size)
+    print("pooled embeddings matrix shape: ", pooled_embeddings_matrix.shape)
+    print("token embeddings matrix shape: ", token_embeddings.shape)
     
-    avg_similarities = cosine_similarities.mean(dim=0) # shape = (vocab_size)
+    # 计算池化嵌入与词汇表中每个词嵌入的余弦相似度，并取平均值
+    all_similarities_token_to_corpus = []
+    for token_embedding in tqdm(token_embeddings):
+        pooled_embedding = pooled_embedding.squeeze(0) # shape = (hidden_size)
+        cosine_similarities = F.cosine_similarity(
+            x1=token_embedding,
+            x2 =pooled_embeddings_matrix,
+            dim=1 # 代表我们在行的维度上进行计算
+        ) # shape = (num_pooled)
+        
+        all_similarities_token_to_corpus.append(cosine_similarities.mean(dim=0).item())
+
+    all_similarities_token_to_corpus = torch.tensor(all_similarities_token_to_corpus)
+    print("all_similarities_token_to_corpus.shape = ", all_similarities_token_to_corpus.shape)
+    
+    # avg_similarities = cosine_similarities.mean(dim=0) # shape = (vocab_size)
     
     
     # transfer the word frequency to tensor
@@ -353,7 +379,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
             freq_tensor[token_id] = freq  
     
     # calculate TF-AS score
-    tf_as_scores = avg_similarities * freq_tensor
+    tf_as_scores = all_similarities_token_to_corpus * freq_tensor
     
     
     # choose Top-K as class labels
@@ -370,24 +396,6 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     
     # get the label collections expanded from the class labels
  
-    
-    # if dataset_path == Config["datasets"]["race"]:
-    #     ds = load_dataset_from_huggingface(dataset_path, "all")
-        
-    # elif dataset_path == Config["datasets"]["race-m"]:
-    #     ds = load_dataset_from_huggingface(dataset_path, "middle")
-        
-    # elif dataset_path == Config["datasets"]["race-h"]:
-    #     ds = load_dataset_from_huggingface(dataset_path, "high")
-        
-    # elif dataset_path == Config["datasets"]["multirc"]:
-    #     ds = load_dataset_from_huggingface(dataset_path)
-    # elif dataset_path == Config["datasets"]["arc"]:
-    #     ds = load_dataset_from_huggingface(dataset_path)
-    # elif dataset_path == Config["datasets"]["dream"]:
-    #     ds = load_dataset_from_huggingface(dataset_path)
-    # else:
-    #     raise ValueError("dataset_path not supported, plase change another in [race, race-m, race-h, multirc, arc]")
     
     return classes
 

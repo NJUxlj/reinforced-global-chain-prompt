@@ -108,7 +108,7 @@ def train_p_tuning(model, tokenizer):
         token_dim=768,
         num_transformer_submodules=1,
         num_attention_heads=12,
-        num_layers=1,
+        num_layers=12,
         encoder_reparameterization_type="MLP",
         encoder_hidden_size=768,
     )
@@ -155,7 +155,7 @@ def train_p_tuning(model, tokenizer):
     evaluation_results = []  
     
     accelerator = Accelerator()
-    model, optimizer, train_dataloader, scheduler = accelerator.prepare(
+    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
             model, optimizer, train_dataloader, lr_scheduler
         )
     
@@ -169,10 +169,19 @@ def train_p_tuning(model, tokenizer):
             #          "labels": tensor([0, 1, 2, ...])}
             outputs = model(**batch)
             # use CrossEntropy
-            criterion = nn.CrossEntropyLoss
+            criterion = nn.CrossEntropyLoss()
             # loss = outputs.loss
             logits = outputs.logits # shape = [batch_size, num_labels]
-            loss = criterion(logits, batch['labels'])
+            
+            # print("type(logits) = ", type(logits))
+            # print("type(batch['labels']) = ", type(batch['labels']))
+            # print("logits.shape = ", logits.shape)
+            # print("batch['labels'].shape = ", batch['labels'].shape)
+            # print("====================")
+            # print("logits = ", logits)
+            # print("batch['labels'] = ", batch['labels'])
+            
+            loss = criterion(logits, batch['labels'].long())
             # use distributed training
             accelerator.backward(loss)
             # loss.backward()
