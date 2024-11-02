@@ -392,7 +392,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     for label in classes:
         if label.strip() and not label.startswith("["):
             tmp_classes.append(label.strip())
-    classes = tmp_classes
+    classes = tmp_classes   
     
     # get the label collections expanded from the class labels
  
