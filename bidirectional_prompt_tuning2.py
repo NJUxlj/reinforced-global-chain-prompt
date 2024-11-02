@@ -318,7 +318,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
     
     return train_ds
 
-def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512):
+def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512):
     '''
     get the label collection of some specific dataset
         
@@ -326,6 +326,10 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
         dataset_path: the path of dataset, should be in [race, race-m, race-h, multirc, arc]
         K: number of classes in the dataset
         model: we need to get the embedding weight to calc cosine similarity
+        
+        num_topics: number of classes to be generated == num_suffix_tokens
+        
+        K : number of sub-classes to be generated
     
     Procedure:
         1. load the dataset
@@ -471,16 +475,23 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, K=5, max_length=512)
     
     return classes
 
-def get_classes_by_clustering(dataset_path, model, tokenizer, K=5, max_length=512):
-    pass
+def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512):
+    '''
+        num_topics: number of classes to be generated == num_suffix_tokens
+        
+        K : number of sub-classes to be generated
+    
+    '''
 
 
 
-def get_classes_by_lda(dataset_path, model, tokenizer, K=5, max_length=512):
+def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512):
     '''
     use the LDA model to extract the class labels
     
-    K: number of class labels to be extracted
+    num_topics: number of classes to be generated == num_suffix_tokens
+        
+    K : number of sub-classes to be generated
     '''
     classes = []
     model = model.eval()
