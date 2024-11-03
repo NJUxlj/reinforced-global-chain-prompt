@@ -787,10 +787,10 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     
     
     accelerator = Accelerator()
-    model, optimizer, lr_scheduler, train_dataloader= accelerator.prepare(
-        model, optimizer, lr_scheduler, train_dataloader)
+    model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
+        model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
-    eval_dataloader = accelerator.prepare(eval_dataloader)
+    # eval_dataloader = accelerator.prepare(eval_dataloader)
 
     global_step = 0
     
@@ -802,11 +802,25 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
             # batch = {k: v.to(device) for k, v in batch.items()}
             # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
             
-            labels = batch["labels"]
-            batch:dict
-            batch = batch.pop("labels")
+            # labels=None
+            # if isinstance(batch, dict):  
+            #     print(f"batch 的类型：{type(batch)}")  
+            #     print(f"batch 的 keys：{batch.keys()}")  
+
+            #     # 提取 labels，不修改原始 batch  
+            #     labels = batch["labels"]  
+
+            #     # 创建新的输入字典，不包含 labels  
+            #     # 原因：在多进程环境中，最好避免对共享对象batch进行原地修改。
+            #     inputs = {k: v for k, v in batch.items() if k != "labels"}  
+            #     print(f"inputs 的 keys：{inputs.keys()}")  
+
+            # else:  
+            #     print("batch 不是字典类型")  
+            #     continue  # 跳过非字典类型的 batch  
             
-            print("batch.keys = ", batch.keys())
+            labels = batch["labels"]  
+            
             outputs = model(**batch)
             
             criterion = nn.CrossEntropyLoss()
@@ -879,7 +893,7 @@ if __name__ == "__main__":
     dataset_name = "race"
 
     dataset_path = Config["datasets"][dataset_name]
-    model, tokenizer = prepare_model_tokenizer(model_path, AutoModel)
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification)
     tokenizer = BertTokenizerFast.from_pretrained(model_path)
     
 
