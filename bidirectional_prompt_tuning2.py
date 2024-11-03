@@ -42,6 +42,7 @@ from torch.utils.data import (
 )
 
 from config import Config
+from config import NUM_PROCESSES
 
 import torch
 import torch.nn as nn
@@ -62,9 +63,9 @@ from collections import defaultdict
 
 
 import nltk  
-nltk.download('punkt') 
-nltk.download('punkt_tab') 
-nltk.download('stopwords')  
+# nltk.download('punkt') 
+# nltk.download('punkt_tab') 
+# nltk.download('stopwords')  
 from nltk.corpus import stopwords  
 from nltk.tokenize import word_tokenize
 stop_words = set(stopwords.words('english')) 
@@ -233,6 +234,8 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
             "lda": use the get_classes_lda() to get class labels
             "cluster": use the get_classes_cluster() to get class labels
     '''
+    
+    print(f"reformat input using reformat_type = {reformat_type}")
     if dataset_path == Config["datasets"]["race"] or \
             dataset_path == Config["datasets"]["race-m"] or \
                 dataset_path == Config["datasets"]["race-h"]:
@@ -247,7 +250,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
             processed_ds = ds.map(
                 lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), 
                 batched=True,
-                num_proc=1,
+                num_proc=NUM_PROCESSES,
                 remove_columns=ds['train'].column_names,
                 load_from_cache_file=False,
                 desc="Running tokenizer on dataset",
@@ -261,7 +264,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
                                             Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
                 },
                 batched=True,
-                num_proc=1,
+                num_proc=NUM_PROCESSES,
                 remove_columns=ds['train'].column_names,
                 load_from_cache_file=False,
                 desc="Running tokenizer on dataset",
@@ -322,6 +325,9 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
     Return:
         classes: a list of str, which contains the class labels
     '''
+    
+    print("get class labels by TF-IQF-AS (normal method) ~~~")
+    
     classes = []
     model = model.eval()
     device = Config['device']
@@ -461,11 +467,15 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
         K : number of sub-classes to be generated
     
     '''
+    print("get class labels by Clustering ~~~~")
 
     classes = []
-    model = model.eval()
     device = Config['device']
-    model.to(device)
+    # model.to(device)
+    model = model.eval()
+    accelerator = Accelerator()
+    # model = accelerator.prepare(model)
+    
     
     all_pooled_embeddings = [] # store the pooled embeddings
     
@@ -474,34 +484,41 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
     
     train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
     
-    
+    print(f"The training data is reformated, now we get each example's embedding using the model~~~")
     train_data_loader = DataLoader(train_ds, batch_size=32, 
                                    collate_fn=default_data_collator, 
                                    num_workers=0, # use as your need
                                    shuffle=False)
     
+    model, train_data_loader = accelerator.prepare(model, train_data_loader)
+    
     all_batch_embeddings = []
     with torch.no_grad():
         for index, batch in enumerate(tqdm(train_data_loader)):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            del batch['labels']
+            # batch = {k: v.to(device) for k, v in batch.items()}
+            
+            # if 'labels' exists in batch，delete it，because inference does not need labels  
+            if 'labels' in batch:
+                del batch['labels']
             
             outputs = model(**batch)
             
             # average pooling 
             batch_embeddings = outputs.last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
             
-            print("batch_embeddings.shape = ", batch_embeddings.shape)
+            # print("batch_embeddings.shape = ", batch_embeddings.shape)
             for embedding in batch_embeddings:
                 all_batch_embeddings.append(embedding.unsqueeze(0)) # shape = (1, hidden_size)
-                print("embedding.shape = ", embedding.shape)
             
             
             
     embeddings = torch.cat(all_batch_embeddings, dim=0)
     print("all_embeddings.shape = ", embeddings.shape)
     
-    embeddings = embeddings.detach().cpu().numpy() 
+    # 在分布式环境中收集所有进程的嵌入向量  
+    embeddings = accelerator.gather(embeddings)  
+    
+    embeddings = embeddings.cpu().numpy() 
     
     
     # clustering
@@ -534,7 +551,11 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
     candidate_token_ids = [index for index, _ in enumerate(candidate_tokens)]  
     
     candidate_token_ids = torch.tensor(candidate_token_ids, dtype=torch.long).to(device).unsqueeze(1)
-    candidate_token_embeddings = model.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size)
+    
+    # extract the base model from the accelerator, so that we can get embeddings
+    model_unwrapped = accelerator.unwrap_model(model)
+    
+    candidate_token_embeddings = model_unwrapped.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size)
     candidate_token_embeddings =  candidate_token_embeddings.squeeze(1)
     
     print("candidate token embeddings shape: ", candidate_token_embeddings.shape)
@@ -566,7 +587,7 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
         
     return cluster_label_embeddings
         
-def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512):
+def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
     '''
     use the LDA model to extract the class labels
     
@@ -574,6 +595,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_
         
     K : number of sub-classes to be generated
     '''
+    print("get class labels by latent Drichtlet Allocation (LDA) Model")
     classes = []
     model = model.eval()
     device = Config['device']
@@ -623,8 +645,30 @@ def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_
         classes.append(topic_words[0])
     
     print("class labels = ", classes)
+    
+    
+    print("transfer class labels to label embeddings...")  
+    topic_word_embeddings = []
+
+    with torch.no_grad():  
+        for id, word in enumerate(classes):  
         
-    return classes
+            encoded_input = tokenizer(
+                word, 
+                padding = "max_length",
+                truncation=True,  
+                max_length=5,  # we set that each label can be divided into 5 tokens
+                add_special_tokens=True,
+                return_tensors='pt').to(device)  
+            
+            model_output = model(**encoded_input)  
+            # 使用 [CLS] 标记的向量作为词嵌入  
+            word_embedding = model_output.last_hidden_state[:, 0, :].squeeze(0)  # [hidden_size]  
+            topic_word_embeddings.append(word_embedding)  
+
+
+        
+    return topic_word_embeddings
 
 
 
@@ -657,7 +701,11 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     #     torch.rand(num_prefix_tokens, embedding_size,requires_grad=True, device= device),   # (num_prefix_tokens, embedding_size)
     # )
     
+    # 加载数据集
+    dataset_name = "race"
     dataset_path = Config["datasets"][dataset_name]
+    ds = load_dataset_from_huggingface(dataset_path,"high")
+    
     
     prefix_prompt_embeddings = initialize_prefix_prompts(dataset_path, model, tokenizer, 
                                                          num_prefix_tokens=num_prefix_tokens, 
@@ -675,13 +723,9 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
         suffix_embeddings=suffix_prompt_embeddings,
         num_prefix_tokens=num_prefix_tokens, 
         num_suffix_tokens=num_suffix_tokens,
-    ).to(device)  
+    ) # .to(device)  
 
-    # 加载数据集
-    dataset_name = "race"
 
-    
-    ds = load_dataset_from_huggingface(dataset_path,"high")
     
     # coarse-grained preprocessing
     ds, classes, tokenizer = preprocess_race(ds, tokenizer)
@@ -691,7 +735,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     processed_ds = ds.map(
         lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
         batched=True,
-        num_proc=1,
+        num_proc=NUM_PROCESSES,
         remove_columns=ds['train'].column_names,
         load_from_cache_file=False,
         desc="Running tokenizer on dataset",
@@ -743,8 +787,10 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     
     
     accelerator = Accelerator()
-    model, optimizer, train_dataloader, lr_scheduler= accelerator.prepare(
+    model, optimizer, lr_scheduler, train_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader)
+    
+    eval_dataloader = accelerator.prepare(eval_dataloader)
 
     global_step = 0
     
@@ -753,10 +799,21 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
             # print(f"Batch labels: {batch['labels']}") 
-            batch = {k: v.to(device) for k, v in batch.items()}
+            # batch = {k: v.to(device) for k, v in batch.items()}
             # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
+            
+            labels = batch["labels"]
+            batch:dict
+            batch = batch.pop("labels")
+            
+            print("batch.keys = ", batch.keys())
             outputs = model(**batch)
-            loss = outputs.loss
+            
+            criterion = nn.CrossEntropyLoss()
+            
+            logits = outputs.logits
+            
+            loss = criterion(logits, labels.long())
             total_loss += loss.detach().float()
 
             # loss.backward()
@@ -773,9 +830,12 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
                 all_labels = []  
                 with torch.no_grad():  
                     for val_batch in eval_dataloader:  
-                        val_input_ids = val_batch['input_ids'].to(device)  
-                        val_attention_mask = val_batch['attention_mask'].to(device)  
-                        val_labels = val_batch['labels'].to(device)  
+                        # val_input_ids = val_batch['input_ids'].to(device)  
+                        # val_attention_mask = val_batch['attention_mask'].to(device)  
+                        # val_labels = val_batch['labels'].to(device)  
+                        val_input_ids = val_batch['input_ids']
+                        val_attention_mask = val_batch['attention_mask'] 
+                        val_labels = val_batch['labels']
                         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
                         logits = val_outputs['logits']  
                         preds = torch.argmax(logits, dim=1).cpu().numpy()  

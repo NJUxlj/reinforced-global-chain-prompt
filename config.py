@@ -17,6 +17,8 @@ print("MODEL_BASE_PATH: ", MODEL_BASE_PATH)
 # 所有模型的上级目录
 # MODEL_BASE_PATH = "\\mnt\\data\\models"
 
+NUM_PROCESSES = 2
+
 Config = {
     "output_dir":"./output",
     "logging_dir":"./logs",
