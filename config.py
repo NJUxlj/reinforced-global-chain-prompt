@@ -17,7 +17,14 @@ print("MODEL_BASE_PATH: ", MODEL_BASE_PATH)
 # 所有模型的上级目录
 # MODEL_BASE_PATH = "\\mnt\\data\\models"
 
-NUM_PROCESSES = 2
+NUM_PROCESSES = 0
+
+if torch.cuda.is_available():  
+        NUM_PROCESSES = torch.cuda.device_count()  
+        print(f"检测到 {NUM_PROCESSES} 个可用的 GPU。")  
+else:  
+    print("未检测到 GPU，将使用 CPU 进行训练。")  
+
 
 Config = {
     "output_dir":"./output",
