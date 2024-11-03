@@ -4,6 +4,7 @@ from transformers import (
     BertForSequenceClassification,
     AutoModel,
     AutoTokenizer,  
+    BertTokenizerFast,
     AutoModelForSequenceClassification,  
     Trainer,  
     TrainingArguments  
@@ -190,57 +191,33 @@ def initialize_suffix_prompts(ds, tokenizer, num_suffix_tokens, embedding_size):
 
 
 
-def initialize_prefix_prompts(ds, tokenizer, num_prefix_tokens, embedding_size, classes, K=5): 
-    """
+def initialize_prefix_prompts(dataset_path, model, tokenizer, num_prefix_tokens, embedding_size, classes_initiate_method = "cluster", K=5): 
+    """ 
     use article classification tokens' weighted sum as prefix prompts
     """
-    
-    # import the article classification model
-    model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    num_classes = 10
-    device = Config['device']
-    classification_model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_classes).to(device)  
+    class_embeddings = None
+    if classes_initiate_method == "normal":
+        class_embeddings = get_classes_for_dataset(dataset_path,model, tokenizer, num_topics=num_prefix_tokens, K=5, max_length=512)
+    elif classes_initiate_method == "cluster":
+        class_embeddings = get_classes_by_clustering(dataset_path,model, tokenizer, num_topics=num_prefix_tokens, K=5, max_length=512)
+    elif classes_initiate_method == "lda":
+        class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, num_topics=num_prefix_tokens, K=5, max_length=512)
+    else:
+        raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
 
-    
-    # get all articles
-    articles:List[str] = ds['train']['article']   # shape = (n,)
-    encoded_articles:Dict[str, torch.Tensor] = tokenizer(articles, padding=True, truncation=True, return_tensors = 'pt') 
-    input_ids:torch.Tensor = encoded_articles['input_ids'].to(device) # shape = (n, max_length)
-    attention_mask = encoded_articles['attention_mask'].to(device)
-        
-    # get classification scores
-    with torch.no_grad():
-        # outputs = {"logits", "hidden_states", "attentions"}
-        # logits：形状为 (n, 10) 的张量，表示每个输入样本在每个类别的 logits。
-        # hidden_states (if open, it represents the hidden states of all layers)：一个包含多个张量的元组，每个张量的形状为 (n, max_length, hidden_size)。
-        # attentions (if open, it represents the attention weights of all layers)：一个包含多个张量的元组，每个张量的形状为 (n, num_heads, max_length, max_length)。
-        outputs:Dict = classification_model(input_ids=input_ids, attention_mask=attention_mask)
-        logits = outputs.logits
-        predictions = torch.argmax(logits, dim=-1)
-    
-    # map the predictions to the textual labels
-    labels:List[str] = [classes[[pred]] for pred in predictions]
-    
-    # transfer textual labels to embeddings
-    encoded_labels = tokenizer(labels, padding="max_length", truncation=True, max_length=1, return_tensors = 'pt')
-    labels_input_ids = encoded_labels['input_ids'].to(device) # shape = (n, 1)
-    
-    print("labels_input_ids = ", labels_input_ids)
-    
-    # get the embeddings of all examples' labels
-    embeddings = classification_model.get_input_embeddings()(labels_input_ids).mean(dim=1)  # (n, embedding_size)  
-    
-    # get the pooled embedding of all the class label embeddings
-    pooled_embedding = embeddings.mean(dim=0) # shape = (embedding_size)
     
     prefix_embeddings = torch.zeros(num_prefix_tokens, embedding_size, device=device)
     
     for i in range(num_prefix_tokens):  
-        prefix_embeddings[i] = pooled_embedding
+        prefix_embeddings[i] = class_embeddings[i]
     
     prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
 
     return prefix_prompt_embeddings
+
+
+
+
 
 def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "normal"):
     '''
@@ -461,7 +438,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
     
     
     # choose Top-K as class labels
-    topk_scores, topk_indices = tf_as_scores.topk(K)
+    topk_scores, topk_indices = tf_as_scores.topk(num_topics)
     for idx in topk_indices:    
         classes.append(tokenizer.decode(idx)) # here idx can be a integer or list of integers
 
@@ -477,7 +454,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
     
     return classes
 
-def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512):
+def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)->List[torch.Tensor]:
     '''
         num_topics: number of classes to be generated == num_suffix_tokens
         
@@ -508,23 +485,29 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
         for index, batch in enumerate(tqdm(train_data_loader)):
             batch = {k: v.to(device) for k, v in batch.items()}
             del batch['labels']
+            
             outputs = model(**batch)
             
             # average pooling 
             batch_embeddings = outputs.last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
-            all_pooled_embeddings.append(batch_embeddings)
+            
+            print("batch_embeddings.shape = ", batch_embeddings.shape)
+            for embedding in batch_embeddings:
+                all_batch_embeddings.append(embedding.unsqueeze(0)) # shape = (1, hidden_size)
+                print("embedding.shape = ", embedding.shape)
             
             
             
     embeddings = torch.cat(all_batch_embeddings, dim=0)
+    print("all_embeddings.shape = ", embeddings.shape)
     
-    embeddings = embeddings.numpy()
+    embeddings = embeddings.detach().cpu().numpy() 
     
     
     # clustering
-    print(f"doing K-Means clustering, cluster number = {num_topics*K}")
+    print(f"doing K-Means clustering, cluster number = {num_topics}, each topic contains {K} words")
     
-    kmeans = KMeans(n_clusters=num_topics*K, random_state=42)
+    kmeans = KMeans(n_clusters=num_topics, random_state=42)
     kmeans.fit(embeddings)
     
     centroids = kmeans.cluster_centers_
@@ -553,22 +536,27 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
     candidate_token_ids = torch.tensor(candidate_token_ids, dtype=torch.long).to(device).unsqueeze(1)
     candidate_token_embeddings = model.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size)
     candidate_token_embeddings =  candidate_token_embeddings.squeeze(1)
+    
+    print("candidate token embeddings shape: ", candidate_token_embeddings.shape)
 
     print("find each centroid a most similar token...")  
 
     cluster_labels = []  
+    cluster_label_embeddings = []
     
 
     for idx, centroid in enumerate(centroids):  
         max_similarity = -1  
-        best_token = None  
+        best_token_id = -1  
         #  Calculate the similarity with all candidate tokens
         for token_id, embedding in enumerate(candidate_token_embeddings):  
-            similarity = cosine_similarity([centroid], [embedding.numpy()])[0][0]  
+            # return ndarray(n_samples_X, n_samples_Y)
+            similarity:np.ndarray = cosine_similarity([centroid], [embedding.detach().cpu().numpy()])[0][0]  
             if similarity > max_similarity:  
                 max_similarity = similarity  
-                best_token = token_id  
-        cluster_labels.append((idx, best_token, max_similarity))  
+                best_token_id = token_id  
+        cluster_labels.append((idx, best_token_id, max_similarity))  
+        cluster_label_embeddings.append(candidate_token_embeddings[best_token_id])
 
  
     for idx, best_token_id, similarity in cluster_labels:  
@@ -576,7 +564,7 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
         classes.append(candidate_tokens[best_token_id])
         
         
-    return classes
+    return cluster_label_embeddings
         
 def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512):
     '''
@@ -622,14 +610,14 @@ def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_
     lda_model = models.ldamodel.LdaModel(  
         corpus=corpus,  
         id2word=dictionary,  
-        num_topics=K,  
+        num_topics=num_topics,  
         random_state=42,  
         passes=10,  # training epochs
         iterations=50  
     )  
   
     print("Extract the class labels...")  
-    for idx, topic in lda_model.show_topics(formatted=False, num_words=K, num_topics=K):  
+    for idx, topic in lda_model.show_topics(formatted=False, num_words=K, num_topics=num_topics):  
         topic_words = [word for word, prob in topic]  
         # print(", ".join(topic_words))  
         classes.append(topic_words[0])
@@ -665,9 +653,15 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
 
 
     # 1. initialize the trainable prefix prompt embeddings
-    prefix_prompt_embeddings = torch.nn.Parameter(
-        torch.rand(num_prefix_tokens, embedding_size,requires_grad=True, device= device),   # (num_prefix_tokens, embedding_size)
-    )
+    # prefix_prompt_embeddings = torch.nn.Parameter(
+    #     torch.rand(num_prefix_tokens, embedding_size,requires_grad=True, device= device),   # (num_prefix_tokens, embedding_size)
+    # )
+    
+    dataset_path = Config["datasets"][dataset_name]
+    
+    prefix_prompt_embeddings = initialize_prefix_prompts(dataset_path, model, tokenizer, 
+                                                         num_prefix_tokens=num_prefix_tokens, 
+                                                         embedding_size=embedding_size, classes_initiate_method="cluster", K=5)
 
     # 2. initialize the trainable suffix prompt embeddings
     suffix_prompt_embeddings  = torch.nn.Parameter(  
@@ -686,7 +680,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     # 加载数据集
     dataset_name = "race"
 
-    dataset_path = Config["datasets"][dataset_name]
+    
     ds = load_dataset_from_huggingface(dataset_path,"high")
     
     # coarse-grained preprocessing
@@ -744,8 +738,14 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
         num_warmup_steps=0,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
-
+    
     model = bidirectional_prompt_model 
+    
+    
+    accelerator = Accelerator()
+    model, optimizer, train_dataloader, lr_scheduler= accelerator.prepare(
+        model, optimizer, lr_scheduler, train_dataloader)
+
     global_step = 0
     
     for epoch in range(num_epochs):
@@ -758,7 +758,10 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
             outputs = model(**batch)
             loss = outputs.loss
             total_loss += loss.detach().float()
-            loss.backward()
+
+            # loss.backward()
+            accelerator.backward(loss)
+            
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
@@ -808,38 +811,24 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
 
 
 if __name__ == "__main__":
-    '''
     
-    '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    # model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
-    # tokenizer = AutoTokenizer.from_pretrained(model_path)
-    # print(f"Model's current num_labels: {model.config.num_labels}") 
-     
-    # model_config = model.config
-    # model_name_or_path = model_config.name_or_path
-    # print("model_name_or_path = ", model_name_or_path)
-    
-    # if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-    #     padding_side = "left"
-    # else:
-    #     padding_side = "right"
-    
-    # print("padding_side = ", padding_side)
 
-    # tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
-
-    model, tokenizer = prepare_model_tokenizer(model_path, AutoModel)
-
-    # train_bidirectional_prompt_tuning(model, tokenizer)
-    
-    
-    
     
     # 加载数据集
     dataset_name = "race"
 
     dataset_path = Config["datasets"][dataset_name]
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModel)
+    tokenizer = BertTokenizerFast.from_pretrained(model_path)
+    
+
+    train_bidirectional_prompt_tuning(model, tokenizer)
+    
+    
+    
+    
+   
     # ds = load_dataset_from_huggingface(dataset_path,"high")
     
     
@@ -848,6 +837,6 @@ if __name__ == "__main__":
     
     # classes = get_classes_for_dataset(dataset_path,model, tokenizer)
     # classes = get_classes_by_lda(dataset_path, model, tokenizer)
-    classes = get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)
+    # classes = get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)
     
-    print("classes = ", classes)
+    # print("classes = ", classes)

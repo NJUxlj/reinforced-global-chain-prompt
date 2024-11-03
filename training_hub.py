@@ -21,6 +21,7 @@ from datasets import (
 from transformers import (
     AutoModel,
     AutoTokenizer,
+    BertTokenizerFast,
     AutoModelForSequenceClassification,
 )
 
