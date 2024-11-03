@@ -53,6 +53,8 @@ from gensim import corpora, models
 import nltk
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics.pairwise import cosine_similarity  
+
 from sklearn.cluster import KMeans
 from typing import List, Dict
 from collections import defaultdict
@@ -297,7 +299,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
                 text = text.lower()
                 tokens = word_tokenize(text)
                 # remove stopwords and non-alphabetic characters
-                tokens = [token for token in tokens if token.isalpha()]
+                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
                 train_ds.append(tokens)
             
         elif reformat_type == "cluster":
@@ -483,8 +485,99 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
     
     '''
 
+    classes = []
+    model = model.eval()
+    device = Config['device']
+    model.to(device)
+    
+    all_pooled_embeddings = [] # store the pooled embeddings
+    
+    vocab_size = tokenizer.vocab_size
 
+    
+    train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
+    
+    
+    train_data_loader = DataLoader(train_ds, batch_size=32, 
+                                   collate_fn=default_data_collator, 
+                                   num_workers=0, # use as your need
+                                   shuffle=False)
+    
+    all_batch_embeddings = []
+    with torch.no_grad():
+        for index, batch in enumerate(tqdm(train_data_loader)):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            del batch['labels']
+            outputs = model(**batch)
+            
+            # average pooling 
+            batch_embeddings = outputs.last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
+            all_pooled_embeddings.append(batch_embeddings)
+            
+            
+            
+    embeddings = torch.cat(all_batch_embeddings, dim=0)
+    
+    embeddings = embeddings.numpy()
+    
+    
+    # clustering
+    print(f"doing K-Means clustering, cluster number = {num_topics*K}")
+    
+    kmeans = KMeans(n_clusters=num_topics*K, random_state=42)
+    kmeans.fit(embeddings)
+    
+    centroids = kmeans.cluster_centers_
+    
+    print("prepare candidate vocabulary...")  
+    vocab = tokenizer.get_vocab()  
+    inv_vocab = {v: k for k, v in vocab.items()}  # inverse to a id-to-token mapping
 
+    # filter the vocabulary，we only keep the words that are not stop words, all alphabetic words, and not in special tokens [CLS]...
+    candidate_tokens = []
+    for token_id in inv_vocab:  
+        token = inv_vocab[token_id]  
+        # skip special tokens, like: [CLS], [SEP], [PAD], [MASK], and sub-words (begining with ##)  
+        if token.startswith('[') or token.startswith('##'):  
+            continue  
+        if token.isalpha() and token not in stop_words:  
+            candidate_tokens.append(token)  
+
+    print(f"candidate token numbers: {len(candidate_tokens)}")
+
+    print("calculate the candidate token embedding...")  
+    candidate_token_embeddings = []  
+
+    candidate_token_ids = [index for index, _ in enumerate(candidate_tokens)]  
+    
+    candidate_token_ids = torch.tensor(candidate_token_ids, dtype=torch.long).to(device).unsqueeze(1)
+    candidate_token_embeddings = model.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size)
+    candidate_token_embeddings =  candidate_token_embeddings.squeeze(1)
+
+    print("find each centroid a most similar token...")  
+
+    cluster_labels = []  
+    
+
+    for idx, centroid in enumerate(centroids):  
+        max_similarity = -1  
+        best_token = None  
+        #  Calculate the similarity with all candidate tokens
+        for token_id, embedding in enumerate(candidate_token_embeddings):  
+            similarity = cosine_similarity([centroid], [embedding.numpy()])[0][0]  
+            if similarity > max_similarity:  
+                max_similarity = similarity  
+                best_token = token_id  
+        cluster_labels.append((idx, best_token, max_similarity))  
+
+ 
+    for idx, best_token_id, similarity in cluster_labels:  
+        print(f"Cluster {idx + 1}'s best suit token：{candidate_tokens[best_token_id]}, similarity: {similarity:.4f}") 
+        classes.append(candidate_tokens[best_token_id])
+        
+        
+    return classes
+        
 def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512):
     '''
     use the LDA model to extract the class labels
@@ -754,6 +847,7 @@ if __name__ == "__main__":
     # initialize_prefix_prompts(ds, tokenizer,20, 768, classes)
     
     # classes = get_classes_for_dataset(dataset_path,model, tokenizer)
-    classes = get_classes_by_lda(dataset_path, model, tokenizer)
+    # classes = get_classes_by_lda(dataset_path, model, tokenizer)
+    classes = get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)
     
     print("classes = ", classes)
