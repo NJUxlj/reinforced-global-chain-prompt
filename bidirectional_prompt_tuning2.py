@@ -909,7 +909,8 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
 
 
 
-
+def evaluate_bidirectional_prompt_tuning(trained_model_path, trained_tokenizer_path):
+    pass
 
 
 
