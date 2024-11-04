@@ -103,7 +103,7 @@ def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
         raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.")  
 
 
-def prepare_model_tokenizer(model_path,auto_model_class = AutoModel, tokenizer_path = None):
+def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_path = None):
     '''
      return model, tokenizer
     '''

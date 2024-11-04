@@ -13,7 +13,7 @@ import os
 from load import (
     load_dataset_from_huggingface,
     preprocess_race,
-    preprocess_function_race
+    preprocess_function_race,
 )
     
 
@@ -21,6 +21,10 @@ from datasets import(
     load_dataset,
     Dataset,
     DatasetBuilder
+)
+
+from training_hub import (
+    prepare_model_tokenizer
 )
 
 
@@ -47,6 +51,10 @@ from transformers import(
     get_linear_schedule_with_warmup,
     set_seed,
     default_data_collator,
+)
+
+from accelerate import (
+    Accelerator
 )
 
 import logging  
@@ -197,23 +205,11 @@ if __name__ == "__main__":
     '''
     
     '''
+    
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    print(f"Model's current num_labels: {model.config.num_labels}") 
-     
-    model_config = model.config
-    model_name_or_path = model_config.name_or_path
-    print("model_name_or_path = ", model_name_or_path)
     
-    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-        padding_side = "left"
-    else:
-        padding_side = "right"
-    
-    print("padding_side = ", padding_side)
+    model, tokenizer = prepare_model_tokenizer(model_path, auto_model_class = AutoModelForSequenceClassification)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
 
     
 

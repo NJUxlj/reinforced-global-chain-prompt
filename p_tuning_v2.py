@@ -52,6 +52,10 @@ from peft import (
     # AutoPeftModelForMultipleChoice,
 )
 
+from accelerate import (
+    Accelerator
+)
+
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support 
 

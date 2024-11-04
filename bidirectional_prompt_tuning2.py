@@ -445,12 +445,12 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
         for example_id in range(len(train_ds)):
             word_occurence_total[token_id] += word_occurence_per_example[token_id][example_id]
     
-    # calculate TF-IQF-AS score
-    tf_iqf_as_scores:torch.Tensor = all_similarities_token_to_corpus * freq_tensor * torch.tensor(word_occurence_total/len(train_ds))
+    # calculate TF-IQF-VS score
+    tf_iqf_vs_scores:torch.Tensor = all_similarities_token_to_corpus * freq_tensor * torch.tensor(word_occurence_total/len(train_ds))
     
     # filter special tokens
     filtered_scores = []
-    for token_id, score in enumerate(tf_iqf_as_scores):
+    for token_id, score in enumerate(tf_iqf_vs_scores):
         token = inverse_vocab[token_id]
         if token.strip() and not token.startswith("[") and token.isalpha() and token not in stop_words:
             filtered_scores.append([token_id, score])
