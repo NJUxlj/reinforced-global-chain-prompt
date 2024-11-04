@@ -30,6 +30,8 @@ from load import (
 
 from training_hub import (
     prepare_model_tokenizer, 
+    get_vocab_embeddings_from_model,
+    get_model_name_using_model
 )
 
 from datasets import (
@@ -300,7 +302,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
     
     return train_ds
 
-def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512):
+def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
     '''
     get the label collection of some specific dataset
         
@@ -332,6 +334,9 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
     model = model.eval()
     device = Config['device']
     model.to(device)
+    
+    vocab = tokenizer.get_vocab()
+    inverse_vocab = {v:k for k,v in vocab.items()} # index-token mapping
     
     all_pooled_embeddings = [] # store the pooled embeddings of every 1000 examples
     
@@ -403,7 +408,8 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
         
     vocab_size =  tokenizer.vocab_size
     token_embeddings = model.embeddings.word_embeddings.weight # [vocab_size, hidden_size]
-
+    
+    
     print("pooled embeddings matrix shape: ", pooled_embeddings_matrix.shape)
     print("token embeddings matrix shape: ", token_embeddings.shape)
     
@@ -440,25 +446,29 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
             word_occurence_total[token_id] += word_occurence_per_example[token_id][example_id]
     
     # calculate TF-IQF-AS score
-    tf_as_scores = all_similarities_token_to_corpus * freq_tensor * torch.tensor(word_occurence_total/len(train_ds))
+    tf_iqf_as_scores:torch.Tensor = all_similarities_token_to_corpus * freq_tensor * torch.tensor(word_occurence_total/len(train_ds))
     
+    # filter special tokens
+    filtered_scores = []
+    for token_id, score in enumerate(tf_iqf_as_scores):
+        token = inverse_vocab[token_id]
+        if token.strip() and not token.startswith("[") and token.isalpha() and token not in stop_words:
+            filtered_scores.append([token_id, score])
+    filtered_scores = torch.tensor(filtered_scores)
     
     # choose Top-K as class labels
-    topk_scores, topk_indices = tf_as_scores.topk(num_topics)
+    topk_scores, topk_indices = filtered_scores.topk(num_topics, dim=1)
     for idx in topk_indices:    
-        classes.append(tokenizer.decode(idx)) # here idx can be a integer or list of integers
-
-    # remove special possible characters
-    tmp_classes=[]
-    for label in classes:
-        if label.strip() and not label.startswith("["):
-            tmp_classes.append(label.strip())
-    classes = tmp_classes   
+        classes.append((idx, inverse_vocab[idx]))  
     
-    # get the label collections expanded from the class labels
- 
+    print("class labels are: ")
+    for idx, label in classes:
+        print(f"class {idx}: {label}")
     
-    return classes
+    class_embeddings = []
+    for index, _ in classes:
+        class_embeddings.append(token_embeddings[index])
+    return class_embeddings
 
 def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)->List[torch.Tensor]:
     '''
@@ -502,9 +512,16 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
                 del batch['labels']
             
             outputs = model(**batch)
+            if hasattr(outputs, "last_hidden_state"): # AutoModel
+                last_hidden_state = outputs.last_hidden_state # shape = (batch_size, seq_len, hidden_size)
+            elif hasattr(outputs, "hidden_states"): # AutoModelForSequenceClassification
+                last_hidden_state = outputs.hidden_states[-1] # shape = (batch_size, seq_len, hidden_size)
+            else:
+                raise ValueError("Can not extract the \"last_hidden_state\" from the model output")
+            
             
             # average pooling 
-            batch_embeddings = outputs.last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
+            batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
             
             # print("batch_embeddings.shape = ", batch_embeddings.shape)
             for embedding in batch_embeddings:
@@ -550,12 +567,16 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
 
     candidate_token_ids = [index for index, _ in enumerate(candidate_tokens)]  
     
-    candidate_token_ids = torch.tensor(candidate_token_ids, dtype=torch.long).to(device).unsqueeze(1)
+    candidate_token_ids = torch.tensor(candidate_token_ids, dtype=torch.long).to(device).unsqueeze(1) # shape = (num_tokens, 1) == (batch_size, seq_len)
     
     # extract the base model from the accelerator, so that we can get embeddings
     model_unwrapped = accelerator.unwrap_model(model)
+    model_unwrapped.eval() # save resources
     
-    candidate_token_embeddings = model_unwrapped.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size)
+    
+    # 加入判断逻辑
+    # candidate_token_embeddings = model_unwrapped.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size) == (num_tokens, 1, hidden_size)
+    candidate_token_embeddings = get_vocab_embeddings_from_model(model_unwrapped, candidate_token_ids)
     candidate_token_embeddings =  candidate_token_embeddings.squeeze(1)
     
     print("candidate token embeddings shape: ", candidate_token_embeddings.shape)
@@ -867,14 +888,23 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
             
 
+    
+    # 判断模型名称
+    model_name = get_model_name_using_model(model)
+    print("model name = ", model_name)
 
     # 保存权重
-    save_path = Config['save_model_dir']['bert-base-uncased']['bidirectional-prompt-tuning']['race']
+    save_path = Config['save_model_dir'][model_name]['bidirectional-prompt-tuning'][dataset_name]
     # torch.save(model.state_dict(), save_path) 
 
+    # wait every GPU processes to reach here
+    torch.distributed.barrier()  
 
-    model.save_pretrained(save_path)
-    # tokenizer.save_pretrained('path_to_save_tokenizer')   
+    # only the master process can save model
+    if torch.distributed.get_rank() == 0:  
+        model.module.save_pretrained(save_path)  
+
+        # tokenizer.save_pretrained('path_to_save_tokenizer')   
 
 
 
@@ -886,7 +916,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
 
 if __name__ == "__main__":
     
-    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model_path = Config["models"]["bert-large-uncased"]["model_path"]
 
     
     # 加载数据集

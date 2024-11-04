@@ -35,9 +35,7 @@ Config = {
     "submission_path": "submission.csv",
     
 
-    
     "seed": 42,
-    "hidden_size": 256,
     "num_layers": 4,
     "dropout": 0.5,
     "learning_rate": 1e-3,
@@ -132,51 +130,64 @@ Config = {
             "model_name": "bert-base-uncased",
             "max_length": 512,
             "num_labels": 4,
+            "hidden_dim": 768,
             "model_path": f"{MODEL_BASE_PATH}bert-base-uncased"
         },
         "bert-base-NER":{
             "model_name": "bert-base-NER",
             "max_length": 512,
             "num_labels": 4,
+            "hidden_dim": 768,
             "model_path": f"{MODEL_BASE_PATH}bert-base-NER"
         },
         
         "bert-large-uncased":{
             "model_name": "bert-large-uncased",
-            "max_length": 1024,
+            "max_length": 512,
             "num_labels": 4,
+            "hidden_dim": 1024,
             "model_path": f"{MODEL_BASE_PATH}bert-large-uncased"
         },
     
         "qwen":{
             "Qwen2.5-0.5B":{
                 "model_name": "Qwen2.5-0.5B",
-                "max_length": 2048,
-                "num_labels": 1,
+                "max_length": 32768,
+                "num_labels": 4,
+                "hidden_dim": 896,
+                "model_type": "qwen2",
                 "model_path": f"{MODEL_BASE_PATH}Qwen2.5-0.5B"
             },
             "Qwen2.5-1.5B":{
                 "model_name": "Qwen2.5-1.5B",
-                "max_length": 2048,
-                "num_labels": 1,
+                "max_length": 131072,
+                "num_labels": 4,
+                "hidden_dim": 1536,
+                "model_type": "qwen2",
                 "model_path": "models/qwen_model.pth"
             },
             "Qwen2.5-3B":{
                 "model_name": "Qwen2.5-3B",
-                "max_length": 2048,
-                "num_labels": 1,
+                "max_length": 32768,
+                "num_labels": 4,
+                "hidden_dim": 2048,
+                "model_type": "qwen2",
                 "model_path": "models/qwen_model.pth"
             },
             "Qwen2.5-7B":{
                 "model_name": "Qwen2.5-7B",
-                "max_length": 2048,
+                "max_length": 131072,
                 "num_labels": 1,
+                "hidden_dim": 3584,
+                "model_type": "qwen2",
                 "model_path": "models/qwen_model.pth"
             },
             "Qwen2.5-72B":{
                 "model_name": "Qwen2.5-72B",
-                "max_length": 2048,
+                "max_length": 131072,
                 "num_labels": 1,
+                "hidden_dim": 8192,
+                "model_type": "qwen2",
                 "model_path": "models/qwen_model.pth"
             }
            
@@ -187,20 +198,22 @@ Config = {
                 "model_name": "MobiLlama-05B",
                 "max_length": 2048,
                 "num_labels": 1,
+                "hidden_dim": 2048,
+                "model_type": "llama",
                 "model_path": "models/llama_model.pth"
             },
             "Llama-3.2-1B":{
                 "model_name": "Llama-3.2-1B",
                 "max_length": 2048,
                 "num_labels": 1,
-                "model_path": "models/llama_model.pth"
+                "model_path": f"{MODEL_BASE_PATH}Llama-3.2-1B"
 
             },
             "Llama-3.2-3B":{
                 "model_name": "Llama-3.2-3B",
                 "max_length": 2048,
                 "num_labels": 1,
-                "model_path": "models/llama_model.pth"  
+                "model_path": f"{MODEL_BASE_PATH}Llama-3.2-3B"
             },
             "Llama-3.1-8B":{
                 "model_name": "Llama-3.1-8B",
@@ -235,3 +248,8 @@ Config = {
         "race":"",
     }
 }
+
+
+
+MAX_LENGTH = Config['models']['bert-large-uncased']['max_length']
+HIDDEN_DIM = Config['models']['bert-large-uncased']['hidden_dim']
