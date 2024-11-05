@@ -17,6 +17,21 @@ import time
 import datetime
 
 
+
+def fix_seed(seed):
+    '''
+    set the seed of the random number generator
+    '''
+    # random
+    random.seed(seed)
+    # Numpy
+    np.random.seed(seed)
+    # Pytorch
+    torch.manual_seed(seed) # CPU seed
+    torch.cuda.manual_seed_all(seed) # GPU seed
+    torch.backends.cudnn.deterministic = True 
+
+
 def decoder_for_gpt4(args, input, max_length):
     time.sleep(args.api_time_interval)
     
