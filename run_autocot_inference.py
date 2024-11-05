@@ -97,7 +97,7 @@ def main():
     decoder = Decoder()
     
     print("setup data loader ...")
-    
+    dataloader = setup_data_loader(args)
     # 给huggingface数据集做适配
     
     

@@ -4,7 +4,10 @@ Adapted from https://github.com/kojima-takeshi188/zero_shot_cot
 '''
 
 from statistics import mean
-from torch.utils.data import Dataset
+from torch.utils.data import (
+    Dataset,
+    DataLoader
+)
 import openai
 from openai import OpenAI
 import os
@@ -19,7 +22,11 @@ import datetime
 
 from typing import List, Tuple, Dict
 
-client = OpenAI()
+client = OpenAI(
+    
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url='https://api.feidaapi.com/v1'
+)
 
 
 
@@ -115,17 +122,54 @@ class MyDataset(Dataset):
 
 
 
-
-
-
-def setup_data_loader(args):
+def get_reformated_dataset(args):
+    '''
+     获取数据集，并将数据集reformat成两列[question, answer]
+    '''
     pass
 
 
+def setup_data_loader(args):
+    '''
+     return a huggingface dataset wrapped by a DataLoader
+    
+    '''
+    # fix randomness of dataloader to ensure reproducibility
+    # https://pytorch.org/docs/stable/notes/randomness.html
+    fix_seed(args.random_seed)
+    worker_seed = torch.initial_seed() % 2**32
+    print("worker_seed : {}".format(worker_seed))
 
+    def seed_worker(worker_id):
+        '''
+        用于多个CPU进程之间的随机数种子同步
+        '''
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
 
-
-
+    dataloader_num_workers = multiprocessing.cpu_count()
+    dataloader_num_workers = min(dataloader_num_workers, args.max_num_worker)
+    print("dataloader_num_workers: " ,dataloader_num_workers)
+    
+    # load data and reformat the question and answer
+    dataset = MyDataset(args)
+    
+    def collate_fn(batch):
+        return batch[0]
+    
+    dataloader = DataLoader(
+        dataset=dataset,
+        shuffle=True,
+        batch_size=args.minibatch_size,
+        drop_last=False,
+        num_workers=dataloader_num_workers,
+        worker_init_fn=seed_worker,
+        pin_memory=True,
+        collate_fn=collate_fn # 需确保batch_size = 1
+    )
+    
+    return dataloader
+    
 def answer_cleansing(args, pred, must_choice=False):
 
     print("prediction value before cleaning : " + pred)
