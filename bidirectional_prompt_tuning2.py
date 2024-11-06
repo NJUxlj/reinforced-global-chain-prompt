@@ -725,7 +725,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     # 加载数据集
     dataset_name = "race"
     dataset_path = Config["datasets"][dataset_name]
-    ds = load_dataset_from_huggingface(dataset_path,"high")
+    ds = load_dataset_from_huggingface(dataset_path,"all")
     
     
     prefix_prompt_embeddings = initialize_prefix_prompts(dataset_path, model, tokenizer, 

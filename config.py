@@ -240,13 +240,19 @@ Config = {
         "race":"./data/race",   # ehovy/race
         "race-m":"./data/race",
         "race-h":"./data/race",
-        "record": "./data/record", # ReCoRD
+        "record": {
+            "all" : "./data/record",
+            "train": "./data/record/train.json",
+            "validation": "./data/record/dev.json"
+            }, # ReCoRD  Reading Comprehension with Commonsense Reasoning Dataset
         "multirc": {
                     "all":"./data/mutlirc-v2",
                     "train":"./data/mutlirc-v2/train_456-fixedIds.json",
-                    "validation":"./data/mutlirc-v2/dev_83-fixedIds.json"} , #MultiRC
+                    "validation":"./data/mutlirc-v2/dev_83-fixedIds.json"
+            } , #MultiRC
         "arc": "./data/ai2_arc",   #ARC
         "dream": "./data/dream", # DREAM   https://github.com/nlpdata/dream
+        "super_glue" : "./data/super_glue",
     },
     "classes":{
         "race-c":"",

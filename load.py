@@ -7,7 +7,7 @@ import torch
 from config import Config
 from config import NUM_PROCESSES, NUM_CPU_PROCESSES
 
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Any, Optional
 
 
 
@@ -16,7 +16,7 @@ tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"][
 
 
 
-def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None):
+def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None, cache_dir = None):
     '''
     load dataset from huggingface hub
     
@@ -25,12 +25,15 @@ def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None
         subset_name: "sst2"
         
         split: "train", "validation"
+        
+        
+        dataset = load_dataset("super_glue", "multirc", split="train") 
     '''
     
     if subset_name:
-        ds = load_dataset(dataset_path, subset_name, split=split)
+        ds = load_dataset(dataset_path, subset_name, split=split, cache_dir=cache_dir)
     else:
-        ds = load_dataset(dataset_path, split=split)
+        ds = load_dataset(dataset_path, split=split, cache_dir=cache_dir)
 
     return ds
 
@@ -231,6 +234,8 @@ def preprocess_function_multirc(examples, text_column = "article", label_column 
                                 dataset_name = 'multirc', max_length = 512)->Dict[str,Union[List,List[List]]]:
     """ 
     处理multirc数据集的预处理函数，将问题和选项合并为一个句子，并添加特殊标记。
+    
+    确保 dataset = load_dataset("super_glue", "multirc", split="train")  
     """
     
 
@@ -248,33 +253,94 @@ def preprocess_function_record(examples, text_column = "article", label_column  
 
 
 
-
-
-
-
-def preprocess_pipeline_pt(ds: Dataset):
+def preprocess_func_peft(dataset_name, examples, max_length)->Dict[str,Union[List,List[List]]]:
     '''
-        将所有数据预处理流程放到一个函数中
+    预处理函数：将article、question和options字段合并成新的question字段  
+           [use tokenization]
+           [only used for PEFT tasks]
+    Args:  
+        examples:Dict[ str, List ]: 数据集中的一个批次样本  
+        dataset_name: 数据集名称，用于选择预处理函数  
+    Returns:  
+        examples after preprocessing       
     '''
-    classes = []
     
-    dataset_name = ds.info.dataset_name 
+    if dataset_name == 'race':
+        model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'race', max_length = max_length)
+    elif dataset_name == 'multirc':
+        model_inputs = preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'multirc', max_length = max_length)
+    elif dataset_name == 'arc':
+        model_inputs = preprocess_function_arc(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'arc', max_length = max_length)
+    elif dataset_name == 'record':
+        model_inputs = preprocess_function_record(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'record', max_length = max_length)
+    else:
+        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, multirc, arc, record]")
+
+    return model_inputs
+def preprocess_dataset_peft(dataset_name, dataset:Dataset, max_length=512)->Dataset:
+    """  
+    处理整个数据集  [dataset必须同时包含train和valid] [针对PEFT任务]
+                    # train and valid will be put to dataloader for training and evaluation
+    Args:  
+        dataset: 原始的训练集 (split = None)  
+        dataset_name: 数据集名称，用于选择预处理函数
+    Returns:  
+        
+        preprocessed_dataset: 处理后的数据集，包含train和valid两个部分 
+    """ 
+    processed_dataset = dataset.map(
+        function= lambda examples: preprocess_func_peft(dataset_name, examples, max_length),
+        batched=True,
+        num_proc=NUM_CPU_PROCESSES,
+        remove_columns= ds['train'].column_names,           # dataset.column_names,
+        load_from_cache_file=False,
+        desc=f"Running tokenizer on dataset {dataset_name}",
+    )
+
+    print(f"\nProcessed dataset type: {type(processed_dataset)}")
+    name = processed_dataset.info.dataset_name if hasattr(processed_dataset.info, 'dataset_name') else None 
+    print(f"Processed dataset name: {name}")  
+    print(f"Processed dataset size: {len(processed_dataset)}")  
+    if hasattr(processed_dataset, 'column_names'):  
+        print(f"Processed dataset columns: {processed_dataset.column_names}")  
+
+    return processed_dataset
     
+
+
+
+def choose_dataset(dataset_name:str, split = None)->Dataset:
+    '''
+     return a huggingface dataset 
+
+     Args:
+        dataset_name: str, dataset name, choose from [race, arc, multirc, record]
+        split: str, split of dataset, choose from [train, valid, test]
+    Returns:
+        ds: Dataset, a huggingface dataset
+    '''
+    ds = None
     if dataset_name == "race":
-        preprocess_race(ds)
-        
-    elif dataset_name == "race-c":
-        classes = ds.info.features['answer'].names
+        dataset_path = Config["datasets"][dataset_name]
+        ds = load_dataset_from_huggingface(dataset_path, "high", split=split)
+    elif dataset_name == "arc":
+        dataset_path = Config["datasets"][dataset_name]
+        ds = load_dataset_from_huggingface(dataset_path, "multiple_choice", split=split)
+    elif dataset_name == "multirc":
+        cache_dir = Config["datasets"]["super_glue"]
+        ds = load_dataset_from_huggingface("super_glue", "multirc", split=split, cache_dir=cache_dir)
+    elif dataset_name == "record":
+        cache_dir = Config["datasets"]["super_glue"]
+        ds = load_dataset_from_huggingface("super_glue", "record", split=split, cache_dir=cache_dir)
+    else:
+        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, arc, multirc, record]")
     
-        
-    elif dataset_name == "mnli":
-        classes = ds.info.features['label'].names
-        
-    elif dataset_name == "mrpc":
-        classes = ds.info.features['label'].names
-    
-    
-    
+  
+    return ds
 
 
 def preprocess_race(ds: Dataset, tokenizer:AutoTokenizer):
@@ -368,7 +434,9 @@ def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
         dataset_name: 数据集名称，用于选择预处理函数
     Returns:  
         处理后的数据集  
-    """  
+    """ 
+    
+    # 先预处理第一个样本试试看 
     print("\nTesting preprocess_func_autocot with first example...")  
     try:  
         first_example = dataset[0]  
@@ -390,7 +458,9 @@ def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
         desc="Running tokenizer on dataset",
     )
 
-    print(f"\nProcessed dataset type: {type(processed_dataset)}")  
+    print(f"\nProcessed dataset type: {type(processed_dataset)}")
+    name = processed_dataset.info.dataset_name if hasattr(processed_dataset.info, 'dataset_name') else None 
+    print(f"Processed dataset name: {name}")  
     print(f"Processed dataset size: {len(processed_dataset)}")  
     if hasattr(processed_dataset, 'column_names'):  
         print(f"Processed dataset columns: {processed_dataset.column_names}")  
@@ -436,11 +506,14 @@ if __name__ == "__main__":
     # preprocess_pipeline_pt(ds)
     
     
-    dataset_name = "multirc"
-    train_data_path = Config['datasets']['multirc']['train']
-    validation_data_path = Config['datasets']['multirc']['validation']
-    ds = load_dataset_from_json(train_data_path=train_data_path, validation_data_path=validation_data_path, split="train")
+    # dataset_name = "multirc"
+    # train_data_path = Config['datasets']['multirc']['train']
+    # validation_data_path = Config['datasets']['multirc']['validation']
+    # ds = load_dataset_from_json(train_data_path=train_data_path, validation_data_path=validation_data_path, split="train")
     
-    print(ds[0])
-    print("=====================================")
-    print('len(ds[0]) = ',len(ds[0]))
+    # print(ds[0])
+    # print("=====================================")
+    # print('len(ds[0]) = ',len(ds[0]))
+    
+    
+    ds = choose_dataset("multirc")
