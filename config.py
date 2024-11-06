@@ -247,11 +247,16 @@ Config = {
             }, # ReCoRD  Reading Comprehension with Commonsense Reasoning Dataset
         "multirc": {
                     "all":"./data/mutlirc-v2",
-                    "train":"./data/mutlirc-v2/train_456-fixedIds.json",
-                    "validation":"./data/mutlirc-v2/dev_83-fixedIds.json"
+                    "train":"./data/mutlirc-v2/train.json",
+                    "validation":"./data/mutlirc-v2/dev.json"
             } , #MultiRC
         "arc": "./data/ai2_arc",   #ARC
-        "dream": "./data/dream", # DREAM   https://github.com/nlpdata/dream
+        "dream": {
+            "all": "./data/dream", # DREAM   https://github.com/nlpdata/dream
+            "train" : "./data/dream/train.json",
+            "validation": "./data/dream/dev.json",
+            "test": "./data/dream/test.json"
+        },
         "super_glue" : "./data/super_glue",
     },
     "classes":{

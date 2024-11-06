@@ -18,11 +18,12 @@ import random
 import torch
 import json
 import os
+import re
 
 from config import Config
 from config import NUM_PROCESSES, NUM_CPU_PROCESSES
 
-from typing import List, Dict, Union, Any, Optional
+from typing import List, Dict, Tuple ,Union, Any, Optional
 
 
 
@@ -54,58 +55,7 @@ def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None
 
     return ds
 
-def load_dataset_from_csv(file_path):  
-    """  
-    加载CSV格式的数据集，包含 'context', 'question', 'choices', 'label' 列  
-    """  
-    df = pd.read_csv(file_path)  
-    dataset = Dataset.from_pandas(df)  
-    
-    print(dataset[0])
-    return dataset  
 
-def load_dataset_from_json(train_data_path = None, validation_data_path=None, data_files:Union[str, Dict[str,str]]=None, split = None):
-    
-    if data_files is not None:
-        
-        if isinstance(data_files, dict):
-            print("data_files is a dict")
-        else:
-            print("data_files is a str")
-        
-        ds = load_dataset('json', data_files=data_files, split=split)  
-
-        print(ds[0])
-    else:
-        if train_data_path and validation_data_path:
-            ds = load_dataset('json', data_files={'train':train_data_path, 'validation':validation_data_path}, split= split)
-        else:
-            if train_data_path:
-                if split!='train':
-                    raise ValueError(f"train_data_path and split={split} are not compatible !!!")
-                ds = load_dataset('json', data_files=train_data_path)
-            elif validation_data_path:
-                if split!='validation':
-                    raise ValueError(f"dev_data_path and split={split} are not compatible !!!")
-                ds = load_dataset('json', data_files=validation_data_path)
-            else:
-                raise ValueError("train_data_path or dev_data_path or data_files must be provided !!!")
-        
-    return ds
-def preprocess_function(examples):  
-    """  
-    将输入文本进行分词编码  
-    """  
-    
-    # print("example['context'] = ", examples['context'])
-    # print("example['question'] = ", examples['question'])
-    # print("example['choices'] = ", examples['choices'])
-    # print("example['label'] = ", examples['label'])
-    
-    prompts = [examples['context'][i]+ examples['question'][i]+ examples['choices'][i] for i in range(len(examples['choices']))]
-    model_inputs = tokenizer(prompts, padding="max_length", truncation=True, max_length=512)  
-    model_inputs["labels"] = examples["label"]  
-    return model_inputs
 
 
 def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 492):
@@ -340,6 +290,8 @@ def choose_dataset(dataset_name:str, split = None)->Dataset:
     Returns:
         ds: Dataset, a huggingface dataset
     '''
+    dataset_wrapper = McqDatasetWrapper()
+    dataset_wrapper.load_and_preprocess_dataset(dataset_name)
     ds = None
     if dataset_name == "race":
         dataset_path = Config["datasets"][dataset_name]
@@ -509,17 +461,18 @@ class DatasetConfig:
     subset: str = None  
 
 
-class MultipleChoicePreprocessor:  
+class McqDatasetWrapper:  
     '''
-     This class provides methods for preprocessing multiple choice datasets.
+     This class provides methods for loading multiple choice datasets inin unified "Dataset" type
      
-     with different format {"huggingface", "json"}
+     It can handle different different format {"huggingface", "json"}
     '''
     def __init__(  
         self,  
         model_name_or_path: str = "bert-base-uncased",  
         max_seq_length: int = 512,  
-        label_map: Dict[str, int] = None  
+        label_map: Dict[str, int] = None,
+        split = None  
     ):  
         """  
         初始化预处理器  
@@ -532,7 +485,7 @@ class MultipleChoicePreprocessor:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)  
         self.max_seq_length = max_seq_length  
         self.label_map = label_map or {"A": 0, "B": 1, "C": 2, "D": 3}  
-        
+        self.split = None
         # 定义各个数据集的配置  
         self.dataset_configs = {  
             "race": DatasetConfig(  
@@ -590,7 +543,9 @@ class MultipleChoicePreprocessor:
         # 定义文件路径映射  
         file_paths = { 
             'train': os.path.join(config.local_path, 'train.json'),  
-            'test': os.path.join(config.local_path, 'dev.json')   
+            'validation': os.path.join(config.local_path, 'dev.json'),
+            'test': os.path.join(config.local_path, 'test.json')   
+               
         }  
         
         for split, file_path in file_paths.items():  
@@ -605,8 +560,8 @@ class MultipleChoicePreprocessor:
             if config.name == "multirc":  
                 processed_data = self._process_multirc_json(data)  
             # 针对ReCoRD的特殊处理  
-            elif config.name == "record":  
-                processed_data = self._process_record_json(data)  
+            elif config.name == "dream":  
+                processed_data = self._process_dream_json(data)  
             else:  
                 processed_data = data  
                 
@@ -616,70 +571,224 @@ class MultipleChoicePreprocessor:
 
     def _process_multirc_json(self, data: Dict) -> Dict[str, List]:  
         """  
-        处理MultiRC的JSON数据  
+        处理MultiRC数据集的JSON数据  
+        
+        MultiRC数据集格式：  
+        {  
+            "data": [  
+                {  
+                    "paragraph": {  
+                        "text": "...",  # HTML格式的段落文本  
+                        "questions": [  
+                            {  
+                                "question": "...",  
+                                "sentences_used": [1, 2, ...],  # 问题相关的句子索引  
+                                "answers": [  
+                                    {  
+                                        "text": "...",  
+                                        "isAnswer": true/false,  
+                                        "scores": {}  
+                                    },  
+                                    ...  
+                                ],  
+                                "idx": "0",  
+                                "multisent": true/false  
+                            },  
+                            ...  
+                        ]  
+                    }  
+                },  
+                ...  
+            ]  
+        }  
         
         Args:  
             data: 原始JSON数据  
             
         Returns:  
-            处理后的字典数据  
+            处理后的字典数据，包含以下字段：  
+            - context: 清理后的段落文本  
+            - question: 问题  
+            - options: 候选答案列表  
+            - label: 正确答案的索引  
+            - sentences_used: 问题相关的句子索引  
+            - multisent: 是否跨多个句子  
         """  
         processed_data = {  
-            "paragraph": [],  
+            "context": [],  
             "question": [],  
-            "answer": [],  
-            "label": []  
+            "options": [],  
+            "label": [],  
+            "sentences_used": [],  
+            "multisent": []  
         }  
         
-        for article in data['data']:  
-            for paragraph in article['paragraphs']:  
-                for question in paragraph['questions']:  
-                    for answer in question['answers']:  
-                        processed_data['paragraph'].append(paragraph['text'])  
-                        processed_data['question'].append(question['question'])  
-                        processed_data['answer'].append(answer['text'])  
-                        processed_data['label'].append(int(answer['label']))  
-                        
+        def clean_html_text(text: str) -> str:  
+            """清理HTML标签和特殊格式"""  
+            # 替换HTML标签和特殊字符  
+            text = text.replace("<b>", "").replace("</b>", "")  
+            text = text.replace("<br>", "\n")  
+            # 移除"Sent X: "格式, e.g. Sent 1:  Sent 2:
+            text = re.sub(r'Sent \d+: ', '', text)  
+            return text.strip()  
+        
+        # 遍历每个段落  
+        for item in data["data"]:  
+            paragraph_text = clean_html_text(item["paragraph"]["text"])  
+            
+            # 处理段落中的每个问题  
+            for question_data in item["paragraph"]["questions"]:  
+                question = question_data["question"]  
+                answers = question_data["answers"]  
+                sentences_used = question_data["sentences_used"]  
+                multisent = question_data["multisent"]  
+                
+                # 收集所有答案文本  
+                answer_texts = [ans["text"] for ans in answers]  
+                
+                # 找出正确答案  
+                correct_answers = [ans["text"] for ans in answers if ans["isAnswer"]]  
+                
+                # 如果没有正确答案，跳过这个问题  
+                if not correct_answers:  
+                    continue  
+                    
+                # 选择第一个正确答案作为标准答案  
+                correct_answer = correct_answers[0]  
+                
+                # 构建选项列表（确保包含至少一个正确答案）  
+                options = [correct_answer]  
+                
+                # 添加错误答案  
+                wrong_answers = [ans["text"] for ans in answers if not ans["isAnswer"]]  
+                options.extend(wrong_answers)  
+                
+                # 如果选项不足4个，用特殊标记填充  
+                while len(options) < 4:  
+                    options.append("No answer")  
+                
+                # 如果选项超过4个，只保留4个（确保包含正确答案）  
+                if len(options) > 4:  
+                    # 保留正确答案和前3个错误答案  
+                    wrong_options = [opt for opt in options if opt != correct_answer][:3]  
+                    options = [correct_answer] + wrong_options  
+                
+                # 随机打乱选项顺序  
+                original_options = options.copy()  
+                random.shuffle(options)  
+                
+                # 找出正确答案的新索引  
+                label = options.index(correct_answer)  
+                
+                # 添加到处理后的数据中  
+                processed_data["context"].append(paragraph_text)  
+                processed_data["question"].append(question)  
+                processed_data["options"].append(options)  
+                processed_data["label"].append(label)  
+                processed_data["sentences_used"].append(sentences_used)  
+                processed_data["multisent"].append(multisent)  
+        
         return processed_data  
+  
 
-    def _process_record_json(self, data: Dict) -> Dict[str, List]:  
+    def _process_dream_json(self, data:Dict)->Dict[str, List]:
         """  
-        处理ReCoRD的JSON数据  
+        处理DREAM数据集的JSON数据  
+        
+        DREAM数据集格式：  
+        [  
+            [   # dialogue item
+                [  
+                    "M: ...",  # 对话内容  
+                    "W: ..."  
+                ],  
+                [  
+                    {  
+                        "question": "...",  
+                        "choice": ["choice1", "choice2", "choice3"],  
+                        "answer": "correct_answer"  
+                    }  
+                ],  
+                "dialogue_id"  # 例如 "5-510"  
+            ],  
+            ...  
+        ]  
         
         Args:  
             data: 原始JSON数据  
             
         Returns:  
-            处理后的字典数据  
+            处理后的字典数据，包含以下字段：  
+            - context: 对话文本（合并后）  
+            - question: 问题  
+            - options: 选项列表  
+            - label: 正确答案的索引  
+            - dialogue_id: 对话ID（可选，用于追踪）  
         """  
         processed_data = {  
-            "passage": [],  
-            "query": [],  
-            "entities": [],  
-            "answers": []  
+            "context": [],  
+            "question": [],  
+            "options": [],  
+            "label": [],  
+            "dialogue_id": []  
         }  
         
-        for item in data['data']:  
-            passage = item['passage']['text']  
-            entities = item['passage']['entities']  
+        # 遍历每个样本  
+        for dialogue_item in data:  
+            # 解析数据  
+            dialogue_texts = dialogue_item[0]  # 对话内容列表  
+            questions = dialogue_item[1]       # 问题列表  
+            dialogue_id = dialogue_item[2]     # 对话ID  
             
-            for qa in item['qas']:  
-                processed_data['passage'].append(passage)  
-                processed_data['query'].append(qa['query'])  
-                processed_data['entities'].append(entities)  
-                processed_data['answers'].append(qa['answers'])  
+            # 将对话列表合并成单个文本，每个话语用换行符分隔  
+            dialogue_text = "\n".join(dialogue_texts)  
+            
+            # 处理该对话场景下的所有问题  
+            for qa in questions:  
+                question = qa["question"]  
+                choices = qa["choice"]  
+                answer = qa["answer"]  
                 
-        return processed_data  
-
-    def load_and_preprocess_dataset(self, dataset_name: str) -> DatasetDict:  
+                # 确保选项列表长度为4（DREAM默认是3个选项）  
+                options = choices.copy()  
+                while len(options) < 3:  
+                    options.append("N/A")  # 填充到4个选项  
+                    
+                # 获取正确答案的索引（在DREAM中答案是选项的完整文本）  
+                try:  
+                    label = choices.index(answer)  
+                except ValueError:  
+                    print(f"Warning: Answer '{answer}' not found in choices for dialogue {dialogue_id}")  
+                    continue  
+                    
+                # 添加到处理后的数据中  
+                processed_data["context"].append(dialogue_text)  
+                processed_data["question"].append(question)  
+                processed_data["options"].append(options)  
+                processed_data["label"].append(label)  
+                processed_data["dialogue_id"].append(dialogue_id)  
+        
+        return processed_data   
+    
+    def _process_boolq_json(self, data:Dict)->Dict[str, List]:
+        pass
+    
+    
+    def _process_rte_json(self, data:Dict)->Dict[str, List]:
+        pass
+    
+    
+    
+    def load_dataset_all_format(self, dataset_name: str, split = None) -> Union[DatasetDict, Dataset]:  
         """  
-        加载并预处理指定的数据集  
+        load a complete dataset [train, valid] 
         
         Args:  
-            dataset_name: 数据集名称  
+            dataset_name:  
             
         Returns:  
-            处理后的数据集  
+            a dataset that no matter what type they used to be [json, Dataset]
+            but now are "huggingface Dataset"
         """  
         config = self.dataset_configs[dataset_name.lower()]  
         
@@ -695,22 +804,7 @@ class MultipleChoicePreprocessor:
             
             dataset = load_dataset_from_huggingface(config.local_path, config.subset)
             
-        # 数据集特定的预处理  
-        if dataset_name.lower() == "race":  
-            dataset = self._preprocess_race(dataset, config)  
-        elif dataset_name.lower() == "ai2_arc":  
-            dataset = self._preprocess_arc(dataset, config)  
-        elif dataset_name.lower() == "multirc":  
-            dataset = self._preprocess_multirc(dataset, config)  
-        elif dataset_name.lower() == "record":  
-            dataset = self._preprocess_record(dataset, config)  
-            
-        # 统一格式化处理  
-        dataset = dataset.map(  
-            self._convert_to_features,  
-            batched=True,  
-            remove_columns=dataset["train"].column_names  
-        )  
+        
         
         return dataset  
     
@@ -809,143 +903,16 @@ class MultipleChoicePreprocessor:
         
         return processed_dataset  
 
-    def _preprocess_record(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
-        """  
-        处理ReCoRD数据集的特定预处理方法  
+    def _preprocess_dream(self, dataset: DatasetDict, config: DatasetConfig)->DatasetDict:
+        pass
         
-        ReCoRD数据集特点：  
-        - 每个样本包含一段文本(passage)和多个实体(entities)  
-        - 问题(query)中包含@placeholder标记，需要用实体替换  
-        - 每个问题可能有多个正确答案  
-        
-        Args:  
-            dataset: 原始数据集  
-            config: 数据集配置  
-            
-        Returns:  
-            处理后的数据集  
-        """  
-        def process_record_split(examples):  
-            new_features = {  
-                "context": [],   # 段落文本  
-                "question": [],  # 处理后的问题  
-                "options": [],   # 候选答案列表  
-                "label": []      # 正确答案的索引  
-            }  
-            
-            for passage, query, entities, answers in zip(  
-                examples[config.article_key],  
-                examples[config.question_key],  
-                examples[config.options_key],  
-                examples[config.label_key]  
-            ):  
-                # 确保entities是列表类型  
-                if isinstance(entities, str):  
-                    entities = [entities]  
-                
-                # 过滤出在文章中出现的实体  
-                valid_entities = [  
-                    entity for entity in entities  
-                    if entity in passage  
-                ]  
-                
-                # 如果没有有效实体，跳过这个样本  
-                if not valid_entities:  
-                    continue  
-                    
-                # 从有效实体中选择候选答案  
-                # 优先使用正确答案，然后随机选择其他实体作为干扰项  
-                candidates = set(answers) & set(valid_entities)  
-                distractors = set(valid_entities) - set(answers)  
-                
-                # 构建选项列表  
-                options = list(candidates)[:1]  # 取一个正确答案  
-                options.extend(list(distractors)[:3])  # 添加最多3个干扰项  
-                
-                # 如果选项不足4个，用特殊标记填充  
-                while len(options) < 4:  
-                    options.append("[NO_ENTITY]")  
-                    
-                # 打乱选项顺序  
-                import random  
-                random.shuffle(options)  
-                
-                # 找出正确答案的索引  
-                correct_answer = list(candidates)[0]  
-                correct_idx = options.index(correct_answer)  
-                
-                # 替换问题中的占位符  
-                processed_query = query.replace("@placeholder", "___")  
-                
-                new_features["context"].append(passage)  
-                new_features["question"].append(processed_query)  
-                new_features["options"].append(options)  
-                new_features["label"].append(correct_idx)  
-            
-            return new_features  
-        
-        # 对训练集和验证集分别进行处理  
-        processed_dataset = DatasetDict({  
-            split: dataset[split].map(  
-                process_record_split,  
-                batched=True,  
-                remove_columns=dataset[split].column_names  
-            )  
-            for split in dataset.keys()  
-        })  
-        
-        return processed_dataset  
 
-    def _convert_to_features(self, examples: Dict[str, List[Any]]) -> BatchEncoding:  
-        """  
-        将数据集转换为模型输入特征  
-        
-        Args:  
-            examples: 批量样本  
-            
-        Returns:  
-            模型输入特征  
-        """  
-        first_sentences = [[context] * len(options) for context, options in zip(examples["context"], examples["options"])]  
-        second_sentences = []  
-        
-        for question, options in zip(examples["question"], examples["options"]):  
-            second_sentences.append(  
-                [f"{question} {opt}" for opt in options]  
-            )  
-        
-        # 展平用于批处理  
-        first_sentences = sum(first_sentences, [])  
-        second_sentences = sum(second_sentences, [])  
-        
-        # 标记化  
-        tokenized_examples = self.tokenizer(  
-            first_sentences,  
-            second_sentences,  
-            truncation="longest_first",  
-            max_length=self.max_seq_length,  
-            padding="max_length",  
-            return_tensors="pt"  
-        )  
-        
-        # 重塑为 (batch_size, num_choices, seq_length)  
-        input_ids = tokenized_examples["input_ids"].view(-1, len(examples["options"][0]), self.max_seq_length)  
-        attention_mask = tokenized_examples["attention_mask"].view(-1, len(examples["options"][0]), self.max_seq_length)  
-        token_type_ids = tokenized_examples["token_type_ids"].view(-1, len(examples["options"][0]), self.max_seq_length)  
-        
-        return {  
-            "input_ids": input_ids,  
-            "attention_mask": attention_mask,  
-            "token_type_ids": token_type_ids,  
-            "labels": examples["label"]  
-        }  
-
-    def process_all_datasets(self) -> Dict[str, DatasetDict]:  
+    def get_all_datasets(self, split=None) -> Dict[str, DatasetDict]:  
         """处理所有数据集"""  
-        processed_datasets = {}  
+        all_datasets = {}  
         for dataset_name in self.dataset_configs.keys():  
-            processed_datasets[dataset_name] = self.load_and_preprocess_dataset(dataset_name)  
-        return processed_datasets  
+            all_datasets[dataset_name] = self.load_dataset_all_format(dataset_name, split=split)  
+        return all_datasets  
 
 
 
