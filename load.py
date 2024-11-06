@@ -1,8 +1,23 @@
 import pandas as pd  
-from datasets import Dataset, DatasetBuilder, load_dataset, load_dataset_builder
-from transformers import AutoTokenizer, AutoModel
+from datasets import (
+    Dataset, 
+    DatasetDict,
+    DatasetBuilder, 
+    load_dataset, 
+    load_dataset_builder,
+    concatenate_datasets,
+)
+from dataclasses import dataclass 
+from transformers import (
+    AutoTokenizer, 
+    AutoModel,
+    PreTrainedTokenizer,  
+    BatchEncoding,  
+)
 import random
 import torch
+import json
+import os
 
 from config import Config
 from config import NUM_PROCESSES, NUM_CPU_PROCESSES
@@ -13,6 +28,8 @@ from typing import List, Dict, Union, Any, Optional
 
 # 初始化分词器  
 tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])  
+
+
 
 
 
@@ -469,6 +486,466 @@ def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
 
 
 
+
+
+
+
+
+
+########## Load and Reformat all datasets for PEFT tasks ###############
+
+
+
+@dataclass  
+class DatasetConfig:  
+    """数据集配置类"""  
+    name: str  
+    article_key: str  
+    question_key: str  
+    options_key: str  
+    label_key: str  
+    local_path: Optional[str] = None  # 添加本地路径  
+    file_format: str = "huggingface"  # 文件格式：'huggingface' 或 'json'  
+    subset: str = None  
+
+
+class MultipleChoicePreprocessor:  
+    '''
+     This class provides methods for preprocessing multiple choice datasets.
+     
+     with different format {"huggingface", "json"}
+    '''
+    def __init__(  
+        self,  
+        model_name_or_path: str = "bert-base-uncased",  
+        max_seq_length: int = 512,  
+        label_map: Dict[str, int] = None  
+    ):  
+        """  
+        初始化预处理器  
+        
+        Args:  
+            model_name_or_path: BERT模型名称  
+            max_seq_length: 最大序列长度  
+            label_map: 标签映射字典，例如 {"A": 0, "B": 1, "C": 2, "D": 3}  
+        """  
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)  
+        self.max_seq_length = max_seq_length  
+        self.label_map = label_map or {"A": 0, "B": 1, "C": 2, "D": 3}  
+        
+        # 定义各个数据集的配置  
+        self.dataset_configs = {  
+            "race": DatasetConfig(  
+                name="race",  
+                article_key="article",  
+                question_key="question",  
+                options_key="options",  
+                label_key="answer",  
+                local_path=Config['datasets']['race'],  
+                file_format="huggingface",
+                subset="all",
+            ),  
+            "arc": DatasetConfig(  
+                name="arc",  
+                article_key="context",  
+                question_key="question",  
+                options_key="choices",  
+                label_key="answerKey",  
+                local_path=Config['datasets']['race'],  
+                file_format="huggingface",  
+                subset="ARC-Challenge"  
+            ),  
+            "multirc": DatasetConfig(  
+                name="multirc",  
+                article_key="paragraph",  
+                question_key="question",  
+                options_key="answer",  
+                label_key="label",  
+                local_path=Config['datasets']['multirc']['all'],  
+                file_format="json"  
+            ),  
+            "record": DatasetConfig(  
+                name="record",  
+                article_key="passage",  
+                question_key="query",  
+                options_key="entities",  
+                label_key="answers",  
+                local_path=Config['datasets']['record']['all'],  
+                file_format="json"  
+            )  
+        }  
+
+    def load_json_dataset(self, config: DatasetConfig) -> DatasetDict:  
+        """  
+        从本地JSON文件加载数据集  
+        
+        Args:  
+            config: 数据集配置  
+            
+        Returns:  
+            DatasetDict对象  
+        """  
+        datasets = {}  
+        
+        # 定义文件路径映射  
+        file_paths = { 
+            'train': os.path.join(config.local_path, 'train.json'),  
+            'test': os.path.join(config.local_path, 'dev.json')   
+        }  
+        
+        for split, file_path in file_paths.items():  
+            if not os.path.exists(file_path):  
+                print(f"Warning: dataset [{config.name}]'s split [{file_path}] does not exist")  
+                continue  
+                
+            with open(file_path, 'r', encoding='utf-8') as f:  
+                data = json.load(f)  
+            
+            # 针对MultiRC的特殊处理  
+            if config.name == "multirc":  
+                processed_data = self._process_multirc_json(data)  
+            # 针对ReCoRD的特殊处理  
+            elif config.name == "record":  
+                processed_data = self._process_record_json(data)  
+            else:  
+                processed_data = data  
+                
+            datasets[split] = Dataset.from_dict(processed_data)  
+        
+        return DatasetDict(datasets)  
+
+    def _process_multirc_json(self, data: Dict) -> Dict[str, List]:  
+        """  
+        处理MultiRC的JSON数据  
+        
+        Args:  
+            data: 原始JSON数据  
+            
+        Returns:  
+            处理后的字典数据  
+        """  
+        processed_data = {  
+            "paragraph": [],  
+            "question": [],  
+            "answer": [],  
+            "label": []  
+        }  
+        
+        for article in data['data']:  
+            for paragraph in article['paragraphs']:  
+                for question in paragraph['questions']:  
+                    for answer in question['answers']:  
+                        processed_data['paragraph'].append(paragraph['text'])  
+                        processed_data['question'].append(question['question'])  
+                        processed_data['answer'].append(answer['text'])  
+                        processed_data['label'].append(int(answer['label']))  
+                        
+        return processed_data  
+
+    def _process_record_json(self, data: Dict) -> Dict[str, List]:  
+        """  
+        处理ReCoRD的JSON数据  
+        
+        Args:  
+            data: 原始JSON数据  
+            
+        Returns:  
+            处理后的字典数据  
+        """  
+        processed_data = {  
+            "passage": [],  
+            "query": [],  
+            "entities": [],  
+            "answers": []  
+        }  
+        
+        for item in data['data']:  
+            passage = item['passage']['text']  
+            entities = item['passage']['entities']  
+            
+            for qa in item['qas']:  
+                processed_data['passage'].append(passage)  
+                processed_data['query'].append(qa['query'])  
+                processed_data['entities'].append(entities)  
+                processed_data['answers'].append(qa['answers'])  
+                
+        return processed_data  
+
+    def load_and_preprocess_dataset(self, dataset_name: str) -> DatasetDict:  
+        """  
+        加载并预处理指定的数据集  
+        
+        Args:  
+            dataset_name: 数据集名称  
+            
+        Returns:  
+            处理后的数据集  
+        """  
+        config = self.dataset_configs[dataset_name.lower()]  
+        
+        # 根据文件格式选择加载方式  
+        if config.file_format == "json":  
+            dataset = self.load_json_dataset(config)  
+        else:  # huggingface格式  
+            # dataset = load_dataset(  
+            #     "json",   
+            #     data_files=None,  # 使用默认的数据文件  
+            #     data_dir=config.local_path  
+            # )  
+            
+            dataset = load_dataset_from_huggingface(config.local_path, config.subset)
+            
+        # 数据集特定的预处理  
+        if dataset_name.lower() == "race":  
+            dataset = self._preprocess_race(dataset, config)  
+        elif dataset_name.lower() == "ai2_arc":  
+            dataset = self._preprocess_arc(dataset, config)  
+        elif dataset_name.lower() == "multirc":  
+            dataset = self._preprocess_multirc(dataset, config)  
+        elif dataset_name.lower() == "record":  
+            dataset = self._preprocess_record(dataset, config)  
+            
+        # 统一格式化处理  
+        dataset = dataset.map(  
+            self._convert_to_features,  
+            batched=True,  
+            remove_columns=dataset["train"].column_names  
+        )  
+        
+        return dataset  
+    
+    def _preprocess_race(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
+        """RACE数据集的特定预处理"""  
+        def process_race(example):  
+            return {  
+                "context": example[config.article_key],  
+                "question": example[config.question_key],  
+                "options": example[config.options_key],  
+                "label": self.label_map[example[config.label_key]]  
+            }  
+        return dataset.map(process_race)  
+
+    def _preprocess_arc(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
+        """ARC数据集的特定预处理"""  
+        def process_arc(example):  
+            options = [choice["text"] for choice in example[config.options_key]]  
+            return {  
+                "context": example[config.article_key],  
+                "question": example[config.question_key],  
+                "options": options,  
+                "label": self.label_map[example[config.label_key]]  
+            }  
+        return dataset.map(process_arc)  
+    
+    def _preprocess_multirc(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
+        """  
+        处理MultiRC数据集的特定预处理方法  
+        
+        MultiRC数据集特点：  
+        - 每个段落(paragraph)可能包含多个问题  
+        - 每个问题可能有多个候选答案  
+        - 每个答案都有一个二元标签(0或1)表示是否正确  
+        
+        Args:  
+            dataset: 原始数据集  
+            config: 数据集配置  
+            
+        Returns:  
+            处理后的数据集  
+        """  
+        def process_multirc_split(examples):  
+            # 创建新的特征字典  
+            new_features = {  
+                "context": [],  # 段落文本  
+                "question": [], # 问题  
+                "options": [],  # 候选答案列表  
+                "label": []     # 正确答案的索引  
+            }  
+            
+            # 对每个样本进行处理  
+            for paragraph, question, answers, labels in zip(  
+                examples[config.article_key],  
+                examples[config.question_key],  
+                examples[config.options_key],  
+                examples[config.label_key]  
+            ):  
+                # MultiRC的答案可能是一个字符串或一个列表  
+                if isinstance(answers, str):  
+                    answers = [answers]  
+                if isinstance(labels, (int, bool)):  
+                    labels = [labels]  
+                    
+                # 确保答案和标签长度匹配  
+                assert len(answers) == len(labels), "Answers and labels must have the same length"  
+                
+                # 如果有多个正确答案，我们只取第一个作为正确答案  
+                # 这是为了适应多选一的格式  
+                if sum(labels) > 0:  
+                    correct_idx = labels.index(1)  
+                else:  
+                    correct_idx = 0  # 如果没有正确答案，默认选第一个  
+                    
+                # 构建选项列表（确保至少有4个选项）  
+                options = answers.copy()  
+                while len(options) < 4:  
+                    options.append("No answer")  # 填充选项  
+                    
+                new_features["context"].append(paragraph)  
+                new_features["question"].append(question)  
+                new_features["options"].append(options[:4])  # 只取前4个选项  
+                new_features["label"].append(correct_idx)  
+                
+            return new_features  
+        
+        # 对训练集和验证集分别进行处理  
+        processed_dataset = DatasetDict({  
+            split: dataset[split].map(  
+                process_multirc_split,  
+                batched=True,  
+                remove_columns=dataset[split].column_names  
+            )  
+            for split in dataset.keys()  
+        })  
+        
+        return processed_dataset  
+
+    def _preprocess_record(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
+        """  
+        处理ReCoRD数据集的特定预处理方法  
+        
+        ReCoRD数据集特点：  
+        - 每个样本包含一段文本(passage)和多个实体(entities)  
+        - 问题(query)中包含@placeholder标记，需要用实体替换  
+        - 每个问题可能有多个正确答案  
+        
+        Args:  
+            dataset: 原始数据集  
+            config: 数据集配置  
+            
+        Returns:  
+            处理后的数据集  
+        """  
+        def process_record_split(examples):  
+            new_features = {  
+                "context": [],   # 段落文本  
+                "question": [],  # 处理后的问题  
+                "options": [],   # 候选答案列表  
+                "label": []      # 正确答案的索引  
+            }  
+            
+            for passage, query, entities, answers in zip(  
+                examples[config.article_key],  
+                examples[config.question_key],  
+                examples[config.options_key],  
+                examples[config.label_key]  
+            ):  
+                # 确保entities是列表类型  
+                if isinstance(entities, str):  
+                    entities = [entities]  
+                
+                # 过滤出在文章中出现的实体  
+                valid_entities = [  
+                    entity for entity in entities  
+                    if entity in passage  
+                ]  
+                
+                # 如果没有有效实体，跳过这个样本  
+                if not valid_entities:  
+                    continue  
+                    
+                # 从有效实体中选择候选答案  
+                # 优先使用正确答案，然后随机选择其他实体作为干扰项  
+                candidates = set(answers) & set(valid_entities)  
+                distractors = set(valid_entities) - set(answers)  
+                
+                # 构建选项列表  
+                options = list(candidates)[:1]  # 取一个正确答案  
+                options.extend(list(distractors)[:3])  # 添加最多3个干扰项  
+                
+                # 如果选项不足4个，用特殊标记填充  
+                while len(options) < 4:  
+                    options.append("[NO_ENTITY]")  
+                    
+                # 打乱选项顺序  
+                import random  
+                random.shuffle(options)  
+                
+                # 找出正确答案的索引  
+                correct_answer = list(candidates)[0]  
+                correct_idx = options.index(correct_answer)  
+                
+                # 替换问题中的占位符  
+                processed_query = query.replace("@placeholder", "___")  
+                
+                new_features["context"].append(passage)  
+                new_features["question"].append(processed_query)  
+                new_features["options"].append(options)  
+                new_features["label"].append(correct_idx)  
+            
+            return new_features  
+        
+        # 对训练集和验证集分别进行处理  
+        processed_dataset = DatasetDict({  
+            split: dataset[split].map(  
+                process_record_split,  
+                batched=True,  
+                remove_columns=dataset[split].column_names  
+            )  
+            for split in dataset.keys()  
+        })  
+        
+        return processed_dataset  
+
+    def _convert_to_features(self, examples: Dict[str, List[Any]]) -> BatchEncoding:  
+        """  
+        将数据集转换为模型输入特征  
+        
+        Args:  
+            examples: 批量样本  
+            
+        Returns:  
+            模型输入特征  
+        """  
+        first_sentences = [[context] * len(options) for context, options in zip(examples["context"], examples["options"])]  
+        second_sentences = []  
+        
+        for question, options in zip(examples["question"], examples["options"]):  
+            second_sentences.append(  
+                [f"{question} {opt}" for opt in options]  
+            )  
+        
+        # 展平用于批处理  
+        first_sentences = sum(first_sentences, [])  
+        second_sentences = sum(second_sentences, [])  
+        
+        # 标记化  
+        tokenized_examples = self.tokenizer(  
+            first_sentences,  
+            second_sentences,  
+            truncation="longest_first",  
+            max_length=self.max_seq_length,  
+            padding="max_length",  
+            return_tensors="pt"  
+        )  
+        
+        # 重塑为 (batch_size, num_choices, seq_length)  
+        input_ids = tokenized_examples["input_ids"].view(-1, len(examples["options"][0]), self.max_seq_length)  
+        attention_mask = tokenized_examples["attention_mask"].view(-1, len(examples["options"][0]), self.max_seq_length)  
+        token_type_ids = tokenized_examples["token_type_ids"].view(-1, len(examples["options"][0]), self.max_seq_length)  
+        
+        return {  
+            "input_ids": input_ids,  
+            "attention_mask": attention_mask,  
+            "token_type_ids": token_type_ids,  
+            "labels": examples["label"]  
+        }  
+
+    def process_all_datasets(self) -> Dict[str, DatasetDict]:  
+        """处理所有数据集"""  
+        processed_datasets = {}  
+        for dataset_name in self.dataset_configs.keys():  
+            processed_datasets[dataset_name] = self.load_and_preprocess_dataset(dataset_name)  
+        return processed_datasets  
 
 
 

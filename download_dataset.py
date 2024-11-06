@@ -8,8 +8,8 @@ from datasets import config
 # 设置自定义缓存目录  
 cache_dir = "./data/super_glue"  # 你想保存数据的本地路径  
 # cache_dir = Config["datasets"]["super_glue"]
-# os.makedirs(cache_dir, exist_ok=True)  
-# config.HF_DATASETS_CACHE = cache_dir  
+os.makedirs(cache_dir, exist_ok=True)  
+config.HF_DATASETS_CACHE = cache_dir  
 
 # 下载所有SuperGLUE任务  
 # tasks = ['boolq', 'cb', 'copa', 'multirc', 'record', 'rte', 'wic', 'wsc', 'wsc.fixed', 'axb', 'axg']  
@@ -23,11 +23,10 @@ def download():
         print(f"Downloading {task}...")  
         # download_mode='force_redownload' 强制重新下载  
         # cache_dir 指定缓存目录 
-        os.environ['HF_DATASETS_CACHE'] = cache_dir   
-        dataset = load_dataset('super_glue', task)  
+        # os.environ['HF_DATASETS_CACHE'] = cache_dir   
+        dataset = load_dataset('super_glue', task, cache_dir=cache_dir)  
         print(f"{task} downloaded successfully!")  
         
-        dataset.cache_files
         
         # 打印数据集信息  
         print(f"\nDataset splits for {task}:")  
@@ -56,4 +55,4 @@ def clean():
 
 
 if __name__ == '__main__':
-    clean()
+    download()
