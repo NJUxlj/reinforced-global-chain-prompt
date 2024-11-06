@@ -8,6 +8,17 @@ from torch.utils.data import (
     Dataset,
     DataLoader
 )
+
+from load import (
+    preprocess_function_race,
+    load_dataset_from_huggingface,
+    preprocess_race,
+    preprocess_dataset_autocot,
+    preprocess_func_autocot
+)
+
+from config import Config
+
 import openai
 from openai import OpenAI
 import os
@@ -122,11 +133,33 @@ class MyDataset(Dataset):
 
 
 
-def get_reformated_dataset(args):
+def get_reformated_dataset(args)->Dataset:
     '''
      获取数据集，并将数据集reformat成两列[question, answer]
     '''
-    pass
+    # questions = []
+    # answers = []
+    # decoder = json.JSONDecoder()
+
+    dataset = None
+    if args.dataset == 'race':
+        dataset_path = Config['datasets']['race']
+        dataset = load_dataset_from_huggingface(dataset_path, "all", split = 'train')
+        print(f"Dataset after loading: type:{type(dataset)}; features:{dataset.features}") 
+        print(f"Dataset size after loading: {len(dataset) if dataset is not None else 'None'}")  
+
+        dataset = preprocess_dataset_autocot("race", dataset)
+        # print(f"Dataset size after preprocess: {len(dataset) if dataset is not None else 'None'}")  
+    
+    elif args.dataset == "record":
+        pass
+    elif args.dataset == "multirc":
+        pass
+    elif args.dataset == "arc":
+        pass
+    else:
+        raise ValueError("dataset is not properly defined ... Please select from [race, record, multirc, arc]")
+    return dataset
 
 
 def setup_data_loader(args):
@@ -152,9 +185,28 @@ def setup_data_loader(args):
     print("dataloader_num_workers: " ,dataloader_num_workers)
     
     # load data and reformat the question and answer
-    dataset = MyDataset(args)
+    dataset:Dataset = get_reformated_dataset(args)
+    dataset_size = len(dataset)
+    print(f"Dataset size = {dataset_size}") 
+    if dataset_size == 0:  
+        raise ValueError("Dataset is empty! Please check get_reformated_dataset function.") 
+
+    # print("Dataset info:")  
+    # print(f"Dataset type: {type(dataset)}")  
+    # if hasattr(dataset, 'features'):  
+    #     print(f"Dataset features: {dataset.features}")  
+    
     
     def collate_fn(batch):
+        '''
+        由于使用了自定义的 collate_fn 直接返回 batch[0]，每个 batch 将直接返回单个样本
+        数据类型将与 dataset 中单个样本的类型相同
+        通常是一个字典（dict）类型，包含问题和答案等字段
+        
+        即使设置了 batch_size > 1，实际上每次迭代仍然只会得到一个样本
+        这相当于强制将实际的 batch_size 设为 1, 实际上取消了批处理的效果
+        
+        '''
         return batch[0]
     
     dataloader = DataLoader(
@@ -259,3 +311,22 @@ def create_demo_text(args, cot_flag)->str:
     return demo_text
     
     
+    
+    
+    
+    
+    
+    
+if __name__ == "__main__":
+    args = {
+        "dataset": "race",
+        "random_seed": 42,
+        "max_num_worker": 5,
+        "minibatch_size": 1,
+    }
+    from collections import namedtuple  
+    MyDict = namedtuple('MyDict', args.keys())  
+    args = MyDict(**args)  
+    # ds = get_reformated_dataset(args)
+    
+    dataloader = setup_data_loader(args)

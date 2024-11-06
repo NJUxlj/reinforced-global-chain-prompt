@@ -1,5 +1,8 @@
 import torch
 import platform
+import multiprocessing  
+import psutil  
+import os 
 
 system_name = platform.system() 
 
@@ -24,6 +27,8 @@ if torch.cuda.is_available():
         print(f"检测到 {NUM_PROCESSES} 个可用的 GPU。")  
 else:  
     print("未检测到 GPU，将使用 CPU 进行训练。")  
+
+
 
 
 Config = {
@@ -253,3 +258,95 @@ Config = {
 
 MAX_LENGTH = Config['models']['bert-large-uncased']['max_length']
 HIDDEN_DIM = Config['models']['bert-large-uncased']['hidden_dim']
+
+
+
+
+
+
+
+
+
+
+
+
+
+def get_cpu_info():  
+    """  
+    获取CPU相关信息的函数  
+    
+    Returns:  
+        dict: 包含CPU信息的字典，包括：  
+            - logical_cores: 逻辑核心数（包含超线程）  
+            - physical_cores: 物理核心数  
+            - cpu_usage: 当前CPU使用率  
+            - available_cores: 可用的CPU核心数  
+    """  
+    # 获取逻辑CPU核心数（包含超线程）  
+    logical_cores = multiprocessing.cpu_count()  
+    
+    # 获取物理CPU核心数（不包含超线程）  
+    physical_cores = psutil.cpu_count(logical=False)  
+    
+    # 获取CPU使用率（百分比）  
+    cpu_usage = psutil.cpu_percent(interval=1)  
+    
+    # 获取当前进程可用的CPU核心数  
+    # 这会考虑环境变量中的限制  
+    if 'SLURM_CPUS_PER_TASK' in os.environ:  # 如果在SLURM集群环境中  
+        available_cores = int(os.environ['SLURM_CPUS_PER_TASK'])  
+    elif 'OMP_NUM_THREADS' in os.environ:  # 如果设置了OpenMP线程数  
+        available_cores = int(os.environ['OMP_NUM_THREADS'])  
+    else:  
+        available_cores = logical_cores  
+
+    return {  
+        'logical_cores': logical_cores,  
+        'physical_cores': physical_cores,  
+        'cpu_usage': cpu_usage,  
+        'available_cores': available_cores  
+    }  
+
+def recommend_num_workers(cpu_info):  
+    """  
+    根据CPU信息推荐合适的工作进程数  
+    
+    Args:  
+        cpu_info (dict): CPU信息字典  
+    
+    Returns:  
+        int: 推荐的工作进程数  
+    """  
+    # 获取可用的CPU核心数  
+    available_cores = cpu_info['available_cores']  
+    
+    # 保留一个核心给系统运行其他任务  
+    # 如果核心数大于4，则预留一个核心  
+    # 如果核心数小于等于4，则使用总核心数的3/4  
+    if available_cores > 4:  
+        recommended_workers = available_cores - 1  
+    else:  
+        recommended_workers = max(1, int(available_cores * 0.75))  
+    
+    return recommended_workers  
+
+
+
+NUM_CPU_PROCESSES = 0
+try:  
+    # 获取CPU信息  
+    cpu_info = get_cpu_info()  
+    print("\n=== CPU 信息 ===") 
+    print(f"当前环境可用核心数: {cpu_info['available_cores']}")  
+    # 获取推荐的工作进程数  
+    NUM_CPU_PROCESSES = recommend_num_workers(cpu_info)  
+    print(f"\n推荐的工作进程数: {NUM_CPU_PROCESSES}")  
+
+    print("\n=== 使用建议 ===")  
+    print("1. 对于CPU密集型任务（如数据预处理）:")  
+    print(f"   - 建议使用 num_proc={NUM_CPU_PROCESSES}") 
+except Exception as e:  
+        print(f"获取CPU信息时发生错误: {str(e)}")  
+        
+        
+print("NUM_CPU_PROCESSES = ", NUM_CPU_PROCESSES)

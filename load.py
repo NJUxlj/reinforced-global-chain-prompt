@@ -5,7 +5,7 @@ import random
 import torch
 
 from config import Config
-from config import NUM_PROCESSES
+from config import NUM_PROCESSES, NUM_CPU_PROCESSES
 
 from typing import List, Dict, Union
 
@@ -249,9 +249,7 @@ def preprocess_function_record(examples, text_column = "article", label_column  
 
 
 
-def preprocess_function_dream(examples, text_column = "article", label_column  ="answer", 
-                              dataset_name = 'dream', max_length = 512)->Dict[str,Union[List,List[List]]]:
-    pass
+
 
 
 def preprocess_pipeline_pt(ds: Dataset):
@@ -318,50 +316,86 @@ def preprocess_race(ds: Dataset, tokenizer:AutoTokenizer):
     print(f"dataset \"race\" is ready to be used ~~~")
     return ds, classes, tokenizer
 
-def preprocess_race_h(ds:Dataset):
+
+
+
+
+def preprocess_func_autocot(dataset_name, examples):
+    '''
+    预处理函数：将article、question和options字段合并成新的question字段  
+
+            no tokenization !
+    Args:  
+        examples:Dict[ str, List ]: 数据集中的一个批次样本  
+        dataset_name: 数据集名称，用于选择预处理函数  
+    Returns:  
+        处理后的样本     
+    '''
+    
+    if dataset_name == "race":
+        articles = [str(art) for art in examples['article']]  
+        questions = [str(q) for q in examples['question']]  
+        options = [str(opt) for opt in examples['options']] 
         
-    print(ds["train"].features)
-    # classes = [k.strip() for k in ds["train"].features["answer"].names]
+        new_questions: List[str] = [  
+            f"Artical:{art}\nQuestion:{q}\nOptions:{opt}"   
+            for art, q, opt in zip(articles, questions, options)  
+        ]  
+        
+        examples['question'] = new_questions 
+        
+        examples.pop('article')  
+        examples.pop('options')  
+        return examples
     
-    # print("classes = ", classes)
+    elif dataset_name == 'record':
+        pass
+    elif dataset_name == 'arc':
+        pass
+    elif dataset_name == 'multirc':
+        pass
+    else:
+        raise ValueError("Invalid dataset name ... Please select from [race, record, multirc, arc]")
+
+
+
+def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
+    """  
+    处理整个数据集  [必须是训练集]
     
-    # race的Answer 就是 A, B, C, D. no need for mapping
-    ds = ds.map(
-        lambda x: x,
+    Args:  
+        dataset: 原始的训练集 (split = train)  
+        dataset_name: 数据集名称，用于选择预处理函数
+    Returns:  
+        处理后的数据集  
+    """  
+    print("\nTesting preprocess_func_autocot with first example...")  
+    try:  
+        first_example = dataset[0]  
+        print(f"First example before processing: {first_example}")  
+        processed_example = preprocess_func_autocot(dataset_name, {'examples': [first_example]})  
+        print(f"First example after processing: {processed_example}")  
+    except Exception as e:  
+        print(f"Error in test first example: {str(e)}")  
+        import traceback  
+        print(f"Traceback:\n{traceback.format_exc()}")  
+    
+    print("\nFirst example testing succeed, now, Starting dataset mapping...")  
+    processed_dataset = dataset.map(
+        function= lambda examples: preprocess_func_autocot(dataset_name, examples),
         batched=True,
-        num_proc=1,
+        num_proc=NUM_CPU_PROCESSES,
+        remove_columns= ["example_id", "article", "options"],           # dataset.column_names,
+        load_from_cache_file=False,
+        desc="Running tokenizer on dataset",
     )
 
-    
-    print(f"dataset \"race-high\" is ready to be used ~~~")
-    return ds
+    print(f"\nProcessed dataset type: {type(processed_dataset)}")  
+    print(f"Processed dataset size: {len(processed_dataset)}")  
+    if hasattr(processed_dataset, 'column_names'):  
+        print(f"Processed dataset columns: {processed_dataset.column_names}")  
 
-
-def preprocess_race_m(ds:Dataset):
-        
-    print(ds["train"].features)
-    # classes = [k.strip() for k in ds["train"].features["answer"].names]
-    
-    # print("classes = ", classes)
-    
-    # race的Answer 就是 A, B, C, D. no need for mapping
-    ds = ds.map(
-        lambda x: x,
-        batched=True,
-        num_proc=1,
-    )
-
-    
-    print(f"dataset \"race-middle\" is ready to be used ~~~")
-    return ds
-
-
-
-
-
-
-def preprocess_race_c(dataset: Dataset):
-    pass
+    return processed_dataset
 
 
 
@@ -369,42 +403,7 @@ def preprocess_race_c(dataset: Dataset):
 
 
 
-def prepare_dataset(dataset):  
-    """  
-    应用预处理函数  
-    """  
-    dataset = dataset.map(preprocess_function, batched=True)  
-    return dataset
 
-
-
-def generate_example_data(num_examples=1000):  
-    data = {  
-        "context": [],  
-        "question": [],  
-        "choices": [],  
-        "label": []  
-    }  
-    
-    for _ in range(num_examples):  
-        context = "This is a sample context about a certain topic."  
-        question = "What is the main idea of the context?"  
-        choices = "A) Idea 1 B) Idea 2 C) Idea 3 D) Idea 4"  
-        label = random.choice(["A", "B", "C", "D"])  # 随机选择一个正确答案  
-        
-        data["context"].append(context)  
-        data["question"].append(question)  
-        data["choices"].append(choices)  
-        data["label"].append(label)  
-    
-    return data  
-
-
-def create_csv(file_path, num_examples=1000):  
-    data = generate_example_data(num_examples)  
-    df = pd.DataFrame(data)  
-    df.to_csv(file_path, index=False)  
-    print(f"CSV file with {num_examples} examples created at {file_path}") 
 
 
 if __name__ == "__main__":  
