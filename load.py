@@ -150,52 +150,76 @@ def preprocess_function_race_pt(examples, text_column = "article", label_column 
     return model_inputs
     
 
-def preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
+def preprocess_function_race(examples, first_four_columns = ["article", "question", "options", "answer"],
                              dataset_name = 'race', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
-    
-    
     
     ''' 
       iteratively modify every batch of data
       
       Args:
-          text_column: the column name of the text
-          
-          ds_builder: use it to get the name of dataset
-          
           classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
         
-    return: 
-  
-          {  
-                'input_ids': [[101, ..., 102], [101, ..., 102], ...],          # 每个子列表对应一个样本的 token IDs  
-                'attention_mask': [[1, ..., 1], [1, ..., 0], ...],             # 1 表示实际 token，0 表示填充  
-                'labels': [0, 2, 3, ...]                                        # 标签的整数索引表示  
-            }  
+        return: 
+
+                {  
+                    'input_ids': [[101, ..., 102], [101, ..., 102], ...],          # 每个子列表对应一个样本的 token IDs  
+                    'attention_mask': [[1, ..., 1], [1, ..., 0], ...],             # 1 表示实际 token，0 表示填充  
+                    'labels': [0, 2, 3, ...]                                        # 标签的整数索引表示  
+                }  
           
     '''
     assert tokenizer is not None, "tokenizer in \"preprocess_function_race\" is None, please assign one"
     
-    batch_size = len(examples[text_column])
+    batch_size = len(examples[first_four_columns[0]])
     
     
-    # 构建输入文本  
-    inputs = [  
-        f"Article: {examples['article'][i]}\n\nQuestion: {examples['question'][i]}\n\nOptions: {examples['options'][i]}\n\nAnswer:"  
-        for i in range(len(examples[text_column]))  
-    ]  
+    # # 构建输入文本  
+    # inputs = [  
+    #     f"Article: {examples['article'][i]}\n\nQuestion: {examples['question'][i]}\n\nOptions: {examples['options'][i]}\n\nAnswer:"  
+    #     for i in range(len(examples[text_column]))  
+    # ]  
+    
+    # 初始化结果列表  
+    input_texts = []  
+    labels = []  
+    
+    # 处理每个样本  
+    for i in range(batch_size):  
+        # 获取当前样本的各个字段  
+        article = examples[first_four_columns[0]][i]  # article/support  
+        question = examples[first_four_columns[1]][i]  
+        options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
+        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        
+        # 将选项转换为字典格式，方便后续处理  
+        # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
+        
+        # 构建输入文本  
+        # 格式：[CLS] 文章 [SEP] 问题 [SEP] 选项A [SEP] 选项B [SEP] 选项C [SEP] 选项D [SEP]  
+        input_text = f'''
+                        Article:{article}
+                        Question:{question}
+                        Options:
+                        {options[0]}
+                        {options[1]}
+                        {options[2]}
+                        {options[3]} 
+                        Answer:
+                        '''
+        
+        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
+        label = ord(answer) - ord('A')  
+        
+        input_texts.append(input_text)  
+        labels.append(label)  
     
     model_inputs = tokenizer(  
-        inputs,  
+        input_texts,  
         padding = "max_length",
         truncation=True,  
         max_length=max_length,  
         add_special_tokens=True  # 确保添加特殊标记  [CLS] [SEP]
     )  
-
-
-    # 处理标签：将答案从字母转换为整数索引  
-    labels = [ord(answer) - ord('A') for answer in examples['answer']]  
     
     # 确保标签符合n_classes，不超范围  
     assert all(0 <= label < 4 for label in labels), "There are labels out of range [0, 3]." 
@@ -1350,8 +1374,11 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
     '''
     
     if dataset_name == 'race':
-        model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'race', max_length = max_length)
+        # model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
+        #                                  dataset_name = 'race', max_length = max_length)
+        
+        model_inputs = preprocess_function_race(examples, first_four_columns = first_four_columns, 
+                                    dataset_name = 'race', max_length = max_length, tokenizer = wrapper.tokenizer)
     elif dataset_name == 'multirc':
         model_inputs = preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
                                          dataset_name = 'multirc', max_length = max_length)

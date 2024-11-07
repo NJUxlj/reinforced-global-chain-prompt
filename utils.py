@@ -5,7 +5,14 @@ import numpy as np
 from config import Config
 
 
-from torch.utils.data import DataLoader
+from gensim.models import Word2Vec, KeyedVectors  
+from typing import List, Union, Optional  
+
+import torch.distributed as dist  
+import torch.multiprocessing as mp  
+from torch.nn.parallel import DistributedDataParallel as DDP 
+
+from torch.utils.data import DataLoader, DistributedSampler
 
 from datasets import (
     Dataset,
@@ -20,7 +27,7 @@ from transformers import (
     AutoModelForSequenceClassification,
 )
 
-
+from config import Config
 
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
@@ -113,3 +120,149 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
     
     return model, tokenizer
+
+
+
+
+
+
+class GensimWord2VecWrapper:  
+    def __init__(self,   
+                 model: Union[str, Word2Vec, KeyedVectors],  
+                 device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):  
+        """  
+        初始化Word2Vec包装器  
+        
+        Args:  
+            model: 可以是以下三种类型之一：  
+                  - 预训练模型的路径（字符串）  
+                  - 已加载的Word2Vec模型  
+                  - 已加载的KeyedVectors模型  
+            device: 运行设备，默认使用GPU如果可用  
+        """  
+        self.device = device  
+        
+        # 根据输入类型加载或设置模型  
+        if isinstance(model, str):  
+            # 如果是模型路径，则加载模型  
+            try:  
+                self.model = KeyedVectors.load(model)  
+            except:  
+                try:  
+                    self.model = KeyedVectors.load_word2vec_format(model, binary=True)  
+                except:  
+                    self.model = KeyedVectors.load_word2vec_format(model, binary=False)  
+        elif isinstance(model, (Word2Vec, KeyedVectors)):  
+            # 如果是已加载的模型，直接使用  
+            self.model = model.wv if isinstance(model, Word2Vec) else model  
+        else:  
+            raise ValueError("模型必须是路径字符串或Word2Vec/KeyedVectors实例")  
+        
+        self.vector_size = self.model.vector_size  
+        print(f"模型加载完成。词向量维度: {self.vector_size}")  
+    
+    @classmethod  
+    def train_new_model(cls,   
+                       sentences: List[List[str]],   
+                       vector_size: int = 100,  
+                       window: int = 5,  
+                       min_count: int = 1,  
+                       workers: int = 4,  
+                       sg: int = 0) -> 'GensimWord2VecWrapper':  
+        """  
+        训练新的Word2Vec模型  
+        
+        Args:  
+            sentences: 训练语料，每个元素是一个词列表  
+            vector_size: 词向量维度  
+            window: 上下文窗口大小  
+            min_count: 词的最小出现次数  
+            workers: 训练的线程数  
+            sg: 训练算法，0为CBOW（默认），1为Skip-gram  
+            
+        Returns:  
+            GensimWord2VecWrapper实例  
+        """  
+        model = Word2Vec(sentences=sentences,  
+                        vector_size=vector_size,  
+                        window=window,  
+                        min_count=min_count,  
+                        workers=workers,  
+                        sg=sg)  
+        return cls(model)  
+
+    def get_word_vector(self, word: str) -> torch.Tensor:  
+        """  
+        获取单个词的向量  
+        
+        Args:  
+            word: 输入词  
+            
+        Returns:  
+            torch.Tensor: 词向量  
+        """  
+        try:  
+            vector = self.model[word]  
+            return torch.tensor(vector, device=self.device)  
+        except KeyError:  
+            print(f"警告: 词'{word}'不在词表中，返回零向量")  
+            return torch.zeros(self.vector_size, device=self.device)  
+
+    def get_word_vectors(self,   
+                        words: List[str],   
+                        pad_to_length: Optional[int] = None) -> List[torch.Tensor]:  
+        """  
+        获取词列表的向量列表  
+        
+        Args:  
+            words: 输入词列表  
+            pad_to_length: 如果指定，将结果填充到指定长度  
+            
+        Returns:  
+            List[torch.Tensor]: 词向量列表  
+        """  
+        vectors = [self.get_word_vector(word) for word in words]  
+        
+        if pad_to_length is not None:  
+            # 填充到指定长度  
+            padding = [torch.zeros(self.vector_size, device=self.device)   
+                      for _ in range(pad_to_length - len(vectors))]  
+            vectors.extend(padding)  
+            vectors = vectors[:pad_to_length]  
+            
+        return vectors  
+
+    def get_word_vectors_tensor(self,   
+                              words: List[str],  
+                              pad_to_length: Optional[int] = None) -> torch.Tensor:  
+        """  
+        获取词列表的向量张量（批处理形式）  
+        
+        Args:  
+            words: 输入词列表  
+            pad_to_length: 如果指定，将结果填充到指定长度  
+            
+        Returns:  
+            torch.Tensor: 形状为(len(words), vector_size)的张量  
+        """  
+        vectors = self.get_word_vectors(words, pad_to_length)  
+        return torch.stack(vectors)  
+    
+    
+    
+    
+
+
+def main():
+    '''
+    for testing
+    '''
+    
+    
+
+
+
+
+
+if __name__ == "__main__":
+    main()

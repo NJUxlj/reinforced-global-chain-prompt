@@ -195,11 +195,11 @@ def initialize_prefix_prompts(dataset_path, model, tokenizer, num_prefix_tokens,
     """
     class_embeddings = None
     if classes_initiate_method == "normal":
-        class_embeddings = get_classes_for_dataset(dataset_path,model, tokenizer, num_topics=num_prefix_tokens, K=5, max_length=512)
+        class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
     elif classes_initiate_method == "cluster":
-        class_embeddings = get_classes_by_clustering(dataset_path,model, tokenizer, num_topics=num_prefix_tokens, K=5, max_length=512)
+        class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
     elif classes_initiate_method == "lda":
-        class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, num_topics=num_prefix_tokens, K=5, max_length=512)
+        class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
     else:
         raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
 
@@ -232,27 +232,36 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
             "cluster": use the get_classes_cluster() to get class labels
     '''
     
-    print(f"reformat input using reformat_type = {reformat_type}")
+    reformat_dict = {
+        "normal": "get_classes_for_dataset()",
+        "lda": "get_classes_by_lda()",
+        "cluster": "get_classes_by_cluster()"
+    }
+    
+    print(f"reformat input using reformat_type = {reformat_dict[reformat_type]}")
     if dataset_path == Config["datasets"]["race"]:
-                    
-        ds = load_dataset_from_huggingface(dataset_path, "all")
+        dataset_name = "race"
         
         if reformat_type == "normal":
-            # corse-grained preprocessing
-            ds, classes, tokenizer = preprocess_race(ds, tokenizer)
+            # # corse-grained preprocessing
+            # ds, classes, tokenizer = preprocess_race(ds, tokenizer)
             
-            # fine-grained preprocessing
-            processed_ds = ds.map(
-                lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), 
-                batched=True,
-                num_proc=NUM_CPU_PROCESSES,
-                remove_columns=ds['train'].column_names,
-                load_from_cache_file=False,
-                desc="Running tokenizer on dataset",
-            )
+            # # fine-grained preprocessing
+            # processed_ds = ds.map(
+            #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), 
+            #     batched=True,
+            #     num_proc=NUM_CPU_PROCESSES,
+            #     remove_columns=ds['train'].column_names,
+            #     load_from_cache_file=False,
+            #     desc="Running tokenizer on dataset",
+            # )     
+            
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
             train_ds = processed_ds["train"]
             
         elif reformat_type == "lda":
+            ds = load_dataset_from_huggingface(dataset_path, "all")
+            
             processed_ds = ds.map(
                 lambda examples: {
                     "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
@@ -278,24 +287,143 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
                 train_ds.append(tokens)
             
         elif reformat_type == "cluster":
-            pass
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
         else:
             raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
         
                     
         
     elif dataset_path == Config["datasets"]["sciq"]:
-        pass
+        dataset_name = "sciq"
+        
+        if reformat_type == "normal":
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+            
+        elif reformat_type == "lda":
+            ds = load_dataset_from_huggingface(dataset_path, "all")
+            
+            processed_ds = ds.map(
+                lambda examples: {
+                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
+                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
+                },
+                batched=True,
+                num_proc=NUM_CPU_PROCESSES,
+                remove_columns=ds['train'].column_names,
+                load_from_cache_file=False,
+                desc="Running tokenizer on dataset",
+            )
+            
+            # transfer the dataset into List[str]
+            processed_ds = [text for text in processed_ds['train']['combined_input']]  
+            
+            
+            train_ds: List[List[str]] = []
+            for text in processed_ds:
+                text = text.lower()
+                tokens = word_tokenize(text)
+                # remove stopwords and non-alphabetic characters
+                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
+                train_ds.append(tokens)
+            
+        elif reformat_type == "cluster":
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+        else:
+            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
+        
+    
     elif dataset_path == Config["datasets"]["commonsense_qa"]:
-        pass
-    elif dataset_path == Config["datasets"]["dream"]:
-        pass
+        dataset_name = "commonsense_qa"
+        if reformat_type == "normal":
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+            
+        elif reformat_type == "lda":
+            ds = load_dataset_from_huggingface(dataset_path, "all")
+            
+            processed_ds = ds.map(
+                lambda examples: {
+                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
+                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
+                },
+                batched=True,
+                num_proc=NUM_CPU_PROCESSES,
+                remove_columns=ds['train'].column_names,
+                load_from_cache_file=False,
+                desc="Running tokenizer on dataset",
+            )
+            
+            # transfer the dataset into List[str]
+            processed_ds = [text for text in processed_ds['train']['combined_input']]  
+            
+            
+            train_ds: List[List[str]] = []
+            for text in processed_ds:
+                text = text.lower()
+                tokens = word_tokenize(text)
+                # remove stopwords and non-alphabetic characters
+                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
+                train_ds.append(tokens)
+            
+        elif reformat_type == "cluster":
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+        else:
+            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
+    
+    
+    elif dataset_path == Config["datasets"]["dream"]['all']:
+        dataset_name = "dream"
+        if reformat_type == "normal":
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+            
+        elif reformat_type == "lda":
+            ds = load_dataset_from_huggingface(dataset_path, "all")
+            
+            processed_ds = ds.map(
+                lambda examples: {
+                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
+                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
+                },
+                batched=True,
+                num_proc=NUM_CPU_PROCESSES,
+                remove_columns=ds['train'].column_names,
+                load_from_cache_file=False,
+                desc="Running tokenizer on dataset",
+            )
+            
+            # transfer the dataset into List[str]
+            processed_ds = [text for text in processed_ds['train']['combined_input']]  
+            
+            
+            train_ds: List[List[str]] = []
+            for text in processed_ds:
+                text = text.lower()
+                tokens = word_tokenize(text)
+                # remove stopwords and non-alphabetic characters
+                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
+                train_ds.append(tokens)
+            
+        elif reformat_type == "cluster":
+            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+        else:
+            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
+        
+        
     else:
         raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, sciq, commonsense_qa, dream]")
     
     return train_ds
 
-def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
+
+
+
+def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
     '''
     get the label collection of some specific dataset
         
@@ -463,15 +591,16 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, num_topics = 5, K=5,
         class_embeddings.append(token_embeddings[index])
     return class_embeddings
 
-def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)->List[torch.Tensor]:
+def get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size, num_topics=5, K=5, max_length=512)->List[torch.Tensor]:
     '''
         num_topics: number of classes to be generated == num_suffix_tokens
         
         K : number of sub-classes to be generated
     
     '''
-    print("get class labels by Clustering ~~~~")
+    print(f"get class labels by Clustering ~~~~")
 
+  
     classes = []
     device = Config['device']
     # model.to(device)
@@ -601,7 +730,7 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
         
     return cluster_label_embeddings
         
-def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
+def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
     '''
     use the LDA model to extract the class labels
     
@@ -626,7 +755,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, num_topics = 5, K=5, max_
     
     train_data_loader = DataLoader(train_ds, batch_size=1000, 
                                    collate_fn=default_data_collator, 
-                                   num_workers=0, # use as your need
+                                   num_workers=NUM_CPU_PROCESSES, # use as your need
                                    shuffle=False)
     
     
@@ -749,7 +878,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     # fine-grained preprocessing
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
     
-    processed_ds = preprocess_dataset_peft(dataset_name, max_length = 512)
+    processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
     
     # processed_ds = ds.map(
     #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
@@ -915,7 +1044,7 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, trained_tokenizer_p
 
 if __name__ == "__main__":
     
-    model_path = Config["models"]["bert-large-uncased"]["model_path"]
+    model_path = Config["models"]["bert-base-uncased"]["model_path"]
 
     
     # 加载数据集
