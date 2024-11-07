@@ -213,8 +213,16 @@ def preprocess_function_arc(examples, text_column = "article", label_column  ="a
 
 
 
+def preprocess_function_sciq(examples, text_column = "article", label_column  ="answer", 
+                               dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
+    pass
 
-def preprocess_function_record(examples, text_column = "article", label_column  ="answer", 
+def preprocess_function_dream(examples, text_column = "article", label_column  ="answer", 
+                               dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
+    pass
+
+
+def preprocess_function_commonsense_qa(examples, text_column = "article", label_column  ="answer", 
                                dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
     pass
 
@@ -241,13 +249,23 @@ def preprocess_func_peft(dataset_name, examples, max_length)->Dict[str,Union[Lis
     elif dataset_name == 'arc':
         model_inputs = preprocess_function_arc(examples, text_column = "article", label_column  ="answer", 
                                          dataset_name = 'arc', max_length = max_length)
-    elif dataset_name == 'record':
-        model_inputs = preprocess_function_record(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'record', max_length = max_length)
+    elif dataset_name == 'dream':
+        model_inputs = preprocess_function_dream(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'dream', max_length = max_length)
+    elif dataset_name == 'sciq':
+        model_inputs = preprocess_function_sciq(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'sciq', max_length = max_length)
+        
+    elif dataset_name == 'commonsense_qa':
+        model_inputs = preprocess_function_commonsense_qa(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'commonsense_qa', max_length = max_length)
     else:
-        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, multirc, arc, record]")
+        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, multirc, arc, dream, sciq, commonsense_qa]")
 
     return model_inputs
+
+
+
 def preprocess_dataset_peft(dataset_name, dataset:Dataset, max_length=512)->Dataset:
     """  
     处理整个数据集  [dataset必须同时包含train和valid] [针对PEFT任务]
@@ -517,15 +535,33 @@ class McqDatasetWrapper:
                 local_path=Config['datasets']['multirc']['all'],  
                 file_format="json"  
             ),  
-            "record": DatasetConfig(  
-                name="record",  
-                article_key="passage",  
-                question_key="query",  
-                options_key="entities",  
-                label_key="answers",  
-                local_path=Config['datasets']['record']['all'],  
+            "dream": DatasetConfig(  
+                name="dream",  
+                article_key="dialogue",  
+                question_key="question",  
+                options_key="options",  
+                label_key="label",  
+                local_path=Config['datasets']['dream']['all'],  
                 file_format="json"  
-            )  
+            ),
+            "sciq": DatasetConfig(  
+                name="sciq",  
+                article_key="support",  
+                question_key="question",  
+                options_key="options",  
+                label_key="answer",  
+                local_path=Config['datasets']['sciq'],  
+                file_format="huggingface"  
+            ),
+            "commonsense_qa": DatasetConfig(  
+                name="commonsense_qa",  
+                article_key="question_concept",  
+                question_key="question",  
+                options_key="options",  
+                label_key="answer",  
+                local_path=Config['datasets']['commonsense_qa'],  
+                file_format="huggingface"  
+            )       
         }  
 
     def load_json_dataset(self, config: DatasetConfig) -> DatasetDict:  
@@ -558,10 +594,11 @@ class McqDatasetWrapper:
             
             # 针对MultiRC的特殊处理  
             if config.name == "multirc":  
-                processed_data = self._process_multirc_json(data)  
-            # 针对ReCoRD的特殊处理  
+                processed_data = self._process_multirc_json(data, config)  
+            # 针对DREAM的特殊处理  
             elif config.name == "dream":  
-                processed_data = self._process_dream_json(data)  
+                processed_data = self._process_dream_json(data,config)
+            
             else:  
                 processed_data = data  
                 
@@ -569,7 +606,7 @@ class McqDatasetWrapper:
         
         return DatasetDict(datasets)  
 
-    def _process_multirc_json(self, data: Dict) -> Dict[str, List]:  
+    def _process_multirc_json(self, data: Dict, config:DatasetConfig) -> Dict[str, List]:  
         """  
         处理MultiRC数据集的JSON数据  
         
@@ -615,10 +652,10 @@ class McqDatasetWrapper:
             - multisent: 是否跨多个句子  
         """  
         processed_data = {  
-            "context": [],  
-            "question": [],  
-            "options": [],  
-            "label": [],  
+            config.article_key: [],  
+            config.question_key: [],  
+            config.options_key: [],  
+            config.label_key: [],  
             "sentences_used": [],  
             "multisent": []  
         }  
@@ -681,17 +718,17 @@ class McqDatasetWrapper:
                 label = options.index(correct_answer)  
                 
                 # 添加到处理后的数据中  
-                processed_data["context"].append(paragraph_text)  
-                processed_data["question"].append(question)  
-                processed_data["options"].append(options)  
-                processed_data["label"].append(label)  
+                processed_data[config.article_key].append(paragraph_text)  
+                processed_data[config.question_key].append(question)  
+                processed_data[config.options_key].append(options)  
+                processed_data[config.label_key].append(label)  
                 processed_data["sentences_used"].append(sentences_used)  
                 processed_data["multisent"].append(multisent)  
         
         return processed_data  
   
 
-    def _process_dream_json(self, data:Dict)->Dict[str, List]:
+    def _process_dream_json(self, data:Dict, config:DatasetConfig)->Dict[str, List]: 
         """  
         处理DREAM数据集的JSON数据  
         
@@ -719,17 +756,17 @@ class McqDatasetWrapper:
             
         Returns:  
             处理后的字典数据，包含以下字段：  
-            - context: 对话文本（合并后）  
+            - dialogue: 对话文本（合并后）  
             - question: 问题  
             - options: 选项列表  
             - label: 正确答案的索引  
             - dialogue_id: 对话ID（可选，用于追踪）  
         """  
         processed_data = {  
-            "context": [],  
-            "question": [],  
-            "options": [],  
-            "label": [],  
+            config.article_key: [],  
+            config.question_key: [],  
+            config.options_key: [],  
+            config.label_key: [],  
             "dialogue_id": []  
         }  
         
@@ -748,11 +785,11 @@ class McqDatasetWrapper:
                 question = qa["question"]  
                 choices = qa["choice"]  
                 answer = qa["answer"]  
-                
+            
                 # 确保选项列表长度为4（DREAM默认是3个选项）  
                 options = choices.copy()  
                 while len(options) < 3:  
-                    options.append("N/A")  # 填充到4个选项  
+                    options.append("N/A")  # 填充到3个选项  
                     
                 # 获取正确答案的索引（在DREAM中答案是选项的完整文本）  
                 try:  
@@ -762,24 +799,214 @@ class McqDatasetWrapper:
                     continue  
                     
                 # 添加到处理后的数据中  
-                processed_data["context"].append(dialogue_text)  
-                processed_data["question"].append(question)  
-                processed_data["options"].append(options)  
-                processed_data["label"].append(label)  
+                processed_data[config.article_key].append(dialogue_text)  
+                processed_data[config.question_key].append(question)  
+                processed_data[config.options_key].append(options)  
+                processed_data[config.label_key].append(label)  
                 processed_data["dialogue_id"].append(dialogue_id)  
         
         return processed_data   
     
-    def _process_boolq_json(self, data:Dict)->Dict[str, List]:
-        pass
+    
+    def _process_race(self, data:Dataset)->Dataset:
+        
+        
+        def process_examples(examples:Dict[str, List]):
+            batch_size = len(examples["question"])
+            # 初始化结果字典
+            result = {
+                "article": [],
+                "question": [],
+                "options": [],
+                "answer": []
+            }
+            for i in range(batch_size):
+                # 收集所有选项
+                pass
+        
+        processed_dataset = data.map(  
+            process_examples,
+            batch_size=32,
+            batched= True,
+            num_proc=NUM_CPU_PROCESSES, 
+            remove_columns=["id"],
+            desc="Processing Race dataset", 
+        )  
+        
+    
+    def _process_sciq(self, data:Dataset, config:DatasetConfig)->Dataset:
+        """  
+        处理SciQ数据集，将原始格式转换为统一的格式  
+        
+        原始格式：  
+        {  
+            "correct_answer": str,  
+            "distractor1": str,  
+            "distractor2": str,  
+            "distractor3": str,  
+            "question": str,  
+            "support": str  
+        }  
+        
+        目标格式：  
+        {  
+            "support": str,        # 文章内容  
+            "question": str,       # 问题  
+            "options": List[str],  # 选项列表（4个选项）  
+            "answer": int         # 正确答案的索引  
+        }  
+        
+        Args:  
+            data: 原始Dataset对象  
+            
+        Returns:  
+            处理后的Dataset对象  
+        """  
+        def process_examples(examples:Dict[str, List]):
+            batch_size = len(examples["question"]) 
+            # 初始化结果字典  
+            result = {  
+                config.article_key: [],  
+                config.question_key: [],  
+                config.options_key: [],  
+                config.label_key: []  
+            }     
+            for i in range(batch_size):
+                # 收集所有选项  
+                options = [  
+                    examples["correct_answer"][i].strip(),  
+                    examples["distractor1"][i].strip(),  
+                    examples["distractor2"][i].strip(),  
+                    examples["distractor3"][i].strip(),
+                ]    
+                
+
+                # 记录正确答案的原始位置（0）  
+                correct_answer = examples["correct_answer"][i].strip()
+                
+                correct_answer_index = options.index(correct_answer)
+                
+                original_indices = list(range(len(options))) 
+                
+                combined = list(zip(options, original_indices)) 
+                
+                # 随机打乱选项顺序  
+                random.shuffle(combined)  
+                
+                shuffled_options, shuffled_indices = zip(*combined) 
+                # [1, 3, 2, 0]
+                #  0  1  2   3  ->  A  B  C  D
+                
+                # 添加选项标签 (A, B, C, D)  
+                labeled_options = [  
+                    f"{chr(j+65)}. {option}" for j, option in enumerate(shuffled_options)  
+                ] 
+                
+                final_answer_index = shuffled_indices.index(correct_answer_index)
+                final_answer = chr(final_answer_index+65)
+                
+                # 添加到结果中  
+                result[config.article_key].append(examples["support"][i].strip())  
+                result[config.question_key].append(examples["question"][i].strip())  
+                result[config.options_key].append(labeled_options)  
+                result[config.label_key].append(final_answer)  
+                
+                
+            return result
+        
+        # 使用map函数处理整个数据集  
+        processed_dataset = data.map(  
+            process_examples,
+            batch_size=32,
+            batched= True,
+            num_proc=NUM_CPU_PROCESSES, 
+            remove_columns=["correct_answer", "distractor1", "distractor2", "distractor3"],
+            desc="Processing SciQ dataset", 
+        )  
+        
+        return processed_dataset  
     
     
-    def _process_rte_json(self, data:Dict)->Dict[str, List]:
-        pass
+    def _process_commonsense_qa(self, data:Dataset, config:DatasetConfig)->Dataset:
+        """  
+        处理CommonsenseQA数据集，将原始格式转换为统一的格式  
+        
+        原始格式：  
+        {  
+            'id': str,  
+            'question': str,  [  
+                                    'The sanctions against the school were...',  
+                                    'What do people typically do when...'  
+                                ],  
+            
+            
+            'question_concept': str,  [  
+                                            'punishing',  
+                                            'walking'  
+                                        ],  
+            'choices': {  
+                'label': List[str],  # [['A', 'B', 'C', 'D', 'E'], [....], [.....] ] 
+                'text': List[str]    # 选项文本列表  [['text', 'text', 'text', 'text', 'text'], [....], [.....] ]
+            },  
+            'answerKey': str        # 正确答案的标签 ['A', 'C']
+        }  
+        
+        目标格式：  
+        {  
+            'question_concept': str,  # 文章/概念  
+            'question': str,          # 问题  
+            'options': List[str],     # 带标签的选项列表 ["A. text", "B. text", ...]  
+            'answer': str             # 正确答案标签 ('A'/'B'/...)  
+        }  
+        
+        Args:  
+            data: 原始Dataset对象  
+            
+        Returns:  
+            处理后的Dataset对象  
+        """  
+        def process_examples(examples):  
+            batch_size = len(examples["question"])  
+            
+            # 初始化结果字典  
+            result = {  
+                config.article_key: [],  
+                config.question_key: [],  
+                config.options_key: [],  
+                config.label_key: []  
+            }  
+            
+            # 处理批次中的每个样本  
+            for i in range(batch_size):  
+                # 获取选项标签和文本  
+                labels = examples["choices"][i]["label"]
+                texts = examples["choices"][i]["text"]
+                
+                
+                # 组合标签和文本  
+                labeled_options = [f"{label}. {text}" for label, text in zip(labels, texts)]  
+                
+                # 添加到结果中  
+                result[config.article_key].append(examples["question_concept"][i])  
+                result[config.question_key].append(examples["question"][i])  
+                result[config.options_key].append(labeled_options)  
+                result[config.label_key].append(examples["answerKey"][i])  
+            
+            return result  
+        
+        # 使用map函数处理整个数据集  
+        processed_dataset = data.map(  
+            process_examples,  
+            batched=True,  
+            batch_size=32,  
+            num_proc=NUM_CPU_PROCESSES,  
+            desc="Processing CommonsenseQA dataset", 
+            remove_columns=["id", "choices", "answerKey"], 
+        )  
+        
+        return processed_dataset
     
-    
-    
-    def load_dataset_all_format(self, dataset_name: str, split = None) -> Union[DatasetDict, Dataset]:  
+    def load_mcq_dataset(self, dataset_name: str, split = None) -> Tuple[Union[DatasetDict, Dataset], List[str]]:  
         """  
         load a complete dataset [train, valid] 
         
@@ -795,42 +1022,39 @@ class McqDatasetWrapper:
         # 根据文件格式选择加载方式  
         if config.file_format == "json":  
             dataset = self.load_json_dataset(config)  
+            
+            if split == "train":
+                dataset = dataset['train']
+            elif split == 'validation':
+                dataset = dataset['validation'] # dev
+            elif split == 'test':
+                try:
+                    dataset = dataset['test']
+                except:
+                    print("the split {} is not found, use validation instead".format(split))
+                    dataset = dataset['validation'] # dev
+            elif split == None:
+                pass
+            else:
+                raise ValueError(f"Unsupported dataset split name: {split}, Please select from [train, validation, test]")
+                
+                
         else:  # huggingface格式  
-            # dataset = load_dataset(  
-            #     "json",   
-            #     data_files=None,  # 使用默认的数据文件  
-            #     data_dir=config.local_path  
-            # )  
-            
-            dataset = load_dataset_from_huggingface(config.local_path, config.subset)
-            
-        
-        
-        return dataset  
-    
-    def _preprocess_race(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
-        """RACE数据集的特定预处理"""  
-        def process_race(example):  
-            return {  
-                "context": example[config.article_key],  
-                "question": example[config.question_key],  
-                "options": example[config.options_key],  
-                "label": self.label_map[example[config.label_key]]  
-            }  
-        return dataset.map(process_race)  
+            dataset = load_dataset_from_huggingface(config.local_path, config.subset, split=split)
+            # print("dataset['train][0]:\n", dataset['train'][0])
+            if dataset_name.lower() == 'sciq':
+                dataset = self._process_sciq(dataset, config)
+            elif dataset_name.lower() == 'commonsense_qa':
+                dataset = self._process_commonsense_qa(dataset, config)
+            elif dataset_name.lower() == 'race':
+                # dataset = self._process_race(dataset)
+                pass
+            else:
+                raise ValueError(f"Unsupported dataset: {dataset_name}, Please select from [race, sciq, commonsense_qa]")
 
-    def _preprocess_arc(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
-        """ARC数据集的特定预处理"""  
-        def process_arc(example):  
-            options = [choice["text"] for choice in example[config.options_key]]  
-            return {  
-                "context": example[config.article_key],  
-                "question": example[config.question_key],  
-                "options": options,  
-                "label": self.label_map[example[config.label_key]]  
-            }  
-        return dataset.map(process_arc)  
-    
+        four_column_names = [config.article_key, config.question_key, config.options_key, config.label_key]
+        return dataset, four_column_names
+
     def _preprocess_multirc(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
         """  
         处理MultiRC数据集的特定预处理方法  
@@ -903,15 +1127,12 @@ class McqDatasetWrapper:
         
         return processed_dataset  
 
-    def _preprocess_dream(self, dataset: DatasetDict, config: DatasetConfig)->DatasetDict:
-        pass
         
-
     def get_all_datasets(self, split=None) -> Dict[str, DatasetDict]:  
         """处理所有数据集"""  
         all_datasets = {}  
         for dataset_name in self.dataset_configs.keys():  
-            all_datasets[dataset_name] = self.load_dataset_all_format(dataset_name, split=split)  
+            all_datasets[dataset_name], _ = self.load_mcq_dataset(dataset_name, split=split)  
         return all_datasets  
 
 
@@ -960,4 +1181,45 @@ if __name__ == "__main__":
     # print('len(ds[0]) = ',len(ds[0]))
     
     
-    ds = choose_dataset("multirc")
+    # ds = choose_dataset("multirc")
+    
+    
+    mcqobj = McqDatasetWrapper()
+    
+    dream, _ = mcqobj.load_mcq_dataset("dream")
+    
+    sciq, _ = mcqobj.load_mcq_dataset("sciq")
+    
+    race, _ = mcqobj.load_mcq_dataset("race")
+    
+    
+    commonsense_qa, _ = mcqobj.load_mcq_dataset("commonsense_qa")
+    
+    
+    print(" ================= dream =====================")
+    
+    print(dream['train'][0])
+    
+    print(" ")
+    print("======================== sciq ========================")
+    print(sciq['train'][0])  
+    
+    
+    print(" ")
+    print("======================== commonsense_qa ========================")
+    print(commonsense_qa['train'][0])
+    print(" ===================================== ")
+
+    
+    
+    print(" ")
+    print(" ================= race ==================== ")
+    print(race['train'][0])  
+    
+    print(" ===================================== ")
+    print(race['validation'][0])
+    
+    
+    print("======================================")
+    print(race['test'][0])
+    

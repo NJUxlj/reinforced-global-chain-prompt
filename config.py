@@ -258,6 +258,8 @@ Config = {
             "test": "./data/dream/test.json"
         },
         "super_glue" : "./data/super_glue",
+        "commonsense_qa": "./data/commonsense_qa",
+        "sciq": "./data/sciq",
     },
     "classes":{
         "race-c":"",
