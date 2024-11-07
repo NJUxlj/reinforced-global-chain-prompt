@@ -213,17 +213,17 @@ def preprocess_function_arc(examples, text_column = "article", label_column  ="a
 
 
 
-def preprocess_function_sciq(examples, text_column = "article", label_column  ="answer", 
-                               dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_sciq(examples, first_four_columns = ["article", "question", "options", "answer"], 
+                               dataset_name = 'sciq', max_length = 512)->Dict[str,Union[List,List[List]]]:
     pass
 
-def preprocess_function_dream(examples, text_column = "article", label_column  ="answer", 
-                               dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
+                               dataset_name = 'dream', max_length = 512)->Dict[str,Union[List,List[List]]]:
     pass
 
 
-def preprocess_function_commonsense_qa(examples, text_column = "article", label_column  ="answer", 
-                               dataset_name = 'record', max_length = 512)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_commonsense_qa(examples, first_four_columns = ["article", "question", "options", "answer"], 
+                               dataset_name = 'commonsense_qa', max_length = 512)->Dict[str,Union[List,List[List]]]:
     pass
 
 
@@ -281,7 +281,7 @@ def preprocess_dataset_peft(dataset_name, dataset:Dataset, max_length=512)->Data
         function= lambda examples: preprocess_func_peft(dataset_name, examples, max_length),
         batched=True,
         num_proc=NUM_CPU_PROCESSES,
-        remove_columns= ds['train'].column_names,           # dataset.column_names,
+        remove_columns= dataset['train'].column_names,           # dataset.column_names,
         load_from_cache_file=False,
         desc=f"Running tokenizer on dataset {dataset_name}",
     )
@@ -300,6 +300,8 @@ def preprocess_dataset_peft(dataset_name, dataset:Dataset, max_length=512)->Data
 
 def choose_dataset(dataset_name:str, split = None)->Dataset:
     '''
+    最顶层的数据集获取封装
+    
      return a huggingface dataset 
 
      Args:
@@ -309,22 +311,22 @@ def choose_dataset(dataset_name:str, split = None)->Dataset:
         ds: Dataset, a huggingface dataset
     '''
     dataset_wrapper = McqDatasetWrapper()
-    dataset_wrapper.load_and_preprocess_dataset(dataset_name)
-    ds = None
-    if dataset_name == "race":
-        dataset_path = Config["datasets"][dataset_name]
-        ds = load_dataset_from_huggingface(dataset_path, "high", split=split)
-    elif dataset_name == "arc":
-        dataset_path = Config["datasets"][dataset_name]
-        ds = load_dataset_from_huggingface(dataset_path, "multiple_choice", split=split)
-    elif dataset_name == "multirc":
-        cache_dir = Config["datasets"]["super_glue"]
-        ds = load_dataset_from_huggingface("super_glue", "multirc", split=split, cache_dir=cache_dir)
-    elif dataset_name == "record":
-        cache_dir = Config["datasets"]["super_glue"]
-        ds = load_dataset_from_huggingface("super_glue", "record", split=split, cache_dir=cache_dir)
-    else:
-        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, arc, multirc, record]")
+    ds, _ = dataset_wrapper.load_mcq_dataset(dataset_name, split)
+    # ds = None
+    # if dataset_name == "race":
+    #     dataset_path = Config["datasets"][dataset_name]
+    #     ds = load_dataset_from_huggingface(dataset_path, "high", split=split)
+    # elif dataset_name == "arc":
+    #     dataset_path = Config["datasets"][dataset_name]
+    #     ds = load_dataset_from_huggingface(dataset_path, "multiple_choice", split=split)
+    # elif dataset_name == "multirc":
+    #     cache_dir = Config["datasets"]["super_glue"]
+    #     ds = load_dataset_from_huggingface("super_glue", "multirc", split=split, cache_dir=cache_dir)
+    # elif dataset_name == "record":
+    #     cache_dir = Config["datasets"]["super_glue"]
+    #     ds = load_dataset_from_huggingface("super_glue", "record", split=split, cache_dir=cache_dir)
+    # else:
+    #     raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, arc, multirc, record]")
     
   
     return ds
@@ -808,30 +810,41 @@ class McqDatasetWrapper:
         return processed_data   
     
     
-    def _process_race(self, data:Dataset)->Dataset:
+    def _process_race(self, data:Dataset, config:DatasetConfig)->Dataset:
         
         
         def process_examples(examples:Dict[str, List]):
             batch_size = len(examples["question"])
             # 初始化结果字典
             result = {
-                "article": [],
-                "question": [],
-                "options": [],
-                "answer": []
+                config.article_key: [],
+                config.question_key: [],
+                config.options_key: [],
+                config.label_key: []
             }
             for i in range(batch_size):
                 # 收集所有选项
-                pass
+                options = examples["options"][i]
+                labeled_options = [chr(i+65)+". "+option for i, option in enumerate(options)]
+                
+                correct_answer = examples['answer'][i]
+                
+                # 添加到结果中  
+                result[config.article_key].append(examples["article"][i].strip())  
+                result[config.question_key].append(examples["question"][i].strip())  
+                result[config.options_key].append(labeled_options)  
+                result[config.label_key].append(correct_answer)  
         
         processed_dataset = data.map(  
             process_examples,
             batch_size=32,
             batched= True,
             num_proc=NUM_CPU_PROCESSES, 
-            remove_columns=["id"],
+            remove_columns=["example_id"],
             desc="Processing Race dataset", 
         )  
+        
+        return processed_dataset
         
     
     def _process_sciq(self, data:Dataset, config:DatasetConfig)->Dataset:
@@ -1047,8 +1060,7 @@ class McqDatasetWrapper:
             elif dataset_name.lower() == 'commonsense_qa':
                 dataset = self._process_commonsense_qa(dataset, config)
             elif dataset_name.lower() == 'race':
-                # dataset = self._process_race(dataset)
-                pass
+                dataset = self._process_race(dataset, config)
             else:
                 raise ValueError(f"Unsupported dataset: {dataset_name}, Please select from [race, sciq, commonsense_qa]")
 
