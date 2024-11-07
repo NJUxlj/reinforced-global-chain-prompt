@@ -37,6 +37,7 @@ from torch.utils.data import (
     DataLoader,
     Dataset
 )
+from torch.utils.data.distributed import DistributedSampler
 
 from config import Config
 from config import NUM_PROCESSES
@@ -50,6 +51,7 @@ import evaluate
 import gensim
 from gensim import corpora, models
 import nltk
+import logging
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics.pairwise import cosine_similarity  
@@ -72,10 +74,11 @@ stop_words = set(stopwords.words('english'))
 
 device = Config['device']
 
-# # 初始化模型  
-# model_path = Config["models"]["bert-base-uncased"]["model_path"]
-# model = AutoModelForSequenceClassification.from_pretrained(model_path).cuda()  
-# tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -605,6 +608,8 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size, nu
     device = Config['device']
     # model.to(device)
     model = model.eval()
+    
+    
     accelerator = Accelerator()
     # model = accelerator.prepare(model)
     
@@ -617,9 +622,10 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size, nu
     train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
     
     print(f"The training data is reformated, now we get each example's embedding using the model~~~")
-    train_data_loader = DataLoader(train_ds, batch_size=32, 
+    train_data_loader = DataLoader(train_ds, batch_size=100, 
                                    collate_fn=default_data_collator, 
                                    num_workers=NUM_CPU_PROCESSES, # use as your need
+                                   pin_memory=True,
                                    shuffle=False)
     
     model, train_data_loader = accelerator.prepare(model, train_data_loader)
@@ -646,9 +652,12 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size, nu
             batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
             
             # print("batch_embeddings.shape = ", batch_embeddings.shape)
-            for embedding in batch_embeddings:
-                all_batch_embeddings.append(embedding.unsqueeze(0)) # shape = (1, hidden_size)
+            # for embedding in batch_embeddings:
+            all_batch_embeddings.append(batch_embeddings) # shape = (1, hidden_size) # 避免循环 
             
+            # 定期清理缓存  
+            if torch.cuda.is_available():  
+                torch.cuda.empty_cache()  
             
             
     embeddings = torch.cat(all_batch_embeddings, dim=0)
@@ -894,10 +903,37 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     
 
     print("dataset is preprocessed successfully ~~~")
+    # 使用DistributedSampler进行数据分布  
+    train_sampler = DistributedSampler(  
+        train_ds,  
+        shuffle=True,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
+    eval_sampler = DistributedSampler(  
+        eval_ds,  
+        shuffle=False,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
     
     
-    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size)
-    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size)
+    
+    train_dataloader = DataLoader(
+            train_ds, 
+            shuffle=True, 
+            collate_fn=default_data_collator, 
+            batch_size=batch_size,
+            pin_memory=True,
+            sampler=train_sampler
+        )
+    
+    eval_dataloader = DataLoader(
+            eval_ds, 
+            collate_fn=default_data_collator, 
+            batch_size=batch_size,
+            pin_memory=True,
+            sampler=eval_sampler
+        )
 
 
     
