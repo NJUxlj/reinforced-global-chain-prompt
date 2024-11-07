@@ -21,14 +21,9 @@ from accelerate import(
     Accelerator,
 )
 
-from load import (
-    preprocess_function_race_pt, 
-    preprocess_function_race,
-    load_dataset_from_huggingface,
-    preprocess_race,
-)
+from load import *
 
-from training_hub import (
+from utils import (
     prepare_model_tokenizer, 
     get_vocab_embeddings_from_model,
     get_model_name_using_model
@@ -238,9 +233,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
     '''
     
     print(f"reformat input using reformat_type = {reformat_type}")
-    if dataset_path == Config["datasets"]["race"] or \
-            dataset_path == Config["datasets"]["race-m"] or \
-                dataset_path == Config["datasets"]["race-h"]:
+    if dataset_path == Config["datasets"]["race"]:
                     
         ds = load_dataset_from_huggingface(dataset_path, "all")
         
@@ -252,7 +245,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
             processed_ds = ds.map(
                 lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), 
                 batched=True,
-                num_proc=NUM_PROCESSES,
+                num_proc=NUM_CPU_PROCESSES,
                 remove_columns=ds['train'].column_names,
                 load_from_cache_file=False,
                 desc="Running tokenizer on dataset",
@@ -266,7 +259,7 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
                                             Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
                 },
                 batched=True,
-                num_proc=NUM_PROCESSES,
+                num_proc=NUM_CPU_PROCESSES,
                 remove_columns=ds['train'].column_names,
                 load_from_cache_file=False,
                 desc="Running tokenizer on dataset",
@@ -291,14 +284,14 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
         
                     
         
-    elif dataset_path == Config["datasets"]["multirc"]:
+    elif dataset_path == Config["datasets"]["sciq"]:
         pass
-    elif dataset_path == Config["datasets"]["arc"]:
+    elif dataset_path == Config["datasets"]["commonsense_qa"]:
         pass
     elif dataset_path == Config["datasets"]["dream"]:
         pass
     else:
-        raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, race-m, race-h, multirc, arc]")
+        raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, sciq, commonsense_qa, dream]")
     
     return train_ds
 
@@ -497,7 +490,7 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5,
     print(f"The training data is reformated, now we get each example's embedding using the model~~~")
     train_data_loader = DataLoader(train_ds, batch_size=32, 
                                    collate_fn=default_data_collator, 
-                                   num_workers=0, # use as your need
+                                   num_workers=NUM_CPU_PROCESSES, # use as your need
                                    shuffle=False)
     
     model, train_data_loader = accelerator.prepare(model, train_data_loader)
@@ -723,9 +716,11 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     # )
     
     # 加载数据集
+    wrapper = McqDatasetWrapper()
     dataset_name = "race"
     dataset_path = Config["datasets"][dataset_name]
-    ds = load_dataset_from_huggingface(dataset_path,"all")
+    # ds = wrapper.load_mcq_dataset(dataset_name, split=None)
+    # ds = load_dataset_from_huggingface(dataset_path,"all")
     
     
     prefix_prompt_embeddings = initialize_prefix_prompts(dataset_path, model, tokenizer, 
@@ -749,18 +744,21 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
 
     
     # coarse-grained preprocessing
-    ds, classes, tokenizer = preprocess_race(ds, tokenizer)
+    # ds, classes, tokenizer = preprocess_race(ds, tokenizer)
     
     # fine-grained preprocessing
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
-    processed_ds = ds.map(
-        lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
-        batched=True,
-        num_proc=NUM_PROCESSES,
-        remove_columns=ds['train'].column_names,
-        load_from_cache_file=False,
-        desc="Running tokenizer on dataset",
-    )
+    
+    processed_ds = preprocess_dataset_peft(dataset_name, max_length = 512)
+    
+    # processed_ds = ds.map(
+    #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
+    #     batched=True,
+    #     num_proc=NUM_PROCESSES,
+    #     remove_columns=ds['train'].column_names,
+    #     load_from_cache_file=False,
+    #     desc="Running tokenizer on dataset",
+    # )
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]

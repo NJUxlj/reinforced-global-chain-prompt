@@ -23,7 +23,7 @@ from datasets import(
     DatasetBuilder
 )
 
-from training_hub import (
+from utils import (
     prepare_model_tokenizer
 )
 

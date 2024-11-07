@@ -10,6 +10,7 @@ from datasets import (
 from dataclasses import dataclass 
 from transformers import (
     AutoTokenizer, 
+    BertTokenizerFast,
     AutoModel,
     PreTrainedTokenizer,  
     BatchEncoding,  
@@ -635,7 +636,7 @@ class McqDatasetWrapper:
     '''
     def __init__(  
         self,  
-        model_name_or_path: str = "bert-base-uncased",  
+        model_name_or_path: str = Config['models']['bert-base-uncased']['model_path'],  
         max_seq_length: int = 512,  
         label_map: Dict[str, int] = None,
         split = None  
@@ -648,7 +649,7 @@ class McqDatasetWrapper:
             max_seq_length: 最大序列长度  
             label_map: 标签映射字典，例如 {"A": 0, "B": 1, "C": 2, "D": 3}  
         """  
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)  
+        self.tokenizer = BertTokenizerFast.from_pretrained(model_name_or_path)  
         self.max_seq_length = max_seq_length  
         self.label_map = label_map or {"A": 0, "B": 1, "C": 2, "D": 3}  
         self.split = None
@@ -712,7 +713,7 @@ class McqDatasetWrapper:
             )       
         }  
 
-    def load_json_dataset(self, config: DatasetConfig) -> Dataset:  
+    def load_json_dataset(self, config: DatasetConfig) -> DatasetDict:  
         """  
         从本地JSON文件加载数据集  
         
