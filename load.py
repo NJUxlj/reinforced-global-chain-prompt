@@ -31,7 +31,17 @@ from typing import List, Dict, Tuple ,Union, Any, Optional
 tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])  
 
 
-
+@dataclass  
+class DatasetConfig:  
+    """数据集配置类"""  
+    name: str  
+    article_key: str  
+    question_key: str  
+    options_key: str  
+    label_key: str  
+    local_path: Optional[str] = None  # 添加本地路径  
+    file_format: str = "huggingface"  # 文件格式：'huggingface' 或 'json'  
+    subset: str = None  
 
 
 def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None, cache_dir = None):
@@ -214,86 +224,232 @@ def preprocess_function_arc(examples, text_column = "article", label_column  ="a
 
 
 def preprocess_function_sciq(examples, first_four_columns = ["article", "question", "options", "answer"], 
-                               dataset_name = 'sciq', max_length = 512)->Dict[str,Union[List,List[List]]]:
-    pass
+                               dataset_name = 'sciq', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+    """  
+    预处理SciQ数据集的样本，准备用于模型输入  
+    
+    Args:  
+        examples: 包含批量样本的字典  
+        first_four_columns: 数据集的前四个关键列名  
+        dataset_name: 数据集名称  
+        max_length: 最大序列长度  
+        
+    Returns:  
+        处理后的字典，包含以下字段：  
+        - input_ids: 输入序列的token IDs  
+        - attention_mask: 注意力掩码  
+        - token_type_ids: token类型IDs（如果使用BERT类模型）  
+        - labels: 标签  
+    """  
+    
+    assert tokenizer is not None, "tokenizer in \"preprocess_function_sciq\" is None, please assign one"
+    
+    # 获取批次大小  
+    batch_size = len(examples[first_four_columns[0]])  
+    
+    # 初始化结果列表  
+    input_texts = []  
+    labels = []  
+    
+    # 处理每个样本  
+    for i in range(batch_size):  
+        # 获取当前样本的各个字段  
+        support = examples[first_four_columns[0]][i]  # article/support  
+        question = examples[first_four_columns[1]][i]  
+        options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
+        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        
+        # 将选项转换为字典格式，方便后续处理  
+        # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
+        
+        # 构建输入文本  
+        # 格式：[CLS] 文章 [SEP] 问题 [SEP] 选项A [SEP] 选项B [SEP] 选项C [SEP] 选项D [SEP]  
+        input_text = f'''
+                        Context:{support}
+                        Question:{question}
+                        Options:
+                        {options[0]}
+                        {options[1]}
+                        {options[2]}
+                        {options[3]} 
+                        Answer:
+                        '''
+        
+        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
+        label = ord(answer) - ord('A')  
+        
+        input_texts.append(input_text)  
+        labels.append(label)  
+    
+    # 使用tokenizer处理文本（假设tokenizer是类的成员变量）  
+    model_inputs = tokenizer(  
+        input_texts,  
+        padding="max_length",  
+        truncation=True,  
+        max_length=max_length,  
+        # return_tensors=None  # 返回列表而不是张量  
+        add_special_tokens=True  # 确保添加特殊标记  [CLS] [SEP]
+    )  
+    
+    # 添加标签到结果中  
+    model_inputs["labels"] = labels  
+    
+    return model_inputs  
 
 def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
-                               dataset_name = 'dream', max_length = 512)->Dict[str,Union[List,List[List]]]:
-    pass
+                               dataset_name = 'dream', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+    """  
+    预处理 dream 数据集的样本，准备用于模型输入  
+    
+    Args:  
+        examples: 包含批量样本的字典  
+        first_four_columns: 数据集的前四个关键列名  
+        dataset_name: 数据集名称  
+        max_length: 最大序列长度  
+        
+    Returns:  
+        处理后的字典，包含以下字段：  
+        - input_ids: 输入序列的token IDs  
+        - attention_mask: 注意力掩码  
+        - token_type_ids: token类型IDs（如果使用BERT类模型）  
+        - labels: 标签  
+    """  
+    
+    assert tokenizer is not None, "tokenizer in \"preprocess_function_sciq\" is None, please assign one"
+    
+    # 获取批次大小  
+    batch_size = len(examples[first_four_columns[0]])  
+    
+    # 初始化结果列表  
+    input_texts = []  
+    labels = []  
+    
+    # 处理每个样本  
+    for i in range(batch_size):  
+        # 获取当前样本的各个字段  
+        dialogue = examples[first_four_columns[0]][i]  # article/support  
+        question = examples[first_four_columns[1]][i]  
+        options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
+        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        
+        # 将选项转换为字典格式，方便后续处理  
+        # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
+        
+        # 构建输入文本  
+        # 格式：[CLS] 文章 [SEP] 问题 [SEP] 选项A [SEP] 选项B [SEP] 选项C [SEP] 选项D [SEP]  
+        input_text = f'''
+                        Dialogue:{dialogue}
+                        Question:{question}
+                        Options:
+                        {options[0]}
+                        {options[1]}
+                        {options[2]}
+                        Answer:
+                        '''
+        
+        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
+        label = ord(answer) - ord('A')  
+        
+        input_texts.append(input_text)  
+        labels.append(label)  
+    
+    # 使用tokenizer处理文本（假设tokenizer是类的成员变量）  
+    model_inputs = tokenizer(  
+        input_texts,  
+        padding="max_length",  
+        truncation=True,  
+        max_length=max_length,  
+        # return_tensors=None  # 返回列表而不是张量  
+        add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+        # batch_size = 32,
+    )  
+    
+    # 添加标签到结果中  
+    model_inputs["labels"] = labels  
+    
+    return model_inputs 
 
 
 def preprocess_function_commonsense_qa(examples, first_four_columns = ["article", "question", "options", "answer"], 
-                               dataset_name = 'commonsense_qa', max_length = 512)->Dict[str,Union[List,List[List]]]:
-    pass
-
-
-
-def preprocess_func_peft(dataset_name, examples, max_length)->Dict[str,Union[List,List[List]]]:
-    '''
-    预处理函数：将article、question和options字段合并成新的question字段  
-           [use tokenization]
-           [only used for PEFT tasks]
-    Args:  
-        examples:Dict[ str, List ]: 数据集中的一个批次样本  
-        dataset_name: 数据集名称，用于选择预处理函数  
-    Returns:  
-        examples after preprocessing       
-    '''
+                               dataset_name = 'commonsense_qa', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+    """  
+    预处理commonsense_qa数据集的样本，准备用于模型输入  
     
-    if dataset_name == 'race':
-        model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'race', max_length = max_length)
-    elif dataset_name == 'multirc':
-        model_inputs = preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'multirc', max_length = max_length)
-    elif dataset_name == 'arc':
-        model_inputs = preprocess_function_arc(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'arc', max_length = max_length)
-    elif dataset_name == 'dream':
-        model_inputs = preprocess_function_dream(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'dream', max_length = max_length)
-    elif dataset_name == 'sciq':
-        model_inputs = preprocess_function_sciq(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'sciq', max_length = max_length)
+    Args:  
+        examples: 包含批量样本的字典  
+        first_four_columns: 数据集的前四个关键列名  
+        dataset_name: 数据集名称  
+        max_length: 最大序列长度  
         
-    elif dataset_name == 'commonsense_qa':
-        model_inputs = preprocess_function_commonsense_qa(examples, text_column = "article", label_column  ="answer", 
-                                         dataset_name = 'commonsense_qa', max_length = max_length)
-    else:
-        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, multirc, arc, dream, sciq, commonsense_qa]")
-
+    Returns:  
+        处理后的字典，包含以下字段：  
+        - input_ids: 输入序列的token IDs  
+        - attention_mask: 注意力掩码  
+        - token_type_ids: token类型IDs（如果使用BERT类模型）  
+        - labels: 标签  
+    """  
+    
+    assert tokenizer is not None, "tokenizer in \"preprocess_function_commonsense_qa\" is None, please assign one"
+    
+    # 获取批次大小  
+    batch_size = len(examples[first_four_columns[0]])  
+    
+    # 初始化结果列表  
+    input_texts = []  
+    labels = []  
+    
+    # print(" first_four_columns = ", first_four_columns)
+    print()
+    # print("examples = \n", examples)
+    
+    # 处理每个样本  
+    for i in range(batch_size):  
+        # 获取当前样本的各个字段  
+        question_concept = examples[first_four_columns[0]][i]  # article/support  
+        question = examples[first_four_columns[1]][i]  
+        options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
+        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        
+        # print("question_concept =", question_concept)
+        # print("question =", question)
+        # print("options =", options)
+        # print("answer =", answer)  
+             
+        input_text = f'''
+                        Question concept:{question_concept}
+                        Question:{question}
+                        Options:
+                        {options[0]}
+                        {options[1]}
+                        {options[2]}
+                        {options[3]} 
+                        Answer:
+                        '''
+        
+        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
+        label = ord(answer) - ord('A')  
+        
+        input_texts.append(input_text)  
+        labels.append(label)  
+    
+    # 使用tokenizer处理文本（假设tokenizer是类的成员变量）  
+    model_inputs = tokenizer(  
+        input_texts,  
+        padding="max_length",  
+        truncation=True,  
+        max_length=max_length,  
+        # return_tensors=None  # 返回列表而不是张量  
+        add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+    )  
+    
+    # 添加标签到结果中  
+    model_inputs["labels"] = labels  
+    
     return model_inputs
 
 
 
-def preprocess_dataset_peft(dataset_name, dataset:Dataset, max_length=512)->Dataset:
-    """  
-    处理整个数据集  [dataset必须同时包含train和valid] [针对PEFT任务]
-                    # train and valid will be put to dataloader for training and evaluation
-    Args:  
-        dataset: 原始的训练集 (split = None)  
-        dataset_name: 数据集名称，用于选择预处理函数
-    Returns:  
-        
-        preprocessed_dataset: 处理后的数据集，包含train和valid两个部分 
-    """ 
-    processed_dataset = dataset.map(
-        function= lambda examples: preprocess_func_peft(dataset_name, examples, max_length),
-        batched=True,
-        num_proc=NUM_CPU_PROCESSES,
-        remove_columns= dataset['train'].column_names,           # dataset.column_names,
-        load_from_cache_file=False,
-        desc=f"Running tokenizer on dataset {dataset_name}",
-    )
 
-    print(f"\nProcessed dataset type: {type(processed_dataset)}")
-    name = processed_dataset.info.dataset_name if hasattr(processed_dataset.info, 'dataset_name') else None 
-    print(f"Processed dataset name: {name}")  
-    print(f"Processed dataset size: {len(processed_dataset)}")  
-    if hasattr(processed_dataset, 'column_names'):  
-        print(f"Processed dataset columns: {processed_dataset.column_names}")  
-
-    return processed_dataset
     
 
 
@@ -468,17 +624,7 @@ def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
 
 
 
-@dataclass  
-class DatasetConfig:  
-    """数据集配置类"""  
-    name: str  
-    article_key: str  
-    question_key: str  
-    options_key: str  
-    label_key: str  
-    local_path: Optional[str] = None  # 添加本地路径  
-    file_format: str = "huggingface"  # 文件格式：'huggingface' 或 'json'  
-    subset: str = None  
+
 
 
 class McqDatasetWrapper:  
@@ -566,7 +712,7 @@ class McqDatasetWrapper:
             )       
         }  
 
-    def load_json_dataset(self, config: DatasetConfig) -> DatasetDict:  
+    def load_json_dataset(self, config: DatasetConfig) -> Dataset:  
         """  
         从本地JSON文件加载数据集  
         
@@ -605,8 +751,19 @@ class McqDatasetWrapper:
                 processed_data = data  
                 
             datasets[split] = Dataset.from_dict(processed_data)  
+            
+        # merge the splits in the DatasetDict into a single Dataset
+        dataset_dict = DatasetDict(datasets)
         
-        return DatasetDict(datasets)  
+        # splits = dataset_dict.keys()
+        # datasets_to_merge = []
+        # for split in splits:
+        #     ds = dataset_dict[split]
+        #     datasets_to_merge.append(ds)
+            
+        # merged_dataset = concatenate_datasets(datasets_to_merge)
+        
+        return dataset_dict  
 
     def _process_multirc_json(self, data: Dict, config:DatasetConfig) -> Dict[str, List]:  
         """  
@@ -795,15 +952,23 @@ class McqDatasetWrapper:
                     
                 # 获取正确答案的索引（在DREAM中答案是选项的完整文本）  
                 try:  
-                    label = choices.index(answer)  
+                    if isinstance(answer, str) and answer in options and answer.strip()!="":
+                        answer_index = options.index(answer)
+                        label = chr(65+answer_index) 
+                    else:
+                        answer_index = random.randint(0,2)
+                        label = chr(65+answer_index) 
+                        
                 except ValueError:  
                     print(f"Warning: Answer '{answer}' not found in choices for dialogue {dialogue_id}")  
                     continue  
+                
+                labeled_options = [chr(65+i)+". "+option for i, option in enumerate(options)]
                     
                 # 添加到处理后的数据中  
                 processed_data[config.article_key].append(dialogue_text)  
                 processed_data[config.question_key].append(question)  
-                processed_data[config.options_key].append(options)  
+                processed_data[config.options_key].append(labeled_options)  
                 processed_data[config.label_key].append(label)  
                 processed_data["dialogue_id"].append(dialogue_id)  
         
@@ -957,9 +1122,16 @@ class McqDatasetWrapper:
                                             'punishing',  
                                             'walking'  
                                         ],  
-            'choices': {  
-                'label': List[str],  # [['A', 'B', 'C', 'D', 'E'], [....], [.....] ] 
-                'text': List[str]    # 选项文本列表  [['text', 'text', 'text', 'text', 'text'], [....], [.....] ]
+            'choices': { 
+                {
+                
+                    'label': List[str],  # ['A', 'B', 'C', 'D', 'E'],
+                    'text': List[str]    # 选项文本列表  ['text', 'text', 'text', 'text', 'text'],
+                },
+                {
+                    'label': List[str], 
+                    'text': List[str]   
+                }
             },  
             'answerKey': str        # 正确答案的标签 ['A', 'C']
         }  
@@ -979,6 +1151,9 @@ class McqDatasetWrapper:
             处理后的Dataset对象  
         """  
         def process_examples(examples):  
+            
+            
+            # print("examples = \n", examples)
             batch_size = len(examples["question"])  
             
             # 初始化结果字典  
@@ -994,7 +1169,14 @@ class McqDatasetWrapper:
                 # 获取选项标签和文本  
                 labels = examples["choices"][i]["label"]
                 texts = examples["choices"][i]["text"]
+                answer = examples['answerKey'][i]  # 可能为空
                 
+                if isinstance(answer, str) and len(answer.strip()) > 0:  
+                    pass 
+                else:   
+                    choices_num = len(labels)
+                    random_num = random.randint(0, choices_num-1)
+                    answer = chr(65+random_num)  # 或其他适当的默认值 
                 
                 # 组合标签和文本  
                 labeled_options = [f"{label}. {text}" for label, text in zip(labels, texts)]  
@@ -1003,7 +1185,7 @@ class McqDatasetWrapper:
                 result[config.article_key].append(examples["question_concept"][i])  
                 result[config.question_key].append(examples["question"][i])  
                 result[config.options_key].append(labeled_options)  
-                result[config.label_key].append(examples["answerKey"][i])  
+                result[config.label_key].append(answer)  
             
             return result  
         
@@ -1150,6 +1332,77 @@ class McqDatasetWrapper:
 
 
 
+############# define 2 factories ##################################
+
+
+
+def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, first_four_columns: List[str], max_length)->Dict[str,Union[List,List[List]]]:
+    '''
+    预处理函数：将article、question和options字段合并成新的question字段  
+           [use tokenization]
+           [only used for PEFT tasks]
+    Args:  
+        examples:Dict[ str, List ]: 数据集中的一个批次样本  
+        dataset_name: 数据集名称，用于选择预处理函数  
+    Returns:  
+        examples after preprocessing       
+    '''
+    
+    if dataset_name == 'race':
+        model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'race', max_length = max_length)
+    elif dataset_name == 'multirc':
+        model_inputs = preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'multirc', max_length = max_length)
+    elif dataset_name == 'arc':
+        model_inputs = preprocess_function_arc(examples, text_column = "article", label_column  ="answer", 
+                                         dataset_name = 'arc', max_length = max_length)
+    elif dataset_name == 'dream':
+        model_inputs = preprocess_function_dream(examples, first_four_columns = first_four_columns, 
+                                         dataset_name = 'dream', max_length = max_length, tokenizer = wrapper.tokenizer)
+    elif dataset_name == 'sciq':
+        model_inputs = preprocess_function_sciq(examples, first_four_columns = first_four_columns, 
+                                         dataset_name = 'sciq', max_length = max_length, tokenizer = wrapper.tokenizer)
+        
+    elif dataset_name == 'commonsense_qa':
+        model_inputs = preprocess_function_commonsense_qa(examples, first_four_columns = first_four_columns, 
+                                         dataset_name = 'commonsense_qa', max_length = max_length, tokenizer = wrapper.tokenizer)
+    else:
+        raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, multirc, arc, dream, sciq, commonsense_qa]")
+
+    return model_inputs
+
+
+
+def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
+    """  
+    处理整个数据集  [dataset必须同时包含train和valid] [针对PEFT任务]
+                    # train and valid will be put to dataloader for training and evaluation
+    Args:  
+        dataset: 原始的训练集 (split = None)  
+        dataset_name: 数据集名称，用于选择预处理函数
+    Returns:  
+        
+        preprocessed_dataset: 处理后的数据集，包含train和valid两个部分 
+    """ 
+    wrapper = McqDatasetWrapper()
+    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
+    processed_dataset:DatasetDict = dataset.map(
+        function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length),
+        batched=True,
+        num_proc=NUM_CPU_PROCESSES,
+        remove_columns= dataset['train'].column_names,           # dataset.column_names,
+        load_from_cache_file=False,
+        desc=f"Running tokenizer on dataset {dataset_name}",
+    )
+    print(f"\nProcessed dataset type: {type(processed_dataset)}")
+    # name = processed_dataset.info.dataset_name if hasattr(processed_dataset.info, 'dataset_name') else None 
+    # print(f"Processed dataset column names: {column_names}")  
+    print(f"Processed dataset size: {len(processed_dataset)}")  
+    if hasattr(processed_dataset, 'column_names'):  
+        print(f"Processed dataset columns: {processed_dataset.column_names}")  
+
+    return processed_dataset
 
 
 
@@ -1196,42 +1449,51 @@ if __name__ == "__main__":
     # ds = choose_dataset("multirc")
     
     
-    mcqobj = McqDatasetWrapper()
+    # mcqobj = McqDatasetWrapper()
     
-    dream, _ = mcqobj.load_mcq_dataset("dream")
+    # dream, _ = mcqobj.load_mcq_dataset("dream")
     
-    sciq, _ = mcqobj.load_mcq_dataset("sciq")
+    # sciq, _ = mcqobj.load_mcq_dataset("sciq")
     
-    race, _ = mcqobj.load_mcq_dataset("race")
-    
-    
-    commonsense_qa, _ = mcqobj.load_mcq_dataset("commonsense_qa")
+    # race, _ = mcqobj.load_mcq_dataset("race")
     
     
-    print(" ================= dream =====================")
-    
-    print(dream['train'][0])
-    
-    print(" ")
-    print("======================== sciq ========================")
-    print(sciq['train'][0])  
+    # commonsense_qa, _ = mcqobj.load_mcq_dataset("commonsense_qa")
     
     
-    print(" ")
-    print("======================== commonsense_qa ========================")
-    print(commonsense_qa['train'][0])
-    print(" ===================================== ")
+    # print(" ================= dream =====================")
+    
+    # print(dream['train'][0])
+    
+    # print(" ")
+    # print("======================== sciq ========================")
+    # print(sciq['train'][0])  
+    
+    
+    # print(" ")
+    # print("======================== commonsense_qa ========================")
+    # print(commonsense_qa['train'][0])
+    # print(" ===================================== ")
 
     
     
-    print(" ")
-    print(" ================= race ==================== ")
-    print(race['train'][0])  
+    # print(" ")
+    # print(" ================= race ==================== ")
+    # print(race['train'][0])  
     
-    print(" ===================================== ")
-    print(race['validation'][0])
+    # print(" ===================================== ")
+    # print(race['validation'][0])
     
     
-    print("======================================")
-    print(race['test'][0])
+    # print("======================================")
+    # print(race['test'][0])
     
+    
+    
+    # ds = preprocess_dataset_peft("sciq")
+    # ds = preprocess_dataset_peft("commonsense_qa")
+    ds = preprocess_dataset_peft("dream")
+    
+    
+    
+    print(ds['train'][0])
