@@ -1,8 +1,11 @@
 
 import argparse
 
+
+from load import *
 from autocot_utils import *
 
+from config import NUM_CPU_PROCESSES
 
 def cot(method, question):
     args = parse_arguments()
@@ -61,7 +64,7 @@ def cot(method, question):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Zero-shot-CoT")
 
-    parser.add_argument("--max_num_worker", type=int, default=0, help="maximum number of workers for dataloader")
+    parser.add_argument("--max_num_worker", type=int, default=NUM_CPU_PROCESSES, help="maximum number of workers for dataloader")
     parser.add_argument(
         "--model", type=str, default="gpt-4o", help="model used for decoding. Please select from [gpt-4o, gpt-4o-mini]"
     )
@@ -101,6 +104,46 @@ def parse_arguments():
 
 
 
+def zero_shot_cot(question, answer):
+    decoder = Decoder()
+    cot_trigger = "Let's think step by step."
+    
+    x = "Q: " + question + "\n" + "A:"
+    print('*****************************')
+    print("Test Question:")
+    print(question)
+    print('*****************************')
+
+
+    x:str = x + " " + cot_trigger
+
+
+    print("Prompted Input:")
+    # we define the separatpor of reasoning steps is "\n"
+    print(x.replace("\n\n", "\n").strip())
+    print('*****************************')
+
+    max_length = 256
+    z = decoder.decode(args, x, max_length)
+    z = z.replace("\n\n", "\n").replace("\n", "").strip()
+
+
+    z2 = x + z + " " + args.direct_answer_trigger_for_zeroshot_cot
+    max_length = args.max_length_direct
+    pred = decoder.decode(args, z2, max_length)
+    print("Output:")
+    print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)
+    print('*****************************')
+
+        
+        
+        
+        
+        
+
+def cot_log_generator(dataset_name):
+    train_ds = preprocess_dataset_autocot(dataset_name)
+    print(train_ds[0])
 
 if __name__ == "__main__":
-    pass
+    cot_log_generator('race')

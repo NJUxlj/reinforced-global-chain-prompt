@@ -602,82 +602,135 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
         class_embeddings.append(token_embeddings[index])
     return class_embeddings
 
-def get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size, num_topics=5, K=5, max_length=512)->List[torch.Tensor]:
+def get_classes_by_clustering(
+    dataset_path, 
+    model, 
+    tokenizer, 
+    embedding_size, 
+    num_topics=5, 
+    K=5, 
+    max_length=512, 
+    use_trained_embeddings=False,
+    cache_dir='cached_embeddings'  # 存储embeddings的目录  
+    )->List[torch.Tensor]:
     '''
+    Args:
         num_topics: number of classes to be generated == num_suffix_tokens
         
         K : number of sub-classes to be generated
+        
+        cache_dir: 存储embeddings的目录  
+        use_trained_embeddings: 是否使用已缓存的embeddings  
     
     '''
     print(f"get class labels by Clustering ~~~~")
-
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    
+    # 生成唯一的缓存文件名（基于模型名称和数据集路径）  
+    model_name = get_model_name_using_model(model)
+    dataset_name = os.path.basename(dataset_path) 
+    cache_filename = f"embeddings_{model_name}_{hash(dataset_name)}.npz"  
+    cache_path = os.path.join(cache_dir, cache_filename) 
   
-    classes = []
-    device = Config['device']
-    # model.to(device)
-    model = model.eval()
-    
-    
-    accelerator = Accelerator()
-    # model = accelerator.prepare(model)
-    
-    
-    all_pooled_embeddings = [] # store the pooled embeddings
-    
-    vocab_size = tokenizer.vocab_size
+    # 保存数据集信息，用于验证缓存是否匹配  
+    metadata = {  
+        'dataset_path': dataset_path,  
+        'model_name': model_name,  
+        'max_length': max_length,  
+        'embedding_size': embedding_size  
+    }  
+    metadata_path = os.path.join(cache_dir, f"{cache_filename}_metadata.json")  
 
+    # 如果启用缓存且缓存文件存在，尝试加载缓存的embeddings  
+    if use_trained_embeddings and os.path.exists(cache_path) and os.path.exists(metadata_path):  
+        # 首先验证metadata是否匹配  
+        with open(metadata_path, 'r') as f:  
+            cached_metadata = json.load(f)  
+            
+        if all(cached_metadata[k] == metadata[k] for k in metadata.keys()):  
+            print(f"Loading cached embeddings from {cache_path}")  
+            # 使用torch.load加载缓存的embeddings  
+            embeddings = torch.load(cache_path)  
+            print(f"Loaded embeddings shape: {embeddings.shape}")
+            # return process_embeddings(embeddings, num_topics, K)  # 假设有这个后处理函数[聚类逻辑]
     
-    train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
+    else:
+        classes = []
+        device = Config['device']
+        # model.to(device)
+        model = model.eval()
+        
+        
+        accelerator = Accelerator()
+        # model = accelerator.prepare(model)
+        
+        
+        all_pooled_embeddings = [] # store the pooled embeddings
+        
+        vocab_size = tokenizer.vocab_size
+
+        
+        train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
+        
+        print(f"The training data is reformated, now we get each example's embedding using the model~~~")
+        train_data_loader = DataLoader(train_ds, 
+                                    batch_size=Config['batch_size'], 
+                                    collate_fn=default_data_collator, 
+                                    num_workers=NUM_CPU_PROCESSES, # use as your need
+                                    pin_memory=True,
+                                    shuffle=False)
+        
+        model, train_data_loader = accelerator.prepare(model, train_data_loader)
+        
+        all_batch_embeddings = []
+        with torch.no_grad():
+            for index, batch in enumerate(tqdm(train_data_loader)):
+                # batch = {k: v.to(device) for k, v in batch.items()}
+                
+                # if 'labels' exists in batch，delete it，because inference does not need labels  
+                if 'labels' in batch:
+                    del batch['labels']
+                
+                outputs = model(**batch)
+                if hasattr(outputs, "last_hidden_state"): # AutoModel
+                    last_hidden_state = outputs.last_hidden_state # shape = (batch_size, seq_len, hidden_size)
+                elif hasattr(outputs, "hidden_states"): # AutoModelForSequenceClassification
+                    last_hidden_state = outputs.hidden_states[-1] # shape = (batch_size, seq_len, hidden_size)
+                else:
+                    raise ValueError("Can not extract the \"last_hidden_state\" from the model output")
+                
+                
+                # average pooling 
+                batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
+                
+                # print("batch_embeddings.shape = ", batch_embeddings.shape)
+                # for embedding in batch_embeddings:
+                all_batch_embeddings.append(batch_embeddings) # shape = (1, hidden_size) # 避免循环 
+                
+                # 定期清理缓存  
+                if torch.cuda.is_available():  
+                    torch.cuda.empty_cache()  
+                
+                
+        embeddings = torch.cat(all_batch_embeddings, dim=0)
+        print("all_embeddings.shape = ", embeddings.shape)
+        
+        # 在分布式环境中收集所有进程的嵌入向量  
+        embeddings = accelerator.gather(embeddings)  
+        
+        
+        # 保存embeddings到缓存  
+        print(f"Saving embeddings to {cache_path}")  
+        torch.save(embeddings, cache_path)  
+        
+        # 保存metadata  
+        with open(metadata_path, 'w') as f:  
+            json.dump(metadata, f) 
     
-    print(f"The training data is reformated, now we get each example's embedding using the model~~~")
-    train_data_loader = DataLoader(train_ds, 
-                                   batch_size=Config['batch_size'], 
-                                   collate_fn=default_data_collator, 
-                                   num_workers=NUM_CPU_PROCESSES, # use as your need
-                                   pin_memory=True,
-                                   shuffle=False)
-    
-    model, train_data_loader = accelerator.prepare(model, train_data_loader)
-    
-    all_batch_embeddings = []
-    with torch.no_grad():
-        for index, batch in enumerate(tqdm(train_data_loader)):
-            # batch = {k: v.to(device) for k, v in batch.items()}
-            
-            # if 'labels' exists in batch，delete it，because inference does not need labels  
-            if 'labels' in batch:
-                del batch['labels']
-            
-            outputs = model(**batch)
-            if hasattr(outputs, "last_hidden_state"): # AutoModel
-                last_hidden_state = outputs.last_hidden_state # shape = (batch_size, seq_len, hidden_size)
-            elif hasattr(outputs, "hidden_states"): # AutoModelForSequenceClassification
-                last_hidden_state = outputs.hidden_states[-1] # shape = (batch_size, seq_len, hidden_size)
-            else:
-                raise ValueError("Can not extract the \"last_hidden_state\" from the model output")
-            
-            
-            # average pooling 
-            batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
-            
-            # print("batch_embeddings.shape = ", batch_embeddings.shape)
-            # for embedding in batch_embeddings:
-            all_batch_embeddings.append(batch_embeddings) # shape = (1, hidden_size) # 避免循环 
-            
-            # 定期清理缓存  
-            if torch.cuda.is_available():  
-                torch.cuda.empty_cache()  
-            
-            
-    embeddings = torch.cat(all_batch_embeddings, dim=0)
-    print("all_embeddings.shape = ", embeddings.shape)
-    
-    # 在分布式环境中收集所有进程的嵌入向量  
-    embeddings = accelerator.gather(embeddings)  
     
     embeddings = embeddings.cpu().numpy() 
-    
-    
+             
     # clustering
     print(f"doing K-Means clustering, cluster number = {num_topics}, each topic contains {K} words")
     
@@ -900,22 +953,10 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
 
 
     
-    # coarse-grained preprocessing
-    # ds, classes, tokenizer = preprocess_race(ds, tokenizer)
-    
-    # fine-grained preprocessing
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
     
     processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
     
-    # processed_ds = ds.map(
-    #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入
-    #     batched=True,
-    #     num_proc=NUM_PROCESSES,
-    #     remove_columns=ds['train'].column_names,
-    #     load_from_cache_file=False,
-    #     desc="Running tokenizer on dataset",
-    # )
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
@@ -1079,7 +1120,8 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
 
     
     # 判断模型名称
-    model_name = get_model_name_using_model(model)
+    
+    # model_name = get_model_name_using_model(model)
     print("model name = ", model_name)
 
     # 保存权重
@@ -1092,6 +1134,10 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
     # only the master process can save model
     # if torch.distributed.get_rank() == 0:  
     #     model.module.save_pretrained(save_path) 
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)  
+        print(f"已创建新路径: {save_path}") 
+        
     accelerator.save(model.state_dict(), save_path)   
 
         # tokenizer.save_pretrained('path_to_save_tokenizer')   

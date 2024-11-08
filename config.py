@@ -123,7 +123,7 @@ Config = {
         "bert-base-NER": {
             
         },
-        "bert-large-base":{
+        "bert-large-uncased":{
             "prompt-tuning":{
                 "race": "save/bert-large-uncased/prompt-tuning/race"+MODEL_WEIGHT_NAME,
                 "dream": "save/bert-large-uncased/prompt-tuning/dream"+MODEL_WEIGHT_NAME,

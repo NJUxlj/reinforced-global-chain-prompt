@@ -11,6 +11,12 @@ import argparse
 from config import Config
 
 
+'''
+通过这份代码来跑取本项目中所有的实验
+
+'''
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="BassPrompt")
     parser.add_argument(

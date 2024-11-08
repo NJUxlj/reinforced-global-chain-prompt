@@ -556,10 +556,11 @@ def preprocess_race(ds: Dataset, tokenizer:AutoTokenizer):
 
 
 
-def preprocess_func_autocot(dataset_name, examples):
+def preprocess_func_autocot(config: DatasetConfig, examples:Dict[str,List]):
     '''
     预处理函数：将article、question和options字段合并成新的question字段  
-
+                
+                最后仅保留question和answer字段，remove 掉article和options字段
             no tokenization !
     Args:  
         examples:Dict[ str, List ]: 数据集中的一个批次样本  
@@ -567,35 +568,36 @@ def preprocess_func_autocot(dataset_name, examples):
     Returns:  
         处理后的样本     
     '''
+    dataset_name =config.name
     
-    if dataset_name == "race":
-        articles = [str(art) for art in examples['article']]  
-        questions = [str(q) for q in examples['question']]  
-        options = [str(opt) for opt in examples['options']] 
-        
-        new_questions: List[str] = [  
-            f"Artical:{art}\nQuestion:{q}\nOptions:{opt}"   
-            for art, q, opt in zip(articles, questions, options)  
-        ]  
-        
-        examples['question'] = new_questions 
-        
-        examples.pop('article')  
-        examples.pop('options')  
-        return examples
+
+    contexts = [str(art) for art in examples[config.article_key]]  
+    questions = [str(q) for q in examples[config.question_key]]  
+    options = [str(opt) for opt in examples[config.options_key]] 
     
-    elif dataset_name == 'record':
-        pass
-    elif dataset_name == 'arc':
-        pass
-    elif dataset_name == 'multirc':
-        pass
-    else:
-        raise ValueError("Invalid dataset name ... Please select from [race, record, multirc, arc]")
+    new_questions: List[str] = [  
+        f'''{config.article_key}:
+            {context}
+            {config.question_key}:
+            {question}
+            {config.options_key}:
+            {option}
+        ''' 
+        
+         
+        for context, question, option in zip(contexts, questions, options)  
+    ]  
+    
+    examples[config.question_key] = new_questions 
+    
+    examples.pop(config.article_key)  
+    examples.pop(config.options_key)  
+    return examples
 
 
 
-def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
+
+def preprocess_dataset_autocot(dataset_name):
     """  
     处理整个数据集  [必须是训练集]
     
@@ -605,13 +607,20 @@ def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
     Returns:  
         处理后的数据集  
     """ 
+    wrapper = McqDatasetWrapper()
+    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
+    config = wrapper.dataset_configs[dataset_name]
+    
+    train_ds = dataset['train']
     
     # 先预处理第一个样本试试看 
     print("\nTesting preprocess_func_autocot with first example...")  
     try:  
-        first_example = dataset[0]  
+        first_example = train_ds[0]  
         print(f"First example before processing: {first_example}")  
-        processed_example = preprocess_func_autocot(dataset_name, {'examples': [first_example]})  
+        # processed_example = preprocess_func_autocot(config, {'examples': [first_example]})  
+        processed_example = preprocess_func_autocot(config, first_example)  
+        
         print(f"First example after processing: {processed_example}")  
     except Exception as e:  
         print(f"Error in test first example: {str(e)}")  
@@ -619,21 +628,23 @@ def preprocess_dataset_autocot(dataset_name, dataset:Dataset):
         print(f"Traceback:\n{traceback.format_exc()}")  
     
     print("\nFirst example testing succeed, now, Starting dataset mapping...")  
-    processed_dataset = dataset.map(
-        function= lambda examples: preprocess_func_autocot(dataset_name, examples),
+    processed_dataset = train_ds.map(
+        function= lambda examples: preprocess_func_autocot(config, examples),
         batched=True,
+        batch_size= Config['batch_size'],
         num_proc=NUM_CPU_PROCESSES,
-        remove_columns= ["example_id", "article", "options"],           # dataset.column_names,
+        # remove_columns= ['example_id'],           # dataset.column_names,
         load_from_cache_file=False,
-        desc="Running tokenizer on dataset",
+        desc=f"Running tokenizer on dataset {dataset_name}, when doing Auto-CoT",
     )
 
     print(f"\nProcessed dataset type: {type(processed_dataset)}")
-    name = processed_dataset.info.dataset_name if hasattr(processed_dataset.info, 'dataset_name') else None 
-    print(f"Processed dataset name: {name}")  
+    print(f"Processed dataset name: {dataset_name}")  
     print(f"Processed dataset size: {len(processed_dataset)}")  
     if hasattr(processed_dataset, 'column_names'):  
         print(f"Processed dataset columns: {processed_dataset.column_names}")  
+        
+    print("Processed dataset example[0]:\n\n", processed_dataset[0])
 
     return processed_dataset
 
@@ -1024,10 +1035,12 @@ class McqDatasetWrapper:
                 result[config.question_key].append(examples["question"][i].strip())  
                 result[config.options_key].append(labeled_options)  
                 result[config.label_key].append(correct_answer)  
+            
+            return result
         
         processed_dataset = data.map(  
             process_examples,
-            batch_size=32,
+            batch_size=Config['batch_size'],
             batched= True,
             num_proc=NUM_CPU_PROCESSES, 
             remove_columns=["example_id"],
@@ -1120,7 +1133,7 @@ class McqDatasetWrapper:
         # 使用map函数处理整个数据集  
         processed_dataset = data.map(  
             process_examples,
-            batch_size=32,
+            batch_size=Config['batch_size'],
             batched= True,
             num_proc=NUM_CPU_PROCESSES, 
             remove_columns=["correct_answer", "distractor1", "distractor2", "distractor3"],
@@ -1267,6 +1280,7 @@ class McqDatasetWrapper:
             elif dataset_name.lower() == 'commonsense_qa':
                 dataset = self._process_commonsense_qa(dataset, config)
             elif dataset_name.lower() == 'race':
+                print("preprocess race ~~~~~")
                 dataset = self._process_race(dataset, config)
             else:
                 raise ValueError(f"Unsupported dataset: {dataset_name}, Please select from [race, sciq, commonsense_qa]")

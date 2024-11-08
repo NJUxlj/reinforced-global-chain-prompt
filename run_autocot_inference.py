@@ -2,9 +2,20 @@
 Adapted from https://github.com/kojima-takeshi188/zero_shot_cot
 '''
 
+
+'''
+
+python run_inference.py \
+--dataset multiarith \
+--demo_path demos/multiarith \
+--output_dir experiment/multiarith
+
+'''
+
 import argparse
 from autocot_utils import *
-
+from config import Config
+from config import NUM_CPU_PROCESSES
 
 
 def parse_arguments():
@@ -14,7 +25,7 @@ def parse_arguments():
     parser.add_argument("--random_seed", type=int, default=1, help="random seed")
     
     parser.add_argument(
-        "--dataset", type=str, default="race", choices=["race", "record", "multirc", "arc"], help="dataset used for experiment, select from [ race, record, multirc, arc ]"
+        "--dataset", type=str, default="race", choices=["race", "dream", "sciq", "commonsense_qa"], help="dataset used for experiment, select from [ race, dream, sciq, commonsense_qa ]"
     )
     parser.add_argument(
         "--demo_path", type=str, default="demos/race", help="pre-generated demos used for experiment"
@@ -24,10 +35,10 @@ def parse_arguments():
     )
     parser.add_argument("--minibatch_size", type=int, default=1, choices=[1], help="minibatch size should be 1 because GPT-3 API takes only 1 input for each request")
     
-    parser.add_argument("--max_num_worker", type=int, default=0, help="maximum number of workers for dataloader")
+    parser.add_argument("--max_num_worker", type=int, default=NUM_CPU_PROCESSES, help="maximum number of workers for dataloader")
     
     parser.add_argument(
-        "--model", type=str, default="gpt4o", choices=["gpt4o", "gpt4o-mini", "Qwen2.5-3B"], help="model used for decoding. Select from [ gpt-4o, gpt-4o-mini, Qwen2.5-3B ]"
+        "--model", type=str, default="gpt-4o", choices=["gpt-4o", "gpt4o-mini", "Qwen2.5-3B"], help="model used for decoding. Select from [ gpt-4o, gpt-4o-mini, Qwen2.5-3B ]"
     )
     
     parser.add_argument(

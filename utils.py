@@ -37,6 +37,11 @@ from sklearn.metrics import precision_recall_fscore_support
 
 
 def get_model_name_using_model(model):
+    
+    if hasattr(model, "module"):
+        print("This model is wrapped by Accelerator(DDP), we use model.module")
+        model = model.module
+        
     config = model.config  
     # 尝试直接获取模型的名称  
     if hasattr(config, 'name_or_path') and config.name_or_path is not None:  
