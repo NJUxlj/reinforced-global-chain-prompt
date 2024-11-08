@@ -29,11 +29,11 @@ else:
     print("未检测到 GPU，将使用 CPU 进行训练。")  
 
 
-
+MODEL_WEIGHT_NAME = "/model.pt"
 
 Config = {
     "output_dir":"./output",
-    "logging_dir":"./logs",
+    
     "vocab":"data/chars.txt",
     "train_data_path": "data/train.csv",
     "test_data_path": "data/test.csv",
@@ -44,7 +44,7 @@ Config = {
     "num_layers": 4,
     "dropout": 0.5,
     "learning_rate": 1e-3,
-    "batch_size": 100,
+    "batch_size": 32,
     "num_epochs": 2,
     "num_workers": 4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -54,68 +54,131 @@ Config = {
     "save_model_dir":{
         "bert-base-uncased": {
             "prompt-tuning":{
-                "race": "save/bert-base-uncased/prompt-tuning/race",
-                "race-m": "save/bert-base-uncased/prompt-tuning/race-m",
-                "race-h": "save/bert-base-uncased/prompt-tuning/race-h",
-                "race-c": "save/bert-base-uncased/prompt-tuning/race-c",
-                "record": "save/bert-base-uncased/prompt-tuning/record", # ReCoRD
-                "multirc": "save/bert-base-uncased/prompt-tuning/multirc",  #MultiRC
-                "arc": "save/bert-base-uncased/prompt-tuning/arc",   #ARC
-                "dream": "save/bert-base-uncased/prompt-tuning/dream", # DREAM
+                "race": "save/bert-base-uncased/prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                "race-m": "save/bert-base-uncased/prompt-tuning/race-m"+MODEL_WEIGHT_NAME,
+                "race-h": "save/bert-base-uncased/prompt-tuning/race-h"+MODEL_WEIGHT_NAME,
+                "race-c": "save/bert-base-uncased/prompt-tuning/race-c"+MODEL_WEIGHT_NAME,
+                "record": "save/bert-base-uncased/prompt-tuning/record"+MODEL_WEIGHT_NAME, # ReCoRD
+                "multirc": "save/bert-base-uncased/prompt-tuning/multirc"+MODEL_WEIGHT_NAME,  #MultiRC
+                "arc": "save/bert-base-uncased/prompt-tuning/arc"+MODEL_WEIGHT_NAME,   #ARC
+                "dream": "save/bert-base-uncased/prompt-tuning/dream"+MODEL_WEIGHT_NAME, # DREAM
+                "sciq": "save/bert-base-uncased/prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
             },
             "prefix-tuning":{
-                "race": "save/bert-base-uncased/prefix-tuning/race",
-                "race-m": "save/bert-base-uncased/prefix-tuning/race-m",
-                "race-h": "save/bert-base-uncased/prefix-tuning/race-h",
-                "race-c": "save/bert-base-uncased/prefix-tuning/race-c",
-                "record": "save/bert-base-uncased/prefix-tuning/record",
-                "multirc": "save/bert-base-uncased/prefix-tuning/multirc",
-                "arc": "save/bert-base-uncased/prefix-tuning/arc",
-                "dream": "save/bert-base-uncased/prefix-tuning/dream",
+                "race": "save/bert-base-uncased/prefix-tuning/race"+MODEL_WEIGHT_NAME,
+                "race-m": "save/bert-base-uncased/prefix-tuning/race-m"+MODEL_WEIGHT_NAME,
+                "race-h": "save/bert-base-uncased/prefix-tuning/race-h"+MODEL_WEIGHT_NAME,
+                "race-c": "save/bert-base-uncased/prefix-tuning/race-c"+MODEL_WEIGHT_NAME,
+                "record": "save/bert-base-uncased/prefix-tuning/record"+MODEL_WEIGHT_NAME,
+                "multirc": "save/bert-base-uncased/prefix-tuning/multirc"+MODEL_WEIGHT_NAME,
+                "arc": "save/bert-base-uncased/prefix-tuning/arc"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-base-uncased/prefix-tuning/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-base-uncased/prefix-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/prefix-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
 
             },
             "bidirectional-prompt-tuning":{
-                "race": "save/bert-base-uncased/bidirectional-prompt-tuning/race",
-                "race-m": "save/bert-base-uncased/bidirectional-prompt-tuning/race-m",
-                "race-h": "save/bert-base-uncased/bidirectional-prompt-tuning/race-h",
-                "race-c": "save/bert-base-uncased/bidirectional-prompt-tuning/race-c",
-                "record": "save/bert-base-uncased/bidirectional-prompt-tuning/record",
-                "multirc": "save/bert-base-uncased/bidirectional-prompt-tuning/multirc",
-                "arc": "save/bert-base-uncased/bidirectional-prompt-tuning/arc",
-                "dream": "save/bert-base-uncased/bidirectional-prompt-tuning/dream",
-
+                "race": "save/bert-base-uncased/bidirectional-prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                "race-m": "save/bert-base-uncased/bidirectional-prompt-tuning/race-m"+MODEL_WEIGHT_NAME,
+                "race-h": "save/bert-base-uncased/bidirectional-prompt-tuning/race-h"+MODEL_WEIGHT_NAME,
+                "race-c": "save/bert-base-uncased/bidirectional-prompt-tuning/race-c"+MODEL_WEIGHT_NAME,
+                "record": "save/bert-base-uncased/bidirectional-prompt-tuning/record"+MODEL_WEIGHT_NAME,
+                "multirc": "save/bert-base-uncased/bidirectional-prompt-tuning/multirc"+MODEL_WEIGHT_NAME,
+                "arc": "save/bert-base-uncased/bidirectional-prompt-tuning/arc"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-base-uncased/bidirectional-prompt-tuning/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-base-uncased/bidirectional-prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/bidirectional-prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME
             },
             "p-tuning-v2":{
-                "race": "save/bert-base-uncased/p-tuning-v2/race",
-                "race-h": "save/bert-base-uncased/p-tuning-v2/race-h",
-                "race-m": "save/bert-base-uncased/p-tuning-v2/race-m",
-                "race-c": "save/bert-base-uncased/p-tuning-v2/race-c",
-
+                "race": "save/bert-base-uncased/p-tuning-v2/race"+MODEL_WEIGHT_NAME,
+                "race-h": "save/bert-base-uncased/p-tuning-v2/race-h"+MODEL_WEIGHT_NAME,
+                "race-m": "save/bert-base-uncased/p-tuning-v2/race-m"+MODEL_WEIGHT_NAME,
+                "race-c": "save/bert-base-uncased/p-tuning-v2/race-c"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-base-uncased/p-tuning-v2/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-base-uncased/p-tuning-v2/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/p-tuning-v2/commonsense_qa"+MODEL_WEIGHT_NAME
             },
             "lora":{
-                "race": "save/bert-base-uncased/lora/race",
-                "race-h": "save/bert-base-uncased/lora/race-h",
-                "race-m": "save/bert-base-uncased/lora/race-m",
-                "race-c": "save/bert-base-uncased/lora/race-c",
+                "race": "save/bert-base-uncased/lora/race"+MODEL_WEIGHT_NAME,
+                "race-h": "save/bert-base-uncased/lora/race-h"+MODEL_WEIGHT_NAME,
+                "race-m": "save/bert-base-uncased/lora/race-m"+MODEL_WEIGHT_NAME,
+                "race-c": "save/bert-base-uncased/lora/race-c"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-base-uncased/lora/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-base-uncased/lora/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/lora/commonsense_qa"+MODEL_WEIGHT_NAME
 
             },
             "o-lora":{
-                "race": "save/bert-base-uncased/o-lora/race",
-                "race-h": "save/bert-base-uncased/o-lora/race-h",
-                "race-m": "save/bert-base-uncased/o-lora/race-m",
-                "race-c": "save/bert-base-uncased/o-lora/race-c",
-
+                "race": "save/bert-base-uncased/o-lora/race"+MODEL_WEIGHT_NAME,
+                "race-h": "save/bert-base-uncased/o-lora/race-h"+MODEL_WEIGHT_NAME,
+                "race-m": "save/bert-base-uncased/o-lora/race-m"+MODEL_WEIGHT_NAME,
+                "race-c": "save/bert-base-uncased/o-lora/race-c"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-base-uncased/o-lora/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-base-uncased/o-lora/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/o-lora/commonsense_qa"+MODEL_WEIGHT_NAME
             }
             
         },
         "bert-base-NER": {
             
         },
+        "bert-large-base":{
+            "prompt-tuning":{
+                "race": "save/bert-large-uncased/prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-large-uncased/prompt-tuning/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-large-uncased/prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-large-uncased/prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+            },
+            "bidirectional-prompt-tuning":{
+                "race": "save/bert-large-uncased/bidirectional-prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-large-uncased/bidirectional-prompt-tuning/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-large-uncased/bidirectional-prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-large-uncased/bidirectional-prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+            },
+            "p-tuning":{
+                "race": "save/bert-large-uncased/p-tuning/race"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-large-uncased/p-tuning/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-large-uncased/p-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-large-uncased/p-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+            },
+            "p-tuning-v2":{
+                "race": "save/bert-large-uncased/p-tuning-v2/race"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-large-uncased/p-tuning-v2/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-large-uncased/p-tuning-v2/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-large-uncased/p-tuning-v2/commonsense_qa"+MODEL_WEIGHT_NAME,
+            },
+        },
         "qwen": {
             'Qwen2.5-0.5B':{
 
             },
             'Qwen2.5-1.5B':{
+                "prompt-tuning":{
+                    "race": "save/qwen/Qwen2.5-1.5B/prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                    "dream": "save/qwen/Qwen2.5-1.5B/prompt-tuning/dream"+MODEL_WEIGHT_NAME,
+                    "sciq": "save/qwen/Qwen2.5-1.5B/prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                    "commonsense_qa": "save/qwen/Qwen2.5-1.5B/prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+                },
+                "bidirectional-prompt-tuning":{
+                    "race": "save/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                    "dream": "save/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/dream"+MODEL_WEIGHT_NAME,
+                    "sciq": "save/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                    "commonsense_qa": "save/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+                },
+                "p-tuning":{
+                    "race": "save/qwen/Qwen2.5-1.5B/p-tuning/race"+MODEL_WEIGHT_NAME,
+                    "dream": "save/qwen/Qwen2.5-1.5B/p-tuning/dream"+MODEL_WEIGHT_NAME,
+                    "sciq": "save/qwen/Qwen2.5-1.5B/p-tuning/sciq"+MODEL_WEIGHT_NAME,
+                    "commonsense_qa": "save/qwen/Qwen2.5-1.5B/p-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+                },
+                "p-tuning-v2":{
+                    "race": "save/qwen/Qwen2.5-1.5B/p-tuning-v2/race"+MODEL_WEIGHT_NAME,
+                    "dream": "save/qwen/Qwen2.5-1.5B/p-tuning-v2/dream"+MODEL_WEIGHT_NAME,
+                    "sciq": "save/qwen/Qwen2.5-1.5B/p-tuning-v2/sciq"+MODEL_WEIGHT_NAME,
+                   "commonsense_qa": "save/qwen/Qwen2.5-1.5B/p-tuning-v2/commonsense_qa"+MODEL_WEIGHT_NAME
+                }
+                
 
             },
             'Qwen2.5-3B':{
@@ -129,6 +192,154 @@ Config = {
             }   
         },
     },
+    
+    
+    
+    "logging_dir": {
+        "bert-base-uncased": {
+            "prompt-tuning":{
+                "race": "logs/bert-base-uncased/prompt-tuning/race",
+                "race-m": "logs/bert-base-uncased/prompt-tuning/race-m",
+                "race-h": "logs/bert-base-uncased/prompt-tuning/race-h",
+                "race-c": "logs/bert-base-uncased/prompt-tuning/race-c",
+                "record": "logs/bert-base-uncased/prompt-tuning/record", # ReCoRD
+                "multirc": "logs/bert-base-uncased/prompt-tuning/multirc",  #MultiRC
+                "arc": "logs/bert-base-uncased/prompt-tuning/arc",   #ARC
+                "dream": "logs/bert-base-uncased/prompt-tuning/dream", # DREAM
+                "sciq": "logs/bert-base-uncased/prompt-tuning/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/prompt-tuning/commonsense_qa",
+            },
+            "prefix-tuning":{
+                "race": "logs/bert-base-uncased/prefix-tuning/race",
+                "race-m": "logs/bert-base-uncased/prefix-tuning/race-m",
+                "race-h": "logs/bert-base-uncased/prefix-tuning/race-h",
+                "race-c": "logs/bert-base-uncased/prefix-tuning/race-c",
+                "record": "logs/bert-base-uncased/prefix-tuning/record",
+                "multirc": "logs/bert-base-uncased/prefix-tuning/multirc",
+                "arc": "logs/bert-base-uncased/prefix-tuning/arc",
+                "dream": "logs/bert-base-uncased/prefix-tuning/dream",
+                "sciq": "logs/bert-base-uncased/prefix-tuning/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/prefix-tuning/commonsense_qa",
+
+            },
+            "bidirectional-prompt-tuning":{
+                "race": "logs/bert-base-uncased/bidirectional-prompt-tuning/race",
+                "race-m": "logs/bert-base-uncased/bidirectional-prompt-tuning/race-m",
+                "race-h": "logs/bert-base-uncased/bidirectional-prompt-tuning/race-h",
+                "race-c": "logs/bert-base-uncased/bidirectional-prompt-tuning/race-c",
+                "record": "logs/bert-base-uncased/bidirectional-prompt-tuning/record",
+                "multirc": "logs/bert-base-uncased/bidirectional-prompt-tuning/multirc",
+                "arc": "logs/bert-base-uncased/bidirectional-prompt-tuning/arc",
+                "dream": "logs/bert-base-uncased/bidirectional-prompt-tuning/dream",
+                "sciq": "logs/bert-base-uncased/bidirectional-prompt-tuning/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/bidirectional-prompt-tuning/commonsense_qa",
+            },
+            "p-tuning-v2":{
+                "race": "logs/bert-base-uncased/p-tuning-v2/race",
+                "race-h": "logs/bert-base-uncased/p-tuning-v2/race-h",
+                "race-m": "logs/bert-base-uncased/p-tuning-v2/race-m",
+                "race-c": "logs/bert-base-uncased/p-tuning-v2/race-c",
+                "dream": "logs/bert-base-uncased/p-tuning-v2/dream",
+                "sciq": "logs/bert-base-uncased/p-tuning-v2/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/p-tuning-v2/commonsense_qa"
+            },
+            "lora":{
+                "race": "logs/bert-base-uncased/lora/race",
+                "race-h": "logs/bert-base-uncased/lora/race-h",
+                "race-m": "logs/bert-base-uncased/lora/race-m",
+                "race-c": "logs/bert-base-uncased/lora/race-c",
+                "dream": "logs/bert-base-uncased/lora/dream",
+                "sciq": "logs/bert-base-uncased/lora/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/lora/commonsense_qa"
+
+            },
+            "o-lora":{
+                "race": "logs/bert-base-uncased/o-lora/race",
+                "race-h": "logs/bert-base-uncased/o-lora/race-h",
+                "race-m": "logs/bert-base-uncased/o-lora/race-m",
+                "race-c": "logs/bert-base-uncased/o-lora/race-c",
+                "dream": "logs/bert-base-uncased/o-lora/dream",
+                "sciq": "logs/bert-base-uncased/o-lora/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/o-lora/commonsense_qa"
+            }
+            
+        },
+        "bert-base-NER": {
+            
+        },
+        "bert-large-uncased":{
+            "prompt-tuning":{
+                "race": "logs/bert-large-uncased/prompt-tuning/race",
+                "dream": "logs/bert-large-uncased/prompt-tuning/dream",
+                "sciq": "logs/bert-large-uncased/prompt-tuning/sciq",
+                "commonsense_qa": "logs/bert-large-uncased/prompt-tuning/commonsense_qa",
+            },
+            "bidirectional-prompt-tuning":{
+                "race": "logs/bert-large-uncased/bidirectional-prompt-tuning/race",
+                "dream": "logs/bert-large-uncased/bidirectional-prompt-tuning/dream",
+                "sciq": "logs/bert-large-uncased/bidirectional-prompt-tuning/sciq",
+                "commonsense_qa": "logs/bert-large-uncased/bidirectional-prompt-tuning/commonsense_qa",
+            },
+            "p-tuning":{
+                "race": "logs/bert-large-uncased/p-tuning/race",
+                "dream": "logs/bert-large-uncased/p-tuning/dream",
+                "sciq": "logs/bert-large-uncased/p-tuning/sciq",
+                "commonsense_qa": "logs/bert-large-uncased/p-tuning/commonsense_qa",
+            },
+            "p-tuning-v2":{
+                "race": "logs/bert-large-uncased/p-tuning-v2/race",
+                "dream": "logs/bert-large-uncased/p-tuning-v2/dream",
+                "sciq": "logs/bert-large-uncased/p-tuning-v2/sciq",
+                "commonsense_qa": "logs/bert-large-uncased/p-tuning-v2/commonsense_qa",
+            },
+        },
+        "qwen": {
+            'Qwen2.5-0.5B':{
+
+            },
+            'Qwen2.5-1.5B':{
+                "prompt-tuning":{
+                    "race": "logs/qwen/Qwen2.5-1.5B/prompt-tuning/race",
+                    "dream": "logs/qwen/Qwen2.5-1.5B/prompt-tuning/dream",
+                    "sciq": "logs/qwen/Qwen2.5-1.5B/prompt-tuning/sciq",
+                    "commonsense_qa": "logs/qwen/Qwen2.5-1.5B/prompt-tuning/commonsense_qa",
+                },
+                "bidirectional-prompt-tuning":{
+                    "race": "logs/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/race",
+                    "dream": "logs/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/dream",
+                    "sciq": "logs/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/sciq",
+                    "commonsense_qa": "logs/qwen/Qwen2.5-1.5B/bidirectional-prompt-tuning/commonsense_qa",
+                },
+                "p-tuning":{
+                    "race": "logs/qwen/Qwen2.5-1.5B/p-tuning/race",
+                    "dream": "logs/qwen/Qwen2.5-1.5B/p-tuning/dream",
+                    "sciq": "logs/qwen/Qwen2.5-1.5B/p-tuning/sciq",
+                    "commonsense_qa": "logs/qwen/Qwen2.5-1.5B/p-tuning/commonsense_qa",
+                },
+                "p-tuning-v2":{
+                    "race": "logs/qwen/Qwen2.5-1.5B/p-tuning-v2/race",
+                    "dream": "logs/qwen/Qwen2.5-1.5B/p-tuning-v2/dream",
+                    "sciq": "logs/qwen/Qwen2.5-1.5B/p-tuning-v2/sciq",
+                   "commonsense_qa": "logs/qwen/Qwen2.5-1.5B/p-tuning-v2/commonsense_qa"
+                }
+                
+
+            },
+            'Qwen2.5-3B':{
+
+            }
+        },
+        "llama": {
+            "Llama-3.2-1B":{
+
+
+            }   
+        },
+        
+        
+    },
+    
+    
    
     "models":{
         "bert-base-uncased": {

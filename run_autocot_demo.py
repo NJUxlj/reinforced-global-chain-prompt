@@ -16,7 +16,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Zero-shot-CoT")
     parser.add_argument(
         "--task", type=str, default="race",
-        choices=["race", "multirc", "record", "arc", ], help="dataset used for experiment, select from [ race, record, multirc, arc ]"
+        choices=["race", "dream", "sciq", "commonsense_qa", ], help="dataset used for experiment, select from [race, dream, sciq, commonsense_qa ]"
     )
     parser.add_argument( # criterion, how many reasoning steps
         "--max_ra_len", type=int, default=5, help="maximum number of reasoning chains"

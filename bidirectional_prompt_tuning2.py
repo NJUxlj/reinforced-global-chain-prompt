@@ -20,13 +20,19 @@ from peft import (
 from accelerate import(
     Accelerator,
 )
+from accelerate.logging import get_logger
+
+
+# logger = get_logger(__name__, log_level="INFO")
+
 
 from load import *
 
 from utils import (
     prepare_model_tokenizer, 
     get_vocab_embeddings_from_model,
-    get_model_name_using_model
+    get_model_name_using_model,
+    get_logger
 )
 
 from datasets import (
@@ -76,9 +82,11 @@ device = Config['device']
 
 
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
+
+
 
 
 
@@ -622,7 +630,8 @@ def get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size, nu
     train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
     
     print(f"The training data is reformated, now we get each example's embedding using the model~~~")
-    train_data_loader = DataLoader(train_ds, batch_size=100, 
+    train_data_loader = DataLoader(train_ds, 
+                                   batch_size=Config['batch_size'], 
                                    collate_fn=default_data_collator, 
                                    num_workers=NUM_CPU_PROCESSES, # use as your need
                                    pin_memory=True,
@@ -833,7 +842,7 @@ def get_label_collection_for_class(dataset_path, classes:List[str]):
     return dict["class1" : set(label1, label2, ...)]
     '''
 
-def train_bidirectional_prompt_tuning(model, tokenizer):
+def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, dataset_name = 'race'):
     device = Config['device']
 
     K=5
@@ -855,8 +864,18 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     
     # 加载数据集
     wrapper = McqDatasetWrapper()
-    dataset_name = "race"
     dataset_path = Config["datasets"][dataset_name]
+    
+    if dataset_name == "race":
+        dataset_path = Config["datasets"][dataset_name]
+    elif dataset_name == 'dream':
+        dataset_path = Config["datasets"][dataset_name]['all']
+    elif dataset_name == 'sciq':
+        dataset_path = Config["datasets"][dataset_name]
+    elif dataset_name == 'commonsense_qa':
+        dataset_path = Config["datasets"][dataset_name]
+    else:
+        raise ValueError("dataset name not supported")
     # ds = wrapper.load_mcq_dataset(dataset_name, split=None)
     # ds = load_dataset_from_huggingface(dataset_path,"all")
     
@@ -920,9 +939,9 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     
     train_dataloader = DataLoader(
             train_ds, 
-            shuffle=True, 
+            # shuffle=True, # shuffle is not necessary when using DistributedSampler
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=Config['batch_size'],
             pin_memory=True,
             sampler=train_sampler
         )
@@ -930,7 +949,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=Config['batch_size'],
             pin_memory=True,
             sampler=eval_sampler
         )
@@ -970,12 +989,16 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     model = bidirectional_prompt_model 
     
     
-    accelerator = Accelerator()
+    accelerator = Accelerator(
+        # gradient_accumulation_steps=1,  
+        # mixed_precision='fp16', 
+    )
+    
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
-    # eval_dataloader = accelerator.prepare(eval_dataloader)
-
+    logging_dir = Config['logging_dir'][model_name]["bidirectional-prompt-tuning"][dataset_name]
+    # logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
     global_step = 0
     
     for epoch in range(num_epochs):
@@ -1021,7 +1044,6 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
             lr_scheduler.step()
             optimizer.zero_grad()
             
-            # evaluate for each 5 batch-steps
             if step == len(train_dataloader)-1:  
                 model.eval()  
                 all_preds = []  
@@ -1044,6 +1066,10 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
                 accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
                 precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
                 print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                if accelerator.is_main_process:
+                    # logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
+                    print()
+
                 model.train()  
             global_step+=1
 
@@ -1064,23 +1090,126 @@ def train_bidirectional_prompt_tuning(model, tokenizer):
     torch.distributed.barrier()  
 
     # only the master process can save model
-    if torch.distributed.get_rank() == 0:  
-        model.module.save_pretrained(save_path)  
+    # if torch.distributed.get_rank() == 0:  
+    #     model.module.save_pretrained(save_path) 
+    accelerator.save(model.state_dict(), save_path)   
 
         # tokenizer.save_pretrained('path_to_save_tokenizer')   
 
 
 
 
-def evaluate_bidirectional_prompt_tuning(trained_model_path, trained_tokenizer_path):
-    pass
-
+def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name = "race", eval_dataloader:DataLoader=None):
+    # 初始化accelerator  
+    accelerator = Accelerator()  
+    
+    # 获取logger  
+    logger = accelerator.logging.get_logger(__name__)  
+    
+    # 1. 加载保存的模型权重  
+    checkpoint = torch.load(trained_model_path)  
+    
+    # 2. 获取保存的prompt embeddings  
+    prefix_prompt_embeddings = checkpoint['prefix_embeddings']  
+    suffix_prompt_embeddings = checkpoint['suffix_embeddings']  
+    
+    # 3. 确保embeddings是Parameter类型  
+    prefix_prompt_embeddings = torch.nn.Parameter(prefix_prompt_embeddings)  
+    suffix_prompt_embeddings = torch.nn.Parameter(suffix_prompt_embeddings)  
+    
+    # 4. 创建带有双向Prompt的模型实例  
+    bidirectional_prompt_model = BidirectionalPromptModel(  
+        model=model,  # 假设model是从外部传入的基础模型  
+        prefix_embeddings=prefix_prompt_embeddings,  
+        suffix_embeddings=suffix_prompt_embeddings,  
+        num_prefix_tokens=prefix_prompt_embeddings.shape[0],   
+        num_suffix_tokens=suffix_prompt_embeddings.shape[0],  
+    )  
+    
+    # 5. 使用accelerator准备模型和数据加载器  
+    bidirectional_prompt_model, eval_dataloader = accelerator.prepare(  
+        bidirectional_prompt_model, eval_dataloader  
+    )  
+    
+    # 6. 设置为评估模式  
+    bidirectional_prompt_model.eval()  
+    
+    all_preds = []  
+    all_labels = []  
+    
+    # 7. 评估循环  
+    with torch.no_grad():  
+        for batch in eval_dataloader:  
+            # 获取输入数据  
+            input_ids = batch['input_ids']  
+            attention_mask = batch['attention_mask']  
+            labels = batch['labels']  
+            
+            # 获取token_type_ids（如果存在）  
+            token_type_ids = batch.get('token_type_ids', None)  
+            
+            # 前向传播  
+            outputs = bidirectional_prompt_model(  
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  
+                token_type_ids=token_type_ids,  
+                labels=labels  
+            )  
+            
+            # 获取预测结果  
+            logits = outputs.logits  
+            
+            # 使用accelerator.gather收集所有进程的结果  
+            gathered_logits = accelerator.gather(logits)  
+            gathered_labels = accelerator.gather(labels)  
+            
+            # 计算预测结果  
+            preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
+            labels_cpu = gathered_labels.cpu().numpy()  
+            
+            all_preds.extend(preds)  
+            all_labels.extend(labels_cpu)  
+    
+    # 8. 确保只在主进程上计算和打印指标  
+    if accelerator.is_main_process:  
+        # 计算评价指标  
+        accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+        precision, recall, f1, _ = precision_recall_fscore_support(  
+            all_labels, all_preds, average='weighted'  
+        )  
+        
+        # 记录日志  
+        logger.info(  
+            f"Validation Metrics:\n"  
+            f"Accuracy: {accuracy:.4f}\n"  
+            f"Precision: {precision:.4f}\n"  
+            f"Recall: {recall:.4f}\n"  
+            f"F1: {f1:.4f}"  
+        )  
+        
+        # 使用accelerator记录指标  
+        accelerator.log({  
+            'eval/accuracy': accuracy,  
+            "eval/precision": precision,  
+            "eval/recall": recall,  
+            "eval/f1": f1  
+        })  
+        
+        return {  
+            'accuracy': accuracy,  
+            'precision': precision,  
+            'recall': recall,  
+            'f1': f1  
+        }  
+    
+    # 非主进程返回None  
+    return None
 
 
 
 if __name__ == "__main__":
     
-    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model_path = Config["models"]["bert-large-uncased"]["model_path"]
 
     
     # 加载数据集
@@ -1091,7 +1220,7 @@ if __name__ == "__main__":
     tokenizer = BertTokenizerFast.from_pretrained(model_path)
     
 
-    train_bidirectional_prompt_tuning(model, tokenizer)
+    train_bidirectional_prompt_tuning(model, tokenizer, "bert-large-uncased", 'race')
     
     
     

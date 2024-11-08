@@ -41,13 +41,15 @@ from p_tuning import train_p_tuning
 from prompt_tuning import train_prompt_tuning
 from prefix_tuning import train_prefix_tuning
 from lora import train_lora
+from bidirectional_prompt_tuning2 import train_bidirectional_prompt_tuning
 
 peft_dict = {  
     "p_tuning": train_p_tuning,
     "p_tuning_v2": train_p_tuning_v2,
     "prompt_tuning": train_prompt_tuning,
     "prefix_tuning": train_prefix_tuning,
-    "lora": train_lora
+    "lora": train_lora,
+    "bidirectional_prompt_tuning": train_bidirectional_prompt_tuning,
 }
 
 
@@ -56,7 +58,12 @@ peft_dict = {
 
 def train_all():
     
-    model_names = ["bert-base-uncased"]
+    model_names = ["bert-large-uncased"]
+    pt_names = ["bidirectional_prompt_tuning"]
+    dataset_names = ['race', 'sciq', 'dream', 'commonsense_qa']
+    
+    
+    
     model_info_dict = Config['models']
     
     for model_name, model_info in model_info_dict.items():
@@ -65,8 +72,12 @@ def train_all():
         if model_name in model_names:
             model, tokenizer = prepare_model_tokenizer(model_path)
             for method in peft_dict.keys():
-                print(f"========== Training {model_name} with {method} ==============")
-                peft_dict[method](model, tokenizer)
+                if method in pt_names:
+                    print(f"========== Training {model_name} with {method} on dataset: {dataset_names} ==============")
+                    print()
+                    for dataset_name in dataset_names:
+                        print(f"==========Training {model_name} with {method} on dataset: {dataset_name}")
+                        peft_dict[method](model, tokenizer, model_name = model_name, dataset_name = dataset_name)
 
 
 

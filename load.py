@@ -218,7 +218,7 @@ def preprocess_function_race(examples, first_four_columns = ["article", "questio
         padding = "max_length",
         truncation=True,  
         max_length=max_length,  
-        add_special_tokens=True  # 确保添加特殊标记  [CLS] [SEP]
+        add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
     )  
     
     # 确保标签符合n_classes，不超范围  
@@ -1418,6 +1418,7 @@ def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
     processed_dataset:DatasetDict = dataset.map(
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length),
         batched=True,
+        batch_size=Config['batch_size'],
         num_proc=NUM_CPU_PROCESSES,
         remove_columns= dataset['train'].column_names,           # dataset.column_names,
         load_from_cache_file=False,

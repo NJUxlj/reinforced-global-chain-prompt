@@ -1,5 +1,6 @@
 import os
 import torch
+import logging
 import evaluate
 import numpy as np
 from config import Config
@@ -120,6 +121,38 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
     
     return model, tokenizer
+
+
+
+
+
+
+
+
+def get_logger(name="my_logger", logging_dir = None,log_level="INFO"):
+    # 配置基本日志设置：设置日志的最低显示级别和格式  
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')  
+
+    # 创建logger对象  
+    logger = logging.getLogger(name)  
+
+    # 定义日志文件的路径  
+    log_file_path = logging_dir  
+
+    # 创建一个FileHandler处理对象，将日志输出到文件  
+    file_handler = logging.FileHandler(log_file_path)  
+    # 设置文件处理器的日志级别  
+    file_handler.setLevel(logging.INFO)  
+
+    # 创建格式化器，将格式对象与处理器关联  
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')  
+    file_handler.setFormatter(formatter)  
+
+    # 将FileHandler添加到logger中  
+    logger.addHandler(file_handler)  
+
+
+
 
 
 
