@@ -728,7 +728,7 @@ def get_classes_by_clustering(
         with open(metadata_path, 'w') as f:  
             json.dump(metadata, f) 
     
-    
+    # no matter how you get embeddings (cache/model infer), we need to convert it to numpy array for clustering
     embeddings = embeddings.cpu().numpy() 
              
     # clustering
