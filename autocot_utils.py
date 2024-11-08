@@ -151,14 +151,14 @@ def get_reformated_dataset(args)->Dataset:
         dataset = preprocess_dataset_autocot("race", dataset)
         # print(f"Dataset size after preprocess: {len(dataset) if dataset is not None else 'None'}")  
     
-    elif args.dataset == "record":
+    elif args.dataset == "dream":
         pass
-    elif args.dataset == "multirc":
+    elif args.dataset == "sciq":
         pass
-    elif args.dataset == "arc":
+    elif args.dataset == "commonsense_qa":
         pass
     else:
-        raise ValueError("dataset is not properly defined ... Please select from [race, record, multirc, arc]")
+        raise ValueError("dataset is not properly defined ... Please select from [ race, dream, sciq, commonsense_qa]")
     return dataset
 
 

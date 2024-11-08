@@ -3,6 +3,7 @@ import torch
 import logging
 import evaluate
 import numpy as np
+from itertools import product
 from config import Config
 
 
@@ -156,6 +157,57 @@ def get_logger(name="my_logger", logging_dir = None,log_level="INFO"):
 
 
 
+def make_save_dirs(model_name:Union[List,str] = None, pt_method:Union[List, str] = None, dataset_name:Union[List, str] = None):
+    '''
+     生成所有的模型权重存储路径
+     
+     也可以指定某条具体路径的3段参数来生成单个目录
+    
+    '''
+    
+    model_name = ["bert-base-uncased", "bert-large-uncased", 'Qwen2.5-0.5B', 'Qwen2.5-1.5B', 'Qwen2.5-3B', 'Qwen2.5-3B'] 
+    pt_method = ['p-tuning', 'prefix-tuning','prompt-tuning','bidirectional-prompt-tuning','p-tuning-v2', 'lora','o-lora','adalora']
+    dataset_name = ['race', 'sciq', 'dream', 'commonsense_qa']
+    # 检查是否有参数为 None , 只要model_name, pt_method, dataset_name 有一个参数为 None，就抛出异常
+    if any(param is None for param in [model_name, pt_method, dataset_name]):  
+        missing_params = []  
+        if model_name is None:  
+            missing_params.append("model_name")  
+        if pt_method is None:  
+            missing_params.append("pt_method")  
+        if dataset_name is None:  
+            missing_params.append("dataset_name")  
+        raise ValueError(f"Missing model weights save path components: {', '.join(missing_params)}")  
+    
+    # 将字符串输入转换为列表  
+    model_names = [model_name] if isinstance(model_name, str) else model_name  
+    pt_methods = [pt_method] if isinstance(pt_method, str) else pt_method  
+    dataset_names = [dataset_name] if isinstance(dataset_name, str) else dataset_name  
+    
+    # 检查是否有空字符串  
+    def check_empty_strings(values: List[str], param_name: str):  
+        if any(not val.strip() for val in values):  
+            raise ValueError(f"Empty string found in {param_name}. All model weights save path components must be non-empty.")
+    
+    check_empty_strings(model_names, "model_name")  
+    check_empty_strings(pt_methods, "pt_method")  
+    check_empty_strings(dataset_names, "dataset_name")  
+    
+    
+    base_path = "./save" 
+    
+    weights_file_name = "model.pt"
+    
+    save_paths = [] # store every possible path combination
+    
+    for model, method, dataset in product(model_names, pt_methods, dataset_names):
+        save_path = os.path.join(base_path, model, method, dataset, weights_file_name)  
+        
+        # 创建目录  
+        os.makedirs(save_path, exist_ok=True)  
+        save_paths.append(save_path)  
+    
+    return save_paths
 
 
 
@@ -298,4 +350,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    make_save_dirs()

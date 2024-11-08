@@ -61,13 +61,13 @@ def parse_arguments():
     if args.dataset == "race":
         args.dataset_path = "./dataset/AQuA/test.json"
         args.direct_answer_trigger = "\nTherefore, among A through D, the answer is"
-    elif args.dataset == "multirc":
+    elif args.dataset == "dream":
         args.dataset_path = "./dataset/grade-school-math/test.jsonl"
         args.direct_answer_trigger = "\nTherefore, the answer (arabic numerals) is"
-    elif args.dataset == "record":
+    elif args.dataset == "sciq":
         args.dataset_path = "./dataset/CommonsenseQA/dev_rand_split.jsonl"
         args.direct_answer_trigger = "\nTherefore, among A through E, the answer is"
-    elif args.dataset == "arc":
+    elif args.dataset == "commonsense_qa":
         args.dataset_path = "./dataset/AddSub/AddSub.json"
         args.direct_answer_trigger = "\nTherefore, the answer (arabic numerals) is"
     
