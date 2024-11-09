@@ -599,13 +599,13 @@ def preprocess_func_autocot(config: DatasetConfig, examples:Dict[str,List]):
 
 def preprocess_dataset_autocot(dataset_name):
     """  
-    处理整个数据集  [必须是训练集]
+    处理整个数据集  [必须返回训练集]
     
     Args:  
         dataset: 原始的训练集 (split = train)  
         dataset_name: 数据集名称，用于选择预处理函数
     Returns:  
-        处理后的数据集  
+        处理后的数据集 [训练集] 
     """ 
     wrapper = McqDatasetWrapper()
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
@@ -617,8 +617,6 @@ def preprocess_dataset_autocot(dataset_name):
     print("\nTesting preprocess_func_autocot with first example...")  
     try:  
         first_example = train_ds[0]  
-        print(f"First example before processing: {first_example}")  
-        # processed_example = preprocess_func_autocot(config, {'examples': [first_example]})  
         processed_example = preprocess_func_autocot(config, first_example)  
         
         print(f"First example after processing: {processed_example}")  
@@ -637,16 +635,18 @@ def preprocess_dataset_autocot(dataset_name):
         load_from_cache_file=False,
         desc=f"Running tokenizer on dataset {dataset_name}, when doing Auto-CoT",
     )
-
+    
+    # if isinstance(processed_dataset, dict):  
+    #     processed_dataset = Dataset.from_dict(processed_dataset)  
+        
     print(f"\nProcessed dataset type: {type(processed_dataset)}")
     print(f"Processed dataset name: {dataset_name}")  
     print(f"Processed dataset size: {len(processed_dataset)}")  
     if hasattr(processed_dataset, 'column_names'):  
         print(f"Processed dataset columns: {processed_dataset.column_names}")  
         
-    print("Processed dataset example[0]:\n\n", processed_dataset[0])
 
-    return processed_dataset
+    return processed_dataset, first_four_columns
 
 
 

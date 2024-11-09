@@ -31,6 +31,12 @@ import random
 import time
 import datetime
 
+from dataclasses import dataclass
+
+import sys  
+import logging  
+from datetime import datetime 
+
 from typing import List, Tuple, Dict
 
 client = OpenAI(
@@ -38,6 +44,8 @@ client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     base_url='https://api.feidaapi.com/v1'
 )
+
+
 
 
 
@@ -330,3 +338,105 @@ if __name__ == "__main__":
     # ds = get_reformated_dataset(args)
     
     dataloader = setup_data_loader(args)
+    
+    
+    
+    
+    
+    
+
+ 
+class LoggerWriter:  
+    """
+    A class that:
+        reorients the output of the 'print' to a logger
+    """  
+    def __init__(self, logger, level):  
+        self.logger = logger  
+        self.level = level  
+
+    def write(self, message):  
+        # check whether message is not None or empty, and message should not only contain a space
+        if message and not message.isspace():  
+            self.logger.log(self.level, message)  
+
+    def flush(self):  
+        pass  
+    
+
+def setup_logger(dataset_name: str, args) -> logging.Logger:  
+    """  
+    set up a logger that can only by used by zero-shot-cot  
+    Args:  
+        dataset_name: 数据集名称  
+        args: args produced by parsearg
+    Returns:  
+        配置好的logger  
+    """  
+    # 创建log目录（如果不存在）  
+    if not os.path.exists(args.log_dir):  
+        os.makedirs(args.log_dir)  
+
+    # 设置日志文件路径  
+    log_file = os.path.join(args.log_dir, f"{dataset_name}_zero_shot_cot.log")  
+    
+    # 配置logger  
+    logger = logging.getLogger('cot_logger')  
+    logger.setLevel(logging.INFO)  
+    
+    # 清除之前的handlers（如果有）  
+    if logger.handlers:  
+        logger.handlers.clear()  
+    
+    # 添加文件handler  
+    file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')  
+    file_handler.setLevel(logging.INFO)  
+    
+    # 设置日志格式      
+    # %(message)s 表示只记录日志消息本身，不包含其他额外的信息，如时间戳、日志级别等。
+    formatter = logging.Formatter('%(message)s')  
+    file_handler.setFormatter(formatter)  
+    logger.addHandler(file_handler)  
+    
+    return logger  
+
+
+
+
+
+
+def extract_answer(text: str) -> str:
+    """
+    从生成的文本中提取多项选择题的答案（大写字母）
+    
+    Args:
+        text: 生成的文本，包含类似 "The answer is A" 的片段
+        
+    Returns:
+        str: 提取出的大写字母答案。如果没有找到有效答案，返回空字符串
+        
+    Examples:
+        >>> extract_answer("Let's think about this... The answer is A")
+        'A'
+        >>> extract_answer("After careful consideration, The answer is C.")
+        'C'
+        >>> extract_answer("The answer is B because...")
+        'B'
+        >>> extract_answer("No clear answer")
+        ''
+    """
+    # 使用正则表达式匹配 "The answer is X" 模式，其中X是一个大写字母
+    pattern = r"The answer is ([A-D])[.\s]" # [.\s] 匹配一个句号或空格
+    match = re.search(pattern, text)
+    
+    if match:
+        return match.group(1)  # 如果找到了匹配，就会返回匹配的第一个捕获组, 返回匹配到的大写字母
+    
+    # 如果上面的模式没有匹配到，尝试匹配文本中最后出现的单个大写字母答案、
+    # (?: xxxx) 非捕获组，只匹配，不捕获，一般用来做 (?:ab)+ 这样的叠加或叠乘操作
+    pattern_backup = r"([A-D])(?:\.|$|\s)"
+    matches = list(re.finditer(pattern_backup, text))
+    if matches:
+        return matches[-1].group(1)  # 返回最后一个匹配到的大写字母
+        
+    return ""  # 如果没有找到任何有效答案，返回空字符串

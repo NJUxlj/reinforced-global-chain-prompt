@@ -32,7 +32,8 @@ from utils import (
     prepare_model_tokenizer, 
     get_vocab_embeddings_from_model,
     get_model_name_using_model,
-    get_logger
+    get_logger,
+    get_max_length_from_model
 )
 
 from datasets import (
@@ -630,7 +631,7 @@ def get_classes_by_clustering(
     # 生成唯一的缓存文件名（基于模型名称和数据集路径）  
     model_name = get_model_name_using_model(model)
     dataset_name = os.path.basename(dataset_path) 
-    cache_filename = f"embeddings_{model_name}_{hash(dataset_name)}.npz"  
+    cache_filename = f"embeddings_{model_name}_{dataset_name}.pt"  
     cache_path = os.path.join(cache_dir, cache_filename) 
   
     # 保存数据集信息，用于验证缓存是否匹配  
@@ -644,16 +645,22 @@ def get_classes_by_clustering(
 
     # 如果启用缓存且缓存文件存在，尝试加载缓存的embeddings  
     if use_trained_embeddings and os.path.exists(cache_path) and os.path.exists(metadata_path):  
-        # 首先验证metadata是否匹配  
-        with open(metadata_path, 'r') as f:  
-            cached_metadata = json.load(f)  
-            
-        if all(cached_metadata[k] == metadata[k] for k in metadata.keys()):  
-            print(f"Loading cached embeddings from {cache_path}")  
-            # 使用torch.load加载缓存的embeddings  
-            embeddings = torch.load(cache_path)  
-            print(f"Loaded embeddings shape: {embeddings.shape}")
-            # return process_embeddings(embeddings, num_topics, K)  # 假设有这个后处理函数[聚类逻辑]
+        try:
+            # 首先验证metadata是否匹配  
+            with open(metadata_path, 'r') as f:  
+                cached_metadata = json.load(f)  
+                
+            if all(cached_metadata[k] == metadata[k] for k in metadata.keys()):  
+                print(f"Loading cached embeddings from {cache_path}")  
+                # 使用torch.load加载缓存的embeddings  
+                embeddings = torch.load(cache_path)  
+                print(f"Loaded embeddings shape: {embeddings.shape}")
+                # return process_embeddings(embeddings, num_topics, K)  # 假设有这个后处理函数[聚类逻辑]
+                
+            else:  
+                print("Cache metadata mismatch, recomputing embeddings for clustering...") 
+        except (json.JSONDecodeError, FileNotFoundError, RuntimeError) as e:
+            print(f"Error, when loading cache: {e}. Recomputing embeddings...")
     
     else:
         classes = []
@@ -721,7 +728,7 @@ def get_classes_by_clustering(
         
         
         # 保存embeddings到缓存  
-        print(f"Saving embeddings to {cache_path}")  
+        print(f"Saving new embeddings to {cache_path}")  
         torch.save(embeddings, cache_path)  
         
         # 保存metadata  
@@ -907,7 +914,11 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
     batch_size = Config['batch_size']
     lr = 3e-2
     num_epochs = Config['num_epochs']
-    max_length = 512 - num_prefix_tokens - num_suffix_tokens
+    
+    max_length = get_max_length_from_model(model)
+    print(f"before inserting prompt tokens, {model_name}'s max length = {max_length}")
+    max_length = max_length - num_prefix_tokens - num_suffix_tokens
+    print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
 
 
     # 1. initialize the trainable prefix prompt embeddings
@@ -1039,7 +1050,13 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
     logging_dir = Config['logging_dir'][model_name]["bidirectional-prompt-tuning"][dataset_name]
-    # logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
+    logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
+    
+    if not os.path.exists(logging_dir):
+        os.makedirs(logging_dir)  
+        print(f"已创建新的log存储路径: {logging_dir}") 
+        
+        
     global_step = 0
     
     for epoch in range(num_epochs):
@@ -1108,8 +1125,8 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
                 precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
                 print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
                 if accelerator.is_main_process:
-                    # logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
-                    print()
+                    logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
+                    # print()
 
                 model.train()  
             global_step+=1
@@ -1136,9 +1153,9 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
     #     model.module.save_pretrained(save_path) 
     if not os.path.exists(save_path):
         os.makedirs(save_path)  
-        print(f"已创建新路径: {save_path}") 
+        print(f"已创建新的权重存储路径: {save_path}") 
         
-    accelerator.save(model.state_dict(), save_path)   
+    # accelerator.save(model.state_dict(), save_path)   
 
         # tokenizer.save_pretrained('path_to_save_tokenizer')   
 

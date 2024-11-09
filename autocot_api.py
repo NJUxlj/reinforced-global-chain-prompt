@@ -1,11 +1,31 @@
 
 import argparse
 
-
+from dataclasses import dataclass
 from load import *
 from autocot_utils import *
 
 from config import NUM_CPU_PROCESSES
+
+
+
+@dataclass  
+class Arguments:  
+    """参数配置类"""  
+    model: str = "gpt-4o"  # 或其他支持CoT的模型  
+    method:str = "zero-shot-cot"
+    max_length: int = 256  
+    max_length_direct: int = 32  
+    temperature: float = 0  
+    direct_answer_trigger_for_zeroshot_cot: str = "The answer is"  
+    num_samples: int = 1  
+    log_dir: str = "./cot_log"  # 日志文件夹路径 
+    api_time_interval:float = 1.0
+    dataset_path: str = "./data/race"
+    dataset: str = "race"
+
+
+
 
 def cot(method, question):
     args = parse_arguments()
@@ -104,7 +124,7 @@ def parse_arguments():
 
 
 
-def zero_shot_cot(question, answer):
+def zero_shot_cot(question, answer, args):
     decoder = Decoder()
     cot_trigger = "Let's think step by step."
     
@@ -123,27 +143,86 @@ def zero_shot_cot(question, answer):
     print(x.replace("\n\n", "\n").strip())
     print('*****************************')
 
-    max_length = 256
-    z = decoder.decode(args, x, max_length)
+    # generate the reasoning chain including the final answer
+    z = decoder.decode(args, x, args.max_length)
     z = z.replace("\n\n", "\n").replace("\n", "").strip()
 
-
+    # let the model extract the final answer from the reasoning chain
     z2 = x + z + " " + args.direct_answer_trigger_for_zeroshot_cot
-    max_length = args.max_length_direct
-    pred = decoder.decode(args, z2, max_length)
+    
+    pred = decoder.decode(args, z2, args.max_length_direct)
     print("Output:")
     print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)
     print('*****************************')
 
+    
+    # 提取预测结果  
+    pred_before = extract_answer(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)  
+    pred_after = pred_before.rstrip('.')  
+    pred_list = [pred_after]  
+    pred_mode = pred_after  
+
+    print("Output:")  
+    print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)  
+    print(f"pred_before : {pred_before}")   # A.
+    print(f"pred_after : {pred_after}")    # A
+    print(f"pred_list : {pred_list}")  
+    print(f"pred_mode : {pred_mode}")  
+    print(f"GT : {answer}")  
+    print('*' * 25) 
         
         
-        
-        
+    
         
 
-def cot_log_generator(dataset_name):
-    train_ds = preprocess_dataset_autocot(dataset_name)
-    print(train_ds[0])
+def cot_log_generator(dataset_name:str):
+    # args = parse_arguments()
+    args = Arguments()
+    
+    logger = setup_logger(dataset_name, args)
+    
+    # 保存原始的stdout  
+    original_stdout = sys.stdout  
+    
+    
+    
+    try:
+        std_out = LoggerWriter(logger, logging.INFO)
+        
+        train_ds, first_four_columns = preprocess_dataset_autocot(dataset_name)
+        question_key = first_four_columns[1]
+        answer_key = first_four_columns[3]
+        questions = train_ds[question_key]
+        answers = train_ds[answer_key]
+        
+        train_ds = [  
+                {question_key: q, answer_key: a}   
+                for q, a in zip(questions, answers)  
+        ]  
+        
+        # generate logs
+        for i, example in enumerate(train_ds[:5]):
+            print(f"{i}st data")  
+            print("1_th_sampling")  
+            
+            # print("example = \n", example)
+            
+            # only pick the question and the answer field in the dataset
+            # zero_shot_cot(example[first_four_columns[1]], example[first_four_columns[3]], args)  
+            
+            zero_shot_cot(example[question_key], example[answer_key], args)  
+            
+            print('*' * 25)   
+        
+    finally:
+        std_out = sys.stdout
+    
 
 if __name__ == "__main__":
     cot_log_generator('race')
+    # train_ds, first_four_columns = preprocess_dataset_autocot('race')
+    # print(first_four_columns)
+    
+    # for i, example in enumerate(train_ds[:5]):
+    #     print(f"=============={i+1}===============")
+    #     print(example)

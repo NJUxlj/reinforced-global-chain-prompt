@@ -65,13 +65,44 @@ def get_model_name_using_model(model):
         elif config.hidden_size == 5120:  
             return "meta-llama/Llama-2-70b-hf"  
     elif config.model_type == "qwen2":  
-        if config.hidden_size == 4096:  
-            return "qwen-14b-chat"  
-        elif config.hidden_size == 5120:  
-            return "qwen-16b-chat"  
+        if config.hidden_size == 896:  
+            return "Qwen2.5-0.5B"  
+        elif config.hidden_size == 1536:  
+            return "Qwen2.5-1.5B"  
+        elif config.hidden_size == 2048:
+            return "Qwen2.5-3B"
+        elif config.hidden_size == 3584:
+            return "Qwen2.5-7B"
     else:  
         # 无法匹配已知模型，返回未知模型提示  
-        return "unknown model, please check your config, it should be [bert | llama | qwen2]"  
+        raise ValueError("unknown model, please check your config, it should be [bert | llama | qwen2]") 
+
+
+def get_max_length_from_model(model):  
+    """  
+    获取模型的最大序列长度  
+    
+    """  
+    # 处理被Accelerator(DDP)包装的模型  
+    if hasattr(model, "module"):  
+        print("This model is wrapped by Accelerator(DDP), we use model.module")  
+        model = model.module  
+        
+    if hasattr(model, "config"):
+        config = model.config  
+    else:
+        raise ValueError('your model object is not properly defined ... since we can not find a `config` attribute')
+    
+    # 首先尝试从config中直接获取max_position_embeddings  
+    if hasattr(config, 'max_position_embeddings'):  
+        return config.max_position_embeddings  
+    
+    # 如果没有max_position_embeddings，尝试获取max_sequence_length  
+    elif hasattr(config, 'max_sequence_length'):  
+        return config.max_sequence_length  
+    
+    else:
+        raise ValueError("Error model object, please check your config, it should have either [max_position_embeddings | max_sequence_length]") 
 
 
 def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
