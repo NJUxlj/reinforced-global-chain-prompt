@@ -107,7 +107,7 @@ def decoder_for_gpt4(args, input, max_length):
         )
 
     # return response["choices"][0]["text"]
-    return response.choices[0].message['content']
+    return response.choices[0].message.content
 
 
 
@@ -323,27 +323,7 @@ def create_demo_text(args, cot_flag)->str:
     
     
     
-    
-    
-if __name__ == "__main__":
-    args = {
-        "dataset": "race",
-        "random_seed": 42,
-        "max_num_worker": 5,
-        "minibatch_size": 1,
-    }
-    from collections import namedtuple  
-    MyDict = namedtuple('MyDict', args.keys())  
-    args = MyDict(**args)  
-    # ds = get_reformated_dataset(args)
-    
-    dataloader = setup_data_loader(args)
-    
-    
-    
-    
-    
-    
+
 
  
 class LoggerWriter:  
@@ -388,6 +368,10 @@ def setup_logger(dataset_name: str, args) -> logging.Logger:
     if logger.handlers:  
         logger.handlers.clear()  
     
+    # 创建控制台处理器  
+    console_handler = logging.StreamHandler()  
+    console_handler.setLevel(logging.INFO)  
+    
     # 添加文件handler  
     file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')  
     file_handler.setLevel(logging.INFO)  
@@ -396,7 +380,10 @@ def setup_logger(dataset_name: str, args) -> logging.Logger:
     # %(message)s 表示只记录日志消息本身，不包含其他额外的信息，如时间戳、日志级别等。
     formatter = logging.Formatter('%(message)s')  
     file_handler.setFormatter(formatter)  
+    console_handler.setFormatter(formatter)  
+    
     logger.addHandler(file_handler)  
+    logger.addHandler(console_handler) 
     
     return logger  
 
@@ -440,3 +427,23 @@ def extract_answer(text: str) -> str:
         return matches[-1].group(1)  # 返回最后一个匹配到的大写字母
         
     return ""  # 如果没有找到任何有效答案，返回空字符串
+
+
+
+
+
+
+
+if __name__ == "__main__":
+    args = {
+        "dataset": "race",
+        "random_seed": 42,
+        "max_num_worker": 5,
+        "minibatch_size": 1,
+    }
+    from collections import namedtuple  
+    MyDict = namedtuple('MyDict', args.keys())  
+    args = MyDict(**args)  
+    # ds = get_reformated_dataset(args)
+    
+    dataloader = setup_data_loader(args)

@@ -1,0 +1,89 @@
+preprocess race ~~~~~
+
+Testing preprocess_func_autocot with first example...
+First example after processing: {'answer': 'C', 'question': ['article:\n            L\n            question:\n            W\n            options:\n            A. doctor\n        ', 'article:\n            a\n            question:\n            e\n            options:\n            B. model\n        ', 'article:\n            s\n            question:\n             \n            options:\n            C. teacher\n        ', 'article:\n            t\n            question:\n            c\n            options:\n            D. reporter\n        ']}
+
+First example testing succeed, now, Starting dataset mapping...
+
+Processed dataset type: <class 'datasets.arrow_dataset.Dataset'>
+Processed dataset name: race
+Processed dataset size: 87866
+Processed dataset columns: ['answer', 'question']
+0st data
+1_th_sampling
+Q: article:
+            Last week I talked with some of my students about what they wanted to do after they graduated, and what kind of job prospects  they thought they had.
+Given that I teach students who are training to be doctors, I was surprised do find that most thought that they would not be able to get the jobs they wanted without "outside help". "What kind of help is that?" I asked, expecting them to tell me that they would need a   or family friend to help them out.
+"Surgery ," one replied.
+I was pretty alarmed by that response. It seems that the graduates of today are increasingly willing to go under the knife to get ahead of others when it comes to getting a job .
+One girl told me that she was considering surgery to increase her height. "They break your legs, put in special extending screws, and slowly expand the gap between the two ends of the bone as it re-grows, you can get at least 5 cm taller!"
+At that point, I was shocked. I am short, I can't deny that, but I don't think I would put myself through months of agony just to be a few centimetres taller. I don't even bother to wear shoes with thick soles, as I'm not trying to hide the fact that I am just not tall!
+It seems to me that there is a trend towards wanting "perfection" , and that is an ideal that just does not exist in reality.
+No one is born perfect, yet magazines, TV shows and movies present images of thin, tall, beautiful people as being the norm. Advertisements for slimming aids, beauty treatments and cosmetic surgery clinics fill the pages of newspapers, further creating an idea that "perfection" is a requirement, and that it must be purchased, no matter what the cost. In my opinion, skills, rather than appearance, should determine how successful a person is in his/her chosen career.
+            question:
+            We can know from the passage that the author works as a_.
+            options:
+            ['A. doctor', 'B. model', 'C. teacher', 'D. reporter']
+        
+A: Let's think step by step.
+Reasoning Chain Output:
+To determine the occupation of the author, we should examine the details given in the passage:1. The author mentions speaking with students about their future job prospects.2. The author specifically states, "I teach students who are training to be doctors."3. Teaching is directly mentioned, indicating their role is that of an educator.From these key points, we can deduce that the author works as a teacher. The statement clearly indicates they are in an educational role and are responsible for teaching students, particularly in the field of medicine.Therefore, the answer is:C. teacher The answer is C. teacher
+pred_before : C
+pred_after : C
+pred_list : ['C']
+pred_mode : C
+GT : C
+*************************
+*************************
+1st data
+1_th_sampling
+Q: article:
+            Last week I talked with some of my students about what they wanted to do after they graduated, and what kind of job prospects  they thought they had.
+Given that I teach students who are training to be doctors, I was surprised do find that most thought that they would not be able to get the jobs they wanted without "outside help". "What kind of help is that?" I asked, expecting them to tell me that they would need a   or family friend to help them out.
+"Surgery ," one replied.
+I was pretty alarmed by that response. It seems that the graduates of today are increasingly willing to go under the knife to get ahead of others when it comes to getting a job .
+One girl told me that she was considering surgery to increase her height. "They break your legs, put in special extending screws, and slowly expand the gap between the two ends of the bone as it re-grows, you can get at least 5 cm taller!"
+At that point, I was shocked. I am short, I can't deny that, but I don't think I would put myself through months of agony just to be a few centimetres taller. I don't even bother to wear shoes with thick soles, as I'm not trying to hide the fact that I am just not tall!
+It seems to me that there is a trend towards wanting "perfection" , and that is an ideal that just does not exist in reality.
+No one is born perfect, yet magazines, TV shows and movies present images of thin, tall, beautiful people as being the norm. Advertisements for slimming aids, beauty treatments and cosmetic surgery clinics fill the pages of newspapers, further creating an idea that "perfection" is a requirement, and that it must be purchased, no matter what the cost. In my opinion, skills, rather than appearance, should determine how successful a person is in his/her chosen career.
+            question:
+            Many graduates today turn to cosmetic surgery to_.
+            options:
+            ['A. marry a better man/woman', 'B. become a model', 'C. get an advantage over others in job-hunting', 'D. attract more admirers']
+        
+A: Let's think step by step.
+Reasoning Chain Output:
+To determine the correct option for why many graduates today turn to cosmetic surgery, we need to analyze the information given in the article. The article highlights the pressure that graduates, specifically those training to be doctors, feel about their job prospects post-graduation. The emphasis is on how they believe they need "outside help" to succeed in job-hunting, and surprisingly, this "help" is in the form of surgery.One student mentions considering surgery to increase her height, which indicates a focus on physical appearance to achieve certain advantages. The author of the article interprets this trend as an effort by graduates to attain "perfection" to get an edge in their careers. The text argues against the values propagated by media that foster the idea that looking a certain way is necessary for success.Now, let's consider each of the given options:- Option A: marry a better man/woman – The article does not mention any aspirations regarding marriage or marrying "better." It focuses on job prospects and career success.- Option B: become a model – While this option might relate to physical appearance, the article is specifically discussing career prospects related to being doctors, not models. - Option C: get an advantage over others in job-hunting – This option aligns directly with the article The answer is Option C: get an advantage over others in job-hunting.
+pred_before : 
+pred_after : 
+pred_list : ['']
+pred_mode : 
+GT : C
+*************************
+*************************
+2st data
+1_th_sampling
+Q: article:
+            Last week I talked with some of my students about what they wanted to do after they graduated, and what kind of job prospects  they thought they had.
+Given that I teach students who are training to be doctors, I was surprised do find that most thought that they would not be able to get the jobs they wanted without "outside help". "What kind of help is that?" I asked, expecting them to tell me that they would need a   or family friend to help them out.
+"Surgery ," one replied.
+I was pretty alarmed by that response. It seems that the graduates of today are increasingly willing to go under the knife to get ahead of others when it comes to getting a job .
+One girl told me that she was considering surgery to increase her height. "They break your legs, put in special extending screws, and slowly expand the gap between the two ends of the bone as it re-grows, you can get at least 5 cm taller!"
+At that point, I was shocked. I am short, I can't deny that, but I don't think I would put myself through months of agony just to be a few centimetres taller. I don't even bother to wear shoes with thick soles, as I'm not trying to hide the fact that I am just not tall!
+It seems to me that there is a trend towards wanting "perfection" , and that is an ideal that just does not exist in reality.
+No one is born perfect, yet magazines, TV shows and movies present images of thin, tall, beautiful people as being the norm. Advertisements for slimming aids, beauty treatments and cosmetic surgery clinics fill the pages of newspapers, further creating an idea that "perfection" is a requirement, and that it must be purchased, no matter what the cost. In my opinion, skills, rather than appearance, should determine how successful a person is in his/her chosen career.
+            question:
+            According to the passage, the author believes that_.
+            options:
+            ['A. everyone should purchase perfection, whatever the cost', "B. it's right for graduates to ask for others to help them out in hunting for jobs", "C. it is one's appearance instead of skills that really matters in one's career", 'D. media are to blame for misleading young people in their seeking for surgery']
+        
+A: Let's think step by step.
+Reasoning Chain Output:
+To determine the author's belief, we can examine the content and tone of the passage.1. The passage discusses the trend among students, particularly those training to be doctors, who feel pressured to undergo cosmetic surgery to improve their job prospects.2. The author expresses alarm and shock at the students' willingness to undergo painful and extreme surgical procedures. The author specifically mentions being shocked by the idea of breaking legs to increase height and questions the cultural trend towards seeking "perfection."3. The passage critiques the influence of media, magazines, TV shows, movies, and advertisements that promote unrealistic ideals of beauty and perfection. The author suggests these sources are creating a false notion that perfection is necessary and can be achieved through purchasing products or surgery.4. Importantly, the author concludes with the opinion that skills, rather than appearance, should determine success in a career.Given these points, let's evaluate the options:- Option A ("everyone should purchase perfection, whatever the cost"): This contradicts the author's view, as they do not support the idea of buying into perfection.- Option B ("it's right for graduates to ask for others to help them out in hunting for jobs"): This point is not the core issue discussed, nor does the author express strong opinions about seeking help to find jobs. The answer is not found here.- Option C ("it is one's appearance instead of skills that really matters in one's career"): The author argues the opposite, emphasizing skills over appearance for
+pred_before : C
+pred_after : C
+pred_list : ['C']
+pred_mode : C
+GT : D
+*************************
+*************************

@@ -129,19 +129,23 @@ def zero_shot_cot(question, answer, args):
     cot_trigger = "Let's think step by step."
     
     x = "Q: " + question + "\n" + "A:"
-    print('*****************************')
-    print("Test Question:")
-    print(question)
-    print('*****************************')
+    # print('*****************************')
+    # print("Test Question:")
+    # print(question)
+    # print('*****************************')
 
 
     x:str = x + " " + cot_trigger
 
 
-    print("Prompted Input:")
+    # print("Prompted Input:")
     # we define the separatpor of reasoning steps is "\n"
     print(x.replace("\n\n", "\n").strip())
-    print('*****************************')
+    
+    '''
+    Q: xxxxx
+    A: Let's think step by step
+    '''
 
     # generate the reasoning chain including the final answer
     z = decoder.decode(args, x, args.max_length)
@@ -151,9 +155,9 @@ def zero_shot_cot(question, answer, args):
     z2 = x + z + " " + args.direct_answer_trigger_for_zeroshot_cot
     
     pred = decoder.decode(args, z2, args.max_length_direct)
-    print("Output:")
+    print("Reasoning Chain Output:")
     print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)
-    print('*****************************')
+    # print('*****************************')
 
     
     # 提取预测结果  
@@ -162,13 +166,14 @@ def zero_shot_cot(question, answer, args):
     pred_list = [pred_after]  
     pred_mode = pred_after  
 
-    print("Output:")  
-    print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)  
+    # print("Output:")  
+    # print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)  
     print(f"pred_before : {pred_before}")   # A.
     print(f"pred_after : {pred_after}")    # A
     print(f"pred_list : {pred_list}")  
     print(f"pred_mode : {pred_mode}")  
     print(f"GT : {answer}")  
+    print('*' * 25) 
     print('*' * 25) 
         
         
@@ -187,7 +192,7 @@ def cot_log_generator(dataset_name:str):
     
     
     try:
-        std_out = LoggerWriter(logger, logging.INFO)
+        sys.stdout = LoggerWriter(logger, logging.INFO)
         
         train_ds, first_four_columns = preprocess_dataset_autocot(dataset_name)
         question_key = first_four_columns[1]
@@ -201,7 +206,7 @@ def cot_log_generator(dataset_name:str):
         ]  
         
         # generate logs
-        for i, example in enumerate(train_ds[:5]):
+        for i, example in enumerate(train_ds[:3]):
             print(f"{i}st data")  
             print("1_th_sampling")  
             
@@ -212,10 +217,10 @@ def cot_log_generator(dataset_name:str):
             
             zero_shot_cot(example[question_key], example[answer_key], args)  
             
-            print('*' * 25)   
+            # print('*' * 25)   
         
     finally:
-        std_out = sys.stdout
+        sys.stdout = original_stdout
     
 
 if __name__ == "__main__":
