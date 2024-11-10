@@ -46,6 +46,20 @@ client = OpenAI(
 )
 
 
+@dataclass  
+class Arguments:  
+    """参数配置类"""  
+    model: str = "gpt-4o"  # 或其他支持CoT的模型  
+    method:str = "zero-shot-cot"
+    max_length: int = 256  
+    max_length_direct: int = 32  
+    temperature: float = 0  
+    direct_answer_trigger_for_zeroshot_cot: str = "The answer is"  
+    num_samples: int = 1  
+    log_dir: str = "./cot_log"  # 日志文件夹路径 
+    api_time_interval:float = 1.0
+    dataset_path: str = "./data/race"
+    dataset: str = "race"
 
 
 

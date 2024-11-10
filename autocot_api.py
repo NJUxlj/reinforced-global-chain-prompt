@@ -9,20 +9,6 @@ from config import NUM_CPU_PROCESSES
 
 
 
-@dataclass  
-class Arguments:  
-    """参数配置类"""  
-    model: str = "gpt-4o"  # 或其他支持CoT的模型  
-    method:str = "zero-shot-cot"
-    max_length: int = 256  
-    max_length_direct: int = 32  
-    temperature: float = 0  
-    direct_answer_trigger_for_zeroshot_cot: str = "The answer is"  
-    num_samples: int = 1  
-    log_dir: str = "./cot_log"  # 日志文件夹路径 
-    api_time_interval:float = 1.0
-    dataset_path: str = "./data/race"
-    dataset: str = "race"
 
 
 
@@ -189,24 +175,23 @@ def cot_log_generator(dataset_name:str):
     # 保存原始的stdout  
     original_stdout = sys.stdout  
     
-    
+    train_ds, first_four_columns = preprocess_dataset_autocot(dataset_name)
+
+    question_key = first_four_columns[1]
+    answer_key = first_four_columns[3]
+    questions = train_ds[question_key]
+    answers = train_ds[answer_key]
+        
+    train_ds = [  
+            {question_key: q, answer_key: a}   
+            for q, a in zip(questions, answers)  
+    ]  
     
     try:
         sys.stdout = LoggerWriter(logger, logging.INFO)
-        
-        train_ds, first_four_columns = preprocess_dataset_autocot(dataset_name)
-        question_key = first_four_columns[1]
-        answer_key = first_four_columns[3]
-        questions = train_ds[question_key]
-        answers = train_ds[answer_key]
-        
-        train_ds = [  
-                {question_key: q, answer_key: a}   
-                for q, a in zip(questions, answers)  
-        ]  
-        
+
         # generate logs
-        for i, example in enumerate(train_ds[:3]):
+        for i, example in enumerate(train_ds[:1000]):
             print(f"{i}st data")  
             print("1_th_sampling")  
             
