@@ -17,10 +17,10 @@ from typing import List, Tuple, Dict
 
 '''
 
-python run_demo.py \
---task multiarith \
---pred_file log/multiarith_zero_shot_cot.log \
---demo_save_dir demos/multiarith
+python run_autocot_demo.py \
+--task race \
+--pred_file cot_log/race_zero_shot_cot.log \
+--demo_save_dir demos/race
 
 
 '''

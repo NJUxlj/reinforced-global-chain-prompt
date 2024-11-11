@@ -114,6 +114,7 @@ def zero_shot_cot(question, answer, args):
     decoder = Decoder()
     cot_trigger = "Let's think step by step."
     
+    question = question.replace("\n\n", "\n").replace("\n", " ").strip()
     x = "Q: " + question + "\n" + "A:"
     # print('*****************************')
     # print("Test Question:")
@@ -122,26 +123,27 @@ def zero_shot_cot(question, answer, args):
 
 
     x:str = x + " " + cot_trigger
-
-
-    # print("Prompted Input:")
-    # we define the separatpor of reasoning steps is "\n"
-    print(x.replace("\n\n", "\n").strip())
-    
     '''
     Q: xxxxx
     A: Let's think step by step
     '''
 
+    # print("Prompted Input:")
+    # we define the separatpor of reasoning steps is "\n"
+    print(x, end = "")
+    
+   
+
     # generate the reasoning chain including the final answer
     z = decoder.decode(args, x, args.max_length)
-    z = z.replace("\n\n", "\n").replace("\n", "").strip()
+    # later, we need to use the '\n' to separate the reasoning steps
+    z = z.replace("\n\n", "\n").replace("\n", r"\n").strip()
 
     # let the model extract the final answer from the reasoning chain
     z2 = x + z + " " + args.direct_answer_trigger_for_zeroshot_cot
     
     pred = decoder.decode(args, z2, args.max_length_direct)
-    print("Reasoning Chain Output:")
+    # print("Reasoning Chain Output:")
     print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)
     # print('*****************************')
 
