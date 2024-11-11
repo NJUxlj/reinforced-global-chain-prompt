@@ -30,16 +30,7 @@ class InputEncoder(nn.Module):
 
 
 
-class PromptEncoder(nn.Module):
-    
-    '''
-    function:
-        1.使用 SparseAttention来编码MCQ多项选择数据集的input
-        
-    
-    '''
-    def __init__(self, template, hidden_size, tokenizer, device, args): 
-        pass
+
 
 
 

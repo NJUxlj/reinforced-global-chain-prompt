@@ -19,15 +19,27 @@ from transformers.data.metrics import simple_accuracy
 
 from transformers import (
     AutoConfig,
+    BertConfig,
+    Qwen2Config,
+    RobertaConfig,
     AutoModelForSequenceClassification,
     AutoTokenizer,
+    BertTokenizer,
+    Qwen2Tokenizer,
+    RobertaTokenizer,
+    
+    BertForSequenceClassification,
+    Qwen2ForCausalLM,
+    Qwen2ForSequenceClassification,
+    RobertaForSequenceClassification,
     set_seed,
 )
 
-from models import (
+from .models import (
     InputEncoder,
-    PromptEncoder,
 )
+
+from config import *
 
 import logging
 
@@ -35,37 +47,59 @@ logger = logging.getLogger(__name__)
 
 
 
+# MLM_WRAPPER = "mlm"
+# CLM_WRAPPER = "clm"
 
-class WrapperConfig(object):
-    """A configuration for a :class:`TransformerModelWrapper`."""
+SEQ_CLS_WRAPPER = "seq-cls"
 
-    def __init__(self,
-                 model_type: str,
-                 model_name_or_path: str,
-                 task_name: str,
-                 max_seq_length: int,
-                 label_list: List[str],
-                 pattern_id: int = 0,  # indicate the length of the continuous prompt tokens
-                 cache_dir: str = None,
-                 output_dir=None,
-                 embed_size=128,
-                 prompt_encoder_type="lstm", # ["lstm", "sparse-attention"]
-                 eval_every_step=20):
+MODEL_CLASSES = {
+    'bert': {
+        'config': BertConfig,
+        'tokenizer': BertTokenizer,
+        SEQ_CLS_WRAPPER: BertForSequenceClassification
+    },
+    'qwen2': {
+        'config': Qwen2Config,
+        'tokenizer': Qwen2Tokenizer,
+        SEQ_CLS_WRAPPER: Qwen2ForSequenceClassification
+    },
+    'roberta': {
+        'config': RobertaConfig,
+        'tokenizer': RobertaTokenizer,
+        SEQ_CLS_WRAPPER: RobertaForSequenceClassification
+    }
+}
 
-        self.model_type = model_type
-        self.model_name_or_path = model_name_or_path
-        self.task_name = task_name
-        self.max_seq_length = max_seq_length
-        self.label_list = label_list
-        self.pattern_id = pattern_id
-        self.cache_dir = cache_dir
-        self.output_dir = output_dir
-        self.embed_size = embed_size
-        self.prompt_encoder_type = prompt_encoder_type
-        self.eval_every_step = eval_every_step
+
+
+
+
+class PromptEncoder(nn.Module):
+    
+    '''
+    function:
+        1.使用 SparseAttention来编码MCQ多项选择数据集的input
+        
+    
+    '''
+    def __init__(self, config:WrapperConfig, tokenizer): 
+        super(PromptEncoder, self).__init__()
+        self.config = config
+        self.tokenizer = tokenizer
+        self.embedding_size = config.embedding_size
+        self.prompt_length = self.config.pattern_id
+        
+        config_class = MODEL_CLASSES[self.config.model_type]['config']
+        model_config = config_class.from_pretrained(
+            config.model_name_or_path,
+            num_labels = len(config.label_list),
+            finetuning_task = config.task_name,
+            cache_dir = config.cache_dir if config.cache_dir else None,
+            use_cache = False
+        )
         
         
-
+        model_class = MODEL_CLASSES[self.config.model_type][SEQ_CLS_WRAPPER]
 
 
 
@@ -74,13 +108,24 @@ class ModelWrapper(nn.Module):
         self.config = config
         
         
+        
+        tokenizer_class = MODEL_CLASSES[self.config.model_type]['tokenizer']
+        
+        self.tokenizer = tokenizer_class.from_pretrained(
+            
+        )
+        
+        
+        self.model = PromptEncoder(config, self.tokenizer)
+        
     
     
     
     
-    def from_pretrained(self,):
-        pass
-    
+    def from_pretrained(self,)->'ModelWrapper':
+        """Load a pretrained wrapper from a given path."""
+
+        
     
     
     def save(self, path: str) -> None:
