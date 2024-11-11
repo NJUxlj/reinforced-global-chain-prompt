@@ -9,7 +9,7 @@ from torch.utils.data import (
     DataLoader
 )
 
-from load import (
+from ..load import (
     preprocess_function_race,
     load_dataset_from_huggingface,
     preprocess_race,

@@ -2,10 +2,10 @@
 import argparse
 
 from dataclasses import dataclass
-from load import *
+from ..load import *
 from autocot_utils import *
 
-from config import NUM_CPU_PROCESSES
+from ..config import NUM_CPU_PROCESSES
 
 
 
