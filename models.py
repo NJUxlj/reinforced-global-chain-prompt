@@ -578,8 +578,14 @@ class FixedRankSVDReasoningAllocator:
         
         # 计算查询和键值矩阵  
         # 使用P_k和Lambda_k的组合作为特征表示  
-        features = torch.mm(P_k, Lambda_k)  # [n, r] x [r, r] = [n, r]  
-        
+        try:
+            features = torch.mm(P_k, Lambda_k)  # [n, r] x [r, r] = [n, r]  
+        except:
+            try:
+                raise RuntimeError(f"Invalid matrix shape for attention's matrix multiplication, \
+                               \nwhere m1.shape = {P_k.shape}, m2.shape = {Lambda_k.shape}")
+            except:
+                raise TypeError(f"P_k.type = {type(P_k)}, Lambda_k.type = {type(Lambda_k)}, they do not has an attribute \'shape\'")
         # 计算注意力分数  
         attention_scores = torch.mm(features, features.t())  # [n, n]  
         attention_scores = attention_scores / math.sqrt(r)  # 缩放因子  
@@ -596,7 +602,7 @@ class FixedRankSVDReasoningAllocator:
     def compute_new_values(self, P_k, Lambda_k, Q_k, satisfaction_score):  
         """计算新增奇异值"""  
         # 使用Sparse Attention来生成新的奇异值  
-        attention_weights = self.compute_attention_weights(P_k, Lambda_k)  
+        attention_weights = self.compute_attention_weights(P_k, Lambda_k)  # shape = [r, r]
         
         # 新奇异值计算公式  
         new_values = torch.sqrt(  
@@ -673,30 +679,33 @@ class FixedRankSVDReasoningAllocator:
         delta_r: 需要新增的向量数量  
         
         返回:  
-        new_Q: 形状为[delta_r, h]的新Q向量矩阵  
+        new_Q: 形状为[h, delta_r]的新Q向量矩阵  
         """  
         # Q_k.T的形状是[r, h]  
-        # 计算注意力权重矩阵 
-        attention_weights = self.compute_attention_weights(Q_k, new_values)  # shape = [h, h]
+        # 计算注意力权重矩阵 [r, r]  
+        attention_weights = self.compute_attention_weights(Q_k.T, new_values)  
         
-        # 初始化新的Q向量矩阵 [delta_r, h]  
-        new_Q = torch.zeros(delta_r, Q_k.size(1))  
+        
+        
+        
+        # 初始化新的Q向量矩阵 [h, delta_r]  
+        new_Q = torch.zeros(Q_k.size(0), delta_r)  
         
         # 对每个需要生成的新向量  
         for i in range(delta_r):  
             # 使用注意力权重的加权和作为候选向量  
-            candidate = torch.mm(attention_weights, Q_k)  # [r, h]  
-            weighted_sum = torch.sum(candidate, dim=0)  # [h]  
-            candidate = weighted_sum.unsqueeze(0)  # [1, h]  
+            candidate = torch.mm(Q_k, attention_weights)  # [h, r]  
+            weighted_sum = torch.sum(candidate, dim=1)  # [h]  
+            candidate = weighted_sum.unsqueeze(1)  # [h, 1]  
             
             # 正交化处理  
-            orthogonalized = self.orthogonalize(candidate, Q_k)  
-            new_Q[i] = orthogonalized  
+            orthogonalized = self.orthogonalize(candidate.T, Q_k.T).T  
+            new_Q[:, i] = orthogonalized.squeeze()  
             
             # 更新Q_k以便下一次生成  
-            Q_k = torch.cat([Q_k, orthogonalized.unsqueeze(0)], dim=0)  
+            Q_k = torch.cat([Q_k, orthogonalized], dim=1)  
         
-        return new_Q 
+        return new_Q  
     
     
     def orthogonalize(self, attention_output, Q_k):  
