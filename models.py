@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from config import Config, BudgetSchedulerConfig   
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional, Any, Union
 import math
 
 '''
@@ -446,12 +446,21 @@ def compute_satisfaction_score_v3(k, i, P, Q, λ, l_q, L, d1, d2, alpha):
 
 
 
-class FixedRankSVDReasoningAllocator:  
-    def __init__(self, num_layers, hidden_size, min_steps, max_steps):  
+class FixedRankSVD:  
+    
+    '''
+    实现每一层的suffix embedding的分解， 
+    每一层的后缀矩阵分解为 P_k, Lambda_k, Q_k
+    然后分别扩展为 P_k, Lambda_k, Q_k （使用Sparse Attention)
+    
+    
+    '''
+    def __init__(self, num_layers, hidden_size, min_steps, max_steps, config:BudgetSchedulerConfig):  
         self.num_layers = num_layers  
         self.hidden_size = hidden_size  
         self.min_steps = min_steps  # min(n_step)  
         self.max_steps = max_steps  # 2 * input_seq_length  
+        self.config = config
         
     def initial_decompose(self, E_k):  
         """
@@ -744,6 +753,53 @@ class FixedRankSVDReasoningAllocator:
             v = self.orthogonalize(v, Q_k)  
         
         return v.squeeze()  # 返回一维向量
+    
+    def generate_orthogonal_column(self, P:torch.Tensor, lambda_k:torch.Tensor):  
+        """生成正交列向量  [使用sparse attention]
+        
+        Args:  
+            P: 当前P矩阵  shape = (n_step, n_step)
+            
+        Returns:  
+            torch.Tensor: 新的正交列向量  
+        """  
+        n_step = P.shape[0]  
+        
+        # Step 1: 计算键值对  
+        K = torch.mm(P, P.t())  # [n_step, n_step]
+        
+        # Step 2: 计算稀疏注意力分数  
+        S = torch.mm(K, K.t()) / math.sqrt(n_step)  # d_model = n_step
+        
+        # Step 3: Top-k 稀疏化  
+        k = min(self.config.k, n_step) 
+        # values 是一个形状为 [n_step, k] 的矩阵，存储每行的前 k 个最大值；
+        # indices 是一个形状为 [n_step, k] 的矩阵，存储这些最大值的索引。 
+        values, indices = torch.topk(S, k, dim=-1)  
+        S_sparse = torch.zeros_like(S)  
+        # 将 values 按照 indices 的位置填充到 S_sparse 中
+        S_sparse.scatter_(-1, indices, values)  
+        
+        # Step 4: 注意力权重  
+        A = torch.softmax(S_sparse, dim=-1)  # shape = [n_step, n_step]
+        
+        # Step 5: 生成列向量  
+        c = torch.mm(A, P)  # shape = [n_step, n_step]
+        
+        # Step 6: 与奇异值相乘，并加入缩放和噪声  
+        c = c[:, -1].unsqueeze(1)  # shape=[n_step, 1]  
+        lambda_k_last = lambda_k[-1, -1]
+        p_c = math.sqrt(lambda_k_last) * c + torch.randn_like(c) * self.config.epsilon  
+        
+        # Step 7: 正交化 (Gram-Schmidt)  
+        for i in range(n_step):  
+            p_i = P[:, i].unsqueeze(1)  # shape=[n_step, 1]   
+            p_c = p_c - torch.dot(p_c, p_i) / torch.dot(p_i, p_i) * p_i  
+            
+        # Step 8: 归一化  
+        p_c = p_c / torch.norm(p_c)  
+        
+        return p_c  
 
 
 
@@ -815,8 +871,11 @@ class AdaptiveBudgetScheduler:
         self.last_budget = None 
         
     def compute_entropy(self, satisfaction_scores):  
-        # 计算每层的熵  
+        # 计算每层的熵 
+        
+        # 归一化满意度 
         probs = F.softmax(satisfaction_scores / self.config.tau, dim=-1)  
+        # 计算层级熵
         entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)  
         return entropy  
         
@@ -864,6 +923,7 @@ class AdaptiveBudgetScheduler:
         final_budget = base_budget * (self.momentum /   
                                     (torch.sqrt(self.velocity) + 1e-8))  
         
+        self.final_budget = final_budget
         # 计算温度  
         temp = self.compute_temperature()  
         
@@ -951,13 +1011,21 @@ class AdaptiveBudgetScheduler:
 
 
 class AdaptiveSingularValueEstimator:  
-    def __init__(self, config):  
+    def __init__(self, config: BudgetSchedulerConfig):  
         self.momentum = {}  # 每个奇异值的动量  
         self.velocity = {}  # 每个奇异值的速度  
         self.t = 0  
         self.config = config  
         
     def compute_entropy(self, lambda_matrix):  
+        '''
+        计算奇异值矩阵Lambda的总熵 
+        
+        这个熵值用于所有奇异值的更新，反映了整个奇异值分布的不确定性
+        
+        lambda_matrix.shape = (n_step, n_step)
+        
+        '''
         # 计算每个奇异值的相对重要性熵  
         total = lambda_matrix.sum()  
         if total == 0:  
@@ -965,13 +1033,28 @@ class AdaptiveSingularValueEstimator:
         probs = lambda_matrix / total  
         entropy = -torch.sum(probs * torch.log(probs + 1e-10))  
         return entropy  
-        
+         
     def exploration_term(self):  
-        t = self.t / self.config.t_scale  
-        return (self.config.A * torch.sin(self.config.omega * t + self.config.phi)**2   
-                * torch.exp(-self.config.lambda_ * t))  
+        '''
+        计算探索项  
+        '''
+        
+        # 将所有变量转为张量，不然没法用torch.sin函数
+        t = torch.tensor(self.t, dtype=torch.float32) / self.config.t_scale  
+        omega = torch.tensor(self.config.omega, dtype=torch.float32)  
+        phi = torch.tensor(self.config.phi, dtype=torch.float32)  
+        A = torch.tensor(self.config.A, dtype=torch.float32)  
+        lambda_ = torch.tensor(self.config.lambda_, dtype=torch.float32)  
+        
+        
+        return (A * torch.sin(omega * t + phi)**2 * torch.exp(lambda_ * t))  
     
     def update_momentum(self, i, delta):  
+        '''
+        Args:
+        :param: i: 奇异值的索引
+        :param delta: delta_lambda_i^(t-1)
+        '''
         if i not in self.momentum:  
             self.momentum[i] = 0  
             self.velocity[i] = 0  
@@ -980,31 +1063,235 @@ class AdaptiveSingularValueEstimator:
                            (1 - self.config.beta) * delta)  
         self.velocity[i] = (self.config.alpha * self.velocity[i] +   
                            (1 - self.config.alpha) * self.momentum[i]**2)  
+    
+    def compute_delta_lambda(self, lambda_matrix, i, layer_idx):  
+        """
+        计算单个奇异值的增量
         
-    def __call__(self, lambda_matrix):  
+        :param: i 奇异值的序号
+        """  
         # 计算熵  
         entropy = self.compute_entropy(lambda_matrix)  
         
         # 计算探索项  
+        explore = self.exploration_term()
+        
+        # 计算自适应因子  
+        adaptive_factor = torch.sigmoid(entropy / self.config.H_max) + explore  
+        
+        # 计算差距项  
+        lambda_max = lambda_matrix.max()  
+        gap = lambda_max - lambda_matrix[i]  
+        
+        # 获取该层该索引的动量和速度  
+        # # 使用元组作为key可以区分不同层的相同索引位置  
+            # key1 = (0, 1)  # 第0层的第1个奇异值  
+            # key2 = (1, 1)  # 第1层的第1个奇异值  
+            
+        # self.momentum和self.velocity的结构如下：  
+            # self.momentum = {  
+            #     (0, 0): 值,  # 第0层第0个奇异值的动量  
+            #     (0, 1): 值,  # 第0层第1个奇异值的动量  
+            #     (0, 2): 值,  # 第0层第2个奇异值的动量  
+            #     (1, 0): 值,  # 第1层第0个奇异值的动量  
+            #     (1, 1): 值,  # 第1层第1个奇异值的动量  
+            #     # ... 以此类推  
+            # }  
+            
+        key = (layer_idx, i)  
+        if key not in self.momentum:  
+            self.momentum[key] = 0  
+            self.velocity[key] = 0  
+            
+        # 更新动量和速度  
+        self.momentum[key] = (self.config.beta * self.momentum[key] +   
+                            (1 - self.config.beta) * gap)  
+        self.velocity[key] = (self.config.alpha * self.velocity[key] +   
+                            (1 - self.config.alpha) * self.momentum[key]**2)  
+        
+        # 应用动量修正  
+        # 类似Adam优化器的修正机制
+        # 自适应调整更新步长
+        momentum_correction = (self.momentum[key] /   
+                             (torch.sqrt(self.velocity[key] + 1e-8)))  
+        
+        # 计算最终增量  
+        delta = self.config.alpha * adaptive_factor * momentum_correction * gap  
+        
+        # alpha：基础学习率
+        # adaptive_factor：自适应调整因子
+        # momentum_correction：动量修正
+        # gap：与最大奇异值的差距
+        
+        # 好处
+        # 重要的奇异值得到加强
+        # 更新过程平滑且自适应
+        # 考虑历史信息（通过动量）
+        # 具有探索能力
+        return delta  
+    
+    
+    
+    def compute_total_budget(self, lambda_matrices):  
+        """计算整个网络的总奇异值预算b^(t)"""  
+        # 计算所有层的总熵  
+        total_entropy = 0  
+        total_singular_values = 0  
+        
+        for lambda_matrix in lambda_matrices.values():  
+            total_entropy += self.compute_entropy(lambda_matrix)  
+            total_singular_values += len(lambda_matrix)  
+            
+        # 计算预算比例  
+        budget_ratio = torch.sigmoid(total_entropy / (total_singular_values * self.config.H_max))  
+        
+        # 添加探索项  
+        # explore = (self.config.A *   
+        #           torch.sin(self.config.omega * self.t + self.config.phi)**2 *   
+        #           torch.exp(-self.config.lambda_ * self.t))  
+        
+        explore = self.exploration_term()
+        
+        # 计算总预算  
+        total_budget = int(self.config.min_rank +   
+                          (self.config.max_rank - self.config.min_rank) *   
+                          (budget_ratio + explore).item())  
+        
+        return total_budget  
+    
+    def allocate_layer_budgets(self, lambda_matrices, total_budget):  
+        """将总预算分配到各层  
+        
+        Args:  
+            lambda_matrices: 各层的奇异值矩阵  
+            total_budget: 总预算  
+        Returns:  
+            Dict[int, int]: 每层分配的预算  
+        """  
+        layer_weights = {}  
+        total_weight = 0  
+        
+        # 计算每层的权重（基于熵和奇异值分布）, 我们根据权重的大小来分配预算  
+        for layer_idx, lambda_matrix in lambda_matrices.items():  
+            entropy = self.compute_entropy(lambda_matrix)  
+            max_singular_value = lambda_matrix.max()  
+            
+            # 权重 = 每层的熵 * 每层最大奇异值  
+            weight = entropy * max_singular_value  
+            layer_weights[layer_idx] = weight  
+            total_weight += weight  
+        
+        # 按权重分配预算  
+        layer_budgets = {}  
+        remaining_budget = total_budget  
+        
+        for layer_idx in lambda_matrices.keys():  
+            if layer_idx == len(lambda_matrices) - 1:  
+                # 最后一层获得剩余预算  
+                layer_budgets[layer_idx] = remaining_budget  
+            else:  
+                # 按权重比例分配  
+                budget = int((layer_weights[layer_idx] / total_weight) * total_budget)  
+                layer_budgets[layer_idx] = budget  
+                remaining_budget -= budget  
+        
+        return layer_budgets  
+    
+    
+    def update_layer_singular_values(self, lambda_matrix, layer_idx, layer_budget, fixed_rank_svd=None):  
+        """更新单层的奇异值  
+        
+        Args:  
+            lambda_matrix: 当前层的奇异值向量 shape=(n_l,)  
+            layer_idx: 层索引  
+            layer_budget: 该层分配到的预算  
+            fixed_rank_svd: FixedRankSVD对象，用于处理SVD分解相关的操作 
+        Returns:  
+            torch.Tensor: 更新后的奇异值向量  
+        """  
+        
+        
+        
+        # 1. 首先通过FixedRankSVD扩展P、Lambda、Q矩阵  
+        new_P = fixed_rank_svd.compute_new_P_vectors(layer_idx, layer_budget)
+        new_Q = fixed_rank_svd.compute_new_Q_vectors(layer_idx, layer_budget)
+        new_lambda = fixed_rank_svd.compute_new_Lambda_vectors(layer_idx, layer_budget)  
+        
+        # n_l = lambda_matrix.size(0)  # 该层的奇异值数量  
+        # new_lambda = lambda_matrix.clone()  
+        
+        # 获取最大的layer_budget个奇异值的索引 
+        
+        # 这里有问题， 这里 min(layer_budget, n_l) 确保了每层被分配的预算不会超过该层原有的奇异值数量
+        # 而我们之前的设计是拓展奇异值矩阵，所以这里新的的n_l直接等于layer_budget
+        # 
+        # _, top_indices = torch.topk(lambda_matrix, k=min(layer_budget, n_l))  
+        
+        # 使用扩展后的新维度更新奇异值   
+        for i in range(layer_budget):  
+            delta = self.compute_delta_lambda(new_lambda, i, layer_idx)  
+            new_lambda[i] = new_lambda[i] + delta  
+        
+        return new_lambda 
+    
+    def update_network_singular_values(self, lambda_matrices):  
+        """更新整个网络的奇异值  
+        
+        Args:  
+            lambda_matrices: Dict[int, torch.Tensor] 每层的奇异值矩阵  
+                key: 层索引  
+                value: 该层的奇异值向量 shape=(n_l,)，其中n_l是该层的奇异值数量  
+        Returns:  
+            Dict[int, torch.Tensor]: 更新后的各层奇异值矩阵  
+        """  
+        # 1. 计算总预算b^(t)  
+        total_budget = self.compute_total_budget(lambda_matrices)  
+        
+        # 2. 计算各层的重要性权重并分配预算  
+        layer_budgets = self.allocate_layer_budgets(lambda_matrices, total_budget)  
+        
+        # 3. 更新各层的奇异值  
+        new_lambda_matrices = {}  
+        for layer_idx, lambda_matrix in lambda_matrices.items():  
+            new_lambda = self.update_layer_singular_values(  
+                lambda_matrix,  
+                layer_idx,  
+                layer_budgets[layer_idx]  
+            )  
+            new_lambda_matrices[layer_idx] = new_lambda  
+            
+        self.t += 1  
+        return new_lambda_matrices  
+        
+    def __call__(self, lambda_matrix):  
+        # 计算熵 
+        # 计算奇异值矩阵的总熵 H_i^t
+        entropy = self.compute_entropy(lambda_matrix)  
+
+        # 计算探索项  
         explore = self.exploration_term()  
         
         # 计算预算  
+        
+        # 计算预算比例， 实际上约等于模型中的层数
         budget_ratio = torch.sigmoid(entropy / self.config.H_max)  
+        
+        # b^(t), 但是还没有乘动量平滑
         base_budget = int(self.config.min_rank +   
                          (self.config.max_rank - self.config.min_rank) *   
-                         (budget_ratio + explore))  
+                         (budget_ratio + explore).item())  
         
         # 更新奇异值  
         new_lambda = lambda_matrix.clone()  
         lambda_max = lambda_matrix.max()  
         
-        for i in range(len(lambda_matrix)):  
+        for i in range(len(lambda_matrix)):   # for i in range(n_step)
             if i < base_budget:  
-                # 计算增量  
-                importance = torch.sigmoid(entropy[i] / self.config.H_max)  
+                # 计算增量  delta_lambda_i^(t)
+                importance = torch.sigmoid(entropy / self.config.H_max)  
                 delta = self.config.alpha * (importance + explore) * (lambda_max - lambda_matrix[i])  
                 
-                # 更新动量  
+                # 更新动量 ， 更新速度
                 self.update_momentum(i, delta)  
                 
                 # 应用动量修正  
@@ -1021,7 +1308,49 @@ class AdaptiveSingularValueEstimator:
 
 
 
-
+# 测试代码  
+def test_singular_value_update():  
+    # 1. 创建配置  
+    config = BudgetSchedulerConfig()  
+    
+    # 2. 创建更新器  
+    updater = AdaptiveSingularValueEstimator(config)  
+    
+    # 3. 创建测试用的奇异值矩阵  
+    lambda_matrices = {  
+        0: torch.tensor([5.0, 4.0, 3.0, 2.0, 1.0]),  # 第一层  
+        1: torch.tensor([4.0, 3.0, 2.0, 1.0]),       # 第二层  
+        2: torch.tensor([3.0, 2.0, 1.0])             # 第三层  
+    }  
+    
+    # 4. 打印初始状态  
+    print("Initial singular values:")  
+    for layer_idx, lambda_matrix in lambda_matrices.items():  
+        print(f"Layer {layer_idx}: {lambda_matrix}")  
+    
+    # 5. 运行多个时间步  
+    n_steps = 5  
+    for step in range(n_steps):  
+        # 更新奇异值  
+        new_lambda_matrices = updater.update_network_singular_values(lambda_matrices)  
+        
+        # 打印结果  
+        print(f"\nStep {step + 1}:")  
+        print("Total budget:", updater.compute_total_budget(lambda_matrices))  
+        
+        # 打印每层的预算分配  
+        layer_budgets = updater.allocate_layer_budgets(  
+            lambda_matrices,   
+            updater.compute_total_budget(lambda_matrices)  
+        )  
+        print("Layer budgets:", layer_budgets)  
+        
+        # 打印更新后的奇异值  
+        for layer_idx, new_lambda in new_lambda_matrices.items():  
+            print(f"Layer {layer_idx}: {new_lambda}")  
+        
+        # 更新lambda_matrices用于下一步  
+        lambda_matrices = new_lambda_matrices
 
 
 if __name__ == '__main__':
@@ -1067,10 +1396,23 @@ if __name__ == '__main__':
     #     t_scale=1000  
     # )  
     
-    config = BudgetSchedulerConfig()
+    # config = BudgetSchedulerConfig()
+    
+    
 
-    estimator = AdaptiveSingularValueEstimator(config)  
+    # estimator = AdaptiveSingularValueEstimator(config)  
 
-    # 在训练循环中使用  
-    lambda_matrix = torch.randn(100)  # 初始奇异值  
-    new_lambda = estimator(lambda_matrix)
+    # # 在训练循环中使用  
+    # lambda_matrix = torch.randn(100)  # 初始奇异值  
+    # new_lambda = estimator(lambda_matrix)
+    
+    
+    # print(new_lambda)
+    
+    
+    
+    
+    
+    
+    
+    test_singular_value_update()

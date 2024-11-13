@@ -707,15 +707,48 @@ class BudgetSchedulerConfig(object):
                 H_max=1.0,  
                 A=0.1,  
                 omega=0.1,  
-                phi=0,  
+                phi=0,  # 相位
                 lambda_=0.001,  
                 t_scale=1000,
                 T0 = 1.0,  # 初始温度  
+                tau = 0.9,  # softmax temprature
                 eta = 0.1,  # 温度调节率  
                 min_temperature = 0.1,  
                 max_temperature = 5.0,  
                 gamma = 0.5,  # 探索项对温度的影响系数
+                k = 5,
+                theta = 0.8,
+                epsilon = 1e-8,
+                
                  ):
+        '''
+        Args
+        :param min_rank: 最小的阶数（reasoning step数）一般设为min(n_step)
+        :param max_rank: 最大的阶数（reasoning step数）一般设为max(n_step)
+        :param alpha: 学习率
+        :param beta: 动量系数
+        :param H_max: 熵的归一化因子
+        :param A: 探索振幅
+        :param omega: 探索频率
+        :param phi: 相位偏移
+        :param lambda_: 探索衰减率
+        :param t_scale: 时间步t的scaling系数
+        
+        :param T0: 初始温度, 用于计算每个时间步的温度 T^{(t)} = T_0*(1 + gamma*E(t))
+        :param tau: softmax temprature, 它控制概率分布的"软硬程度" 0.1 ~ 1.0
+                τ = 1.0：标准Softmax，适用于一般情况
+                τ < 1.0：使分布更"尖锐"(sharper)，突出高满意度的差异, 适用于n_step较小
+                τ > 1.0：使分布更"平滑"(smoother)，减小满意度差异，适用于n_step较大
+        :param: eta:  温度调节率  
+        :param: min_temperature 
+        :param: max_temperature 
+        :param: gamma:  探索项对温度的影响系数
+        
+        :param: k  Top-k for sparse attention  
+        :param: theta  # 满意度阈值 
+        :param: epsilon  # 噪声系数
+        
+        '''
         
         self.min_rank=min_rank
         self.max_rank=max_rank
@@ -730,7 +763,12 @@ class BudgetSchedulerConfig(object):
         
         # 温度相关参数  
         self.T0 = T0
+        self.tau = tau
         self.eta = eta
         self.min_temperature = min_temperature
         self.max_temperature = max_temperature
         self.gamma = gamma 
+        
+        self.k = k  # Top-k for sparse attention 
+        self.epsilon = epsilon
+        self.theta = theta
