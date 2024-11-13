@@ -719,6 +719,9 @@ class BudgetSchedulerConfig(object):
                 k = 5,
                 theta = 0.8,
                 epsilon = 1e-8,
+                n_layers = 12, 
+                max_seq_length = 512,
+                
                 
                  ):
         '''
@@ -748,6 +751,14 @@ class BudgetSchedulerConfig(object):
         :param: theta  # 满意度阈值 
         :param: epsilon  # 噪声系数
         
+        :param: n_layers 层数
+        
+        
+            # Satisfaction score权重  
+        :param: alpha_s     # 重构误差权重  
+        :param: beta_s    # 奇异值衰减权重  
+        :param: gamma_s  # 正交性权重  
+        
         '''
         
         self.min_rank=min_rank
@@ -772,3 +783,12 @@ class BudgetSchedulerConfig(object):
         self.k = k  # Top-k for sparse attention 
         self.epsilon = epsilon
         self.theta = theta
+        
+        self.n_layers = n_layers  # 层数 
+        
+        self.max_seq_length = max_seq_length
+        
+        # Satisfaction score权重  
+        self.alpha_s = 0.4  # 重构误差权重  
+        self.beta_s = 0.3   # 奇异值衰减权重  
+        self.gamma_s = 0.3  # 正交性权重  

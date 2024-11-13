@@ -445,7 +445,6 @@ def compute_satisfaction_score_v3(k, i, P, Q, λ, l_q, L, d1, d2, alpha):
 
 
 
-
 class FixedRankSVD:  
     
     '''
@@ -456,11 +455,28 @@ class FixedRankSVD:
     
     '''
     def __init__(self, num_layers, hidden_size, min_steps, max_steps, config:BudgetSchedulerConfig):  
-        self.num_layers = num_layers  
-        self.hidden_size = hidden_size  
-        self.min_steps = min_steps  # min(n_step)  
-        self.max_steps = max_steps  # 2 * input_seq_length  
         self.config = config
+        self.num_layers = config.n_layers  
+        self.hidden_size = hidden_size  
+        self.min_steps = config.min_rank  # min(n_step)  
+        self.max_steps = config.max_rank  # 2 * input_seq_length  
+        
+        
+        self.P_matrices = {}  # 存储每层的P矩阵  
+        self.Q_matrices = {}  # 存储每层的Q矩阵  
+        self.Lambda_matrices = {}  # 存储每层的Lambda矩阵  
+        
+        
+        # self.momentum = {}  
+        # self.velocity = {}  
+        
+        self.satisfaction_scores = {}
+        
+        self.scheduler = AdaptiveBudgetScheduler(  
+            n_layers=config.n_layers,  
+            min_steps=self.min_steps,  
+            config=self.config
+        ) 
         
     def initial_decompose(self, E_k):  
         """
@@ -644,78 +660,183 @@ class FixedRankSVD:
         
         return P_new, Lambda_new, Q_new  
 
-    def compute_new_P_vectors(self, P_k, new_values, delta_r):  
+    def compute_new_P_vectors(self, layer_idx, layer_budget, estimator:"AdaptiveSingularValueEstimator"):  
         """  
-        计算新的P向量  
+        计算新的扩展后的P矩阵，但是首先要获得扩展后的Lambda矩阵 （新的奇异向量必须先算好）
         
         参数:  
-        P_k: 形状为[r, r]的矩阵  
-        new_values: 新计算出来的奇异值  
-        delta_r: 需要新增的向量数量  
+        P_k: 形状为[n_step, n_step]的矩阵  
+
         
         返回:  
-        new_P: 形状为[delta_r, r]的新P向量矩阵  
+        new_P: 形状为[layer_budget, layer_budget]的新P向量矩阵  
         """  
-        attention_weights  = self.compute_attention_weights(P_k, new_values) # shape = [r, r]
+        P = self.P_matrices.get(layer_idx)  
+        # Lambda = self.Lambda_matrices.get(layer_idx) 
         
+        if P is None:  
+            raise ValueError(f"Layer {layer_idx}'s SVD matrices P not initialized")   
         
-        # 初始化新的P向量矩阵  
-        new_P = torch.zeros(delta_r, P_k.size(1))  # shape = [delta_r, r]
+        current_rank = P.shape[0] 
         
-        for i in range(delta_r):
-            # 使用注意力权重生成候选向量  
-            weighted_sum = torch.sum(attention_weights, dim=0)  # [r]  
-            candidate = weighted_sum.unsqueeze(0)  # [1, r]
+        # 如果目标秩小于等于当前秩，直接截断返回  
+        if layer_budget <= current_rank:  
+            return P[:layer_budget, :layer_budget]  
+        
+        # 扩展矩阵  
+        new_P = torch.zeros(layer_budget, layer_budget, device=P.device)  
+        new_P[:current_rank, :current_rank] = P  
+        
+        # 扩展Lambda矩阵 , 顺便计算新的奇异值
+        new_Lambda = self.compute_new_Lambda_vectors(layer_idx, layer_budget, estimator)
+        
+        # P矩阵和Lambda矩阵的扩展是同步的, 确保了在生成新的正交向量时能够使用正确的奇异值
+        # 逐步添加新的行和列  
+        for i in range(current_rank, layer_budget):   
+            # 生成新列  
+            p_c = self.generate_orthogonal_column(   # 里面使用了Attention， 使用了新的奇异值
+                new_P[:i, :i],   
+                new_Lambda[:i, :i]  
+            )  # shape=[i, 1] 
             
-            # 正交化处理  
-            orthogonalized = self.orthogonalize(candidate, P_k)  
-            new_P[i] = orthogonalized  
+            # 将新列放入扩展矩阵  [扩展为(i-1, i)]
+            new_P[:i, i:i+1] = p_c 
             
-            # 更新P_k以便下一次生成  
-            P_k = torch.cat([P_k, orthogonalized.unsqueeze(0)], dim=0) 
+            # 生成新行  
+            P_extended = new_P[:i+1, :i+1]  # 向下延伸一行
+            
+            p_r = self.generate_orthogonal_row(  
+                P_extended,  
+                new_Lambda[:i+1, :i+1]  
+            )  # shape=[1, i]  
+
+            # 将新行放入扩展矩阵, 列数不变，行数+1， [扩展为(i, i)]
+            new_P[i:i+1, :i] = p_r
+            
+            
+            # 计算对角元素以保持正交性  
+            row_norm = torch.norm(p_r)  
+            col_norm = torch.norm(p_c)  
+            p_ii = math.sqrt(1 - row_norm**2 - col_norm**2)  
+            new_P[i, i] = p_ii 
+
+        # 更新类中存储的矩阵  
+        self.P_matrices[layer_idx] = new_P  
+        self.Lambda_matrices[layer_idx] = new_Lambda  
         
-        # return self.orthogonalize(attention_weights , P_k)  
+        # 在更新完矩阵后，更新satisfaction score  
+        self.satisfaction_scores[layer_idx] = self.compute_satisfaction_score(layer_idx) 
         return new_P
     
 
-    def compute_new_Q_vectors(self, Q_k, new_values, delta_r):  
-        """  
-        计算新的Q向量  
+    def compute_new_Q_vectors(self, layer_idx, layer_budget):  
+        """扩展Q矩阵到目标秩  
         
-        参数:  
-        Q_k: 形状为[h, r]的矩阵，其中h是隐藏层维度  
-        new_values: 新计算出来的奇异值矩阵  
-        delta_r: 需要新增的向量数量  
+        确保在执行此函数之前， P和 Lambda 已经更新完毕
         
-        返回:  
-        new_Q: 形状为[h, delta_r]的新Q向量矩阵  
-        """  
-        # Q_k.T的形状是[r, h]  
-        # 计算注意力权重矩阵 [r, r]  
-        attention_weights = self.compute_attention_weights(Q_k.T, new_values)  
-        
-        
-        
-        
-        # 初始化新的Q向量矩阵 [h, delta_r]  
-        new_Q = torch.zeros(Q_k.size(0), delta_r)  
-        
-        # 对每个需要生成的新向量  
-        for i in range(delta_r):  
-            # 使用注意力权重的加权和作为候选向量  
-            candidate = torch.mm(Q_k, attention_weights)  # [h, r]  
-            weighted_sum = torch.sum(candidate, dim=1)  # [h]  
-            candidate = weighted_sum.unsqueeze(1)  # [h, 1]  
+        Args:  
+            layer_idx: 层索引  
+            target_rank: 目标秩（由layer_budget决定）  
             
-            # 正交化处理  
-            orthogonalized = self.orthogonalize(candidate.T, Q_k.T).T  
-            new_Q[:, i] = orthogonalized.squeeze()  
-            
-            # 更新Q_k以便下一次生成  
-            Q_k = torch.cat([Q_k, orthogonalized], dim=1)  
+        Returns:  
+            torch.Tensor: 扩展后的Q矩阵  
+        """  
         
+        Q = self.Q_matrices.get(layer_idx)   # shape = (n_step, h)
+        Lambda = self.Lambda_matrices.get(layer_idx) 
+        
+        if Q is None or Lambda is None:  
+            raise ValueError(f"Layer {layer_idx}'s SVD Q or Lambda matrices not initialized")  
+        
+        current_rank = Q.shape[0]   
+        feature_dim = Q.shape[1]  
+        
+        # 如果目标秩小于等于当前秩，直接截断返回  
+        if layer_budget <= current_rank:  
+            return Q[:layer_budget, :]  
+        
+        # 扩展矩阵  
+        new_Q = torch.zeros(layer_budget, feature_dim, device=Q.device)  
+        new_Q[:current_rank, :] = Q 
+        
+        # 逐步添加新的行  
+        for i in range(current_rank, layer_budget):  
+            # Step 1: 计算键值对  
+            K = torch.mm(new_Q[:i], new_Q[:i].t())  # shape=[i, i]  
+            
+            # Step 2: 计算稀疏注意力分数  
+            S = torch.mm(K, K.t()) / math.sqrt(feature_dim)  # shape=[i, i] 
+            
+            # Step 3: Top-k 稀疏化  
+            k = min(self.config.k, i)  
+            values, indices = torch.topk(S, k, dim=-1)  
+            S_sparse = torch.zeros_like(S)  
+            S_sparse.scatter_(-1, indices, values)  # shape=[i, i] 
+            
+            # Step 4: 注意力权重  
+            A = torch.softmax(S_sparse, dim=-1)  # shape=[i, i]  
+            
+            # Step 5: 生成新行  
+            q_new = torch.mm(A, new_Q[:i])  # shape=[i, feature_dim]  
+            
+            # Step 6: 缩放和噪声  
+            lambda_k = Lambda[i-1, i-1]  # 使用前一个奇异值  
+            q_new = math.sqrt(lambda_k) * q_new[-1:] + \
+                   torch.randn(1, feature_dim, device=Q.device) * self.config.epsilon  
+            
+            # Step 7: 正交化  
+            for j in range(i):  
+                q_j = new_Q[j:j+1]  # shape=[1, feature_dim]  
+                proj = (q_j @ q_new.t()) / (q_j @ q_j.t())  
+                q_new = q_new - proj.t() @ q_j  
+                
+            # Step 8: 归一化  
+            q_new = q_new / torch.norm(q_new)  
+            
+            # 将新行添加到扩展矩阵  
+            new_Q[i:i+1, :] = q_new  
+            
         return new_Q  
+
     
+    def compute_new_Lambda_vectors(self, layer_idx, layer_budget, estimator:"AdaptiveSingularValueEstimator"):  
+        """计算新的Lambda矩阵向量  
+
+            
+            作用：
+                将n_step x n_step的lambda矩阵扩展成 layer_budget x layer_budget
+                
+                如果 layer_budget < n_step, 则直接截断
+        Args:  
+            layer_idx: 层索引  
+            layer_budget: 该层的目标秩  
+            
+        Returns:  
+            torch.Tensor: 扩展后的Lambda矩阵  
+        """  
+        Lambda = self.Lambda_matrices.get(layer_idx)  
+        
+        if Lambda is None:  
+            raise ValueError(f"Layer {layer_idx} Lambda matrix not initialized")  
+
+        current_rank = Lambda.shape[0]
+        
+        # 如果目标秩小于等于当前秩，直接截断返回  
+        if layer_budget <= current_rank:  
+            return Lambda[:layer_budget, :layer_budget]  
+        
+        
+        # 创建新的Lambda矩阵  
+        new_Lambda = torch.zeros(layer_budget, layer_budget, device=Lambda.device)  
+        new_Lambda[:current_rank, :current_rank] = Lambda 
+        
+        # 填满多出来的这些奇异值，需要用到另一个类
+        
+        new_Lambda = estimator.update_layer_singular_values(new_Lambda, layer_idx, layer_budget)
+        
+        
+        
+        return new_Lambda
     
     def orthogonalize(self, attention_output, Q_k):  
         """  
@@ -800,6 +921,114 @@ class FixedRankSVD:
         p_c = p_c / torch.norm(p_c)  
         
         return p_c  
+    
+    def generate_orthogonal_row(self, P_extended, Lambda):  
+        """生成正交行向量  
+        
+        Args:  
+            P_extended: 扩展后的P矩阵 [P, p_c]  
+            
+            P_extended.shape = (n_step+1, n_step+1)
+            
+            p_c 是刚刚新扩展的列向量
+            
+            Lambda: 当前奇异值矩阵 shape=[n_step+1, n_step+1]
+        Returns:  
+            torch.Tensor: 新的正交行向量  
+        """  
+        # 类似于generate_orthogonal_column的实现  
+        # 但是处理扩展后的矩阵  
+        n_step = P_extended.shape[0]  
+        
+        K = torch.mm(P_extended, P_extended.t())  # shape = (n_step+1, n_step+1)
+        
+        # attention
+        S = torch.mm(K, K.t()) / math.sqrt(n_step)  # # shape = (n_step+1, n_step+1)
+        
+        # top-k for sparse attention
+        k = min(self.config.k, n_step)  
+        values, indices = torch.topk(S, k, dim=-1)  
+        S_sparse = torch.zeros_like(S)  
+        S_sparse.scatter_(-1, indices, values)  
+        
+        
+        A = torch.softmax(S_sparse, dim=-1)  
+        R = torch.mm(A, P_extended)  # shape = (n_step+1, n_step+1)
+        
+        #与奇异值相乘并加入噪声  
+        # 选择最后一行作为新行向量  
+        r = R[-1:, :]  # shape=[1, n_step]  
+        lambda_k = Lambda[-1, -1]  # 获取最后一个奇异值  
+        p_r = math.sqrt(lambda_k) * r + torch.randn_like(r) * self.config.epsilon 
+        
+        # 正交化  
+        for i in range(n_step):  
+            p_i = P_extended[i]  
+            p_r = p_r - torch.dot(p_r, p_i) / torch.dot(p_i, p_i) * p_i  
+            
+        # 归一化  
+        p_r = p_r / torch.norm(p_r)  
+        
+        return p_r  
+    
+    
+    def compute_satisfaction_score(self, layer_idx):  
+        """计算每一层的satisfaction score  
+        
+        satisfaction score基于以下几个指标：  
+        1. 重构误差  
+        2. 奇异值衰减率  
+        3. 正交性保持程度  
+        """  
+        P = self.P_matrices[layer_idx]  
+        Q = self.Q_matrices[layer_idx]  
+        Lambda = self.Lambda_matrices[layer_idx]  
+        
+        # 1. 计算重构误差 (reconstruction error)  
+        X = torch.mm(torch.mm(P, Lambda), Q)  # 重构矩阵  
+        X_norm = torch.norm(X, p='fro')  
+        recon_error = -torch.log(1e-8 + X_norm)  # 负对数作为惩罚项  
+        
+        # 2. 计算奇异值衰减率 (singular value decay rate)  
+        singular_values = torch.diag(Lambda)  
+        decay_rate = singular_values[:-1] / (singular_values[1:] + 1e-8)  
+        decay_score = torch.mean(decay_rate)  
+        
+        # 3. 计算正交性保持程度 (orthogonality preservation)  
+        P_ortho = torch.mm(P, P.t())  
+        Q_ortho = torch.mm(Q, Q.t())  
+        I = torch.eye(P_ortho.shape[0], device=P.device)  
+        ortho_error = torch.norm(P_ortho - I, p='fro') + torch.norm(Q_ortho - I, p='fro')  
+        
+        # 组合所有指标  
+        satisfaction = (self.config.alpha * (-recon_error) +  # 重构项（负的因为是误差）  
+                       self.config.beta * decay_score +       # 衰减项  
+                       self.config.gamma * (-ortho_error))    # 正交项（负的因为是误差）  
+        
+        return satisfaction  
+
+    def update_satisfaction_scores(self):  
+        """更新所有层的satisfaction scores"""  
+        scores = []  
+        for layer_idx in range(self.config.n_layers):  
+            score = self.compute_satisfaction_score(layer_idx)  
+            self.satisfaction_scores[layer_idx] = score  
+            scores.append(score)  
+        return torch.stack(scores)  
+    
+    
+    def step(self):  
+        """执行一步优化"""  
+        # 更新所有层的satisfaction scores  
+        satisfaction_scores = self.update_satisfaction_scores()  
+        
+        # 使用scheduler分配新的预算  
+        layer_budgets = self.scheduler(satisfaction_scores)  
+        
+        # 根据新的预算更新每一层  
+        for layer_idx, budget in enumerate(layer_budgets):  
+            self.compute_new_P_vectors(layer_idx, int(budget))  
+            # 其他矩阵的更新...  
 
 
 
@@ -1198,7 +1427,7 @@ class AdaptiveSingularValueEstimator:
         return layer_budgets  
     
     
-    def update_layer_singular_values(self, lambda_matrix, layer_idx, layer_budget, fixed_rank_svd=None):  
+    def update_layer_singular_values(self, lambda_matrix, layer_idx, layer_budget, fixed_rank_svd:FixedRankSVD=None):  
         """更新单层的奇异值  
         
         Args:  
