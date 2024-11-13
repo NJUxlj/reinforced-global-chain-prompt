@@ -694,3 +694,43 @@ class WrapperConfig(object):
         self.embedding_size = embedding_size
         self.prompt_encoder_type = prompt_encoder_type
         self.eval_every_step = eval_every_step
+        
+        
+
+
+class BudgetSchedulerConfig(object):
+    def __init__(self,
+                min_rank=10,  
+                max_rank=100,  
+                alpha=0.01,  
+                beta=0.9,  
+                H_max=1.0,  
+                A=0.1,  
+                omega=0.1,  
+                phi=0,  
+                lambda_=0.001,  
+                t_scale=1000,
+                T0 = 1.0,  # 初始温度  
+                eta = 0.1,  # 温度调节率  
+                min_temperature = 0.1,  
+                max_temperature = 5.0,  
+                gamma = 0.5,  # 探索项对温度的影响系数
+                 ):
+        
+        self.min_rank=min_rank
+        self.max_rank=max_rank
+        self.alpha=alpha
+        self.beta=beta
+        self.H_max=H_max
+        self.A=A
+        self.omega=omega
+        self.phi=phi
+        self.lambda_=lambda_
+        self.t_scale=t_scale
+        
+        # 温度相关参数  
+        self.T0 = T0
+        self.eta = eta
+        self.min_temperature = min_temperature
+        self.max_temperature = max_temperature
+        self.gamma = gamma 

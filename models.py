@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F  
 
 from transformers import AutoModel, AutoTokenizer
-from config import Config   
+from config import Config, BudgetSchedulerConfig   
 
 from typing import List, Tuple
 import math
@@ -796,28 +796,281 @@ class EnhancedSVDReasoningAllocator:
 
 
 
+class AdaptiveBudgetScheduler:  
+    '''
+    基于熵和动量的推理步数调度器
+    
+    '''
+    def __init__(self, n_layers, min_steps, input_length, config:BudgetSchedulerConfig):  
+        self.b_min = n_layers * min_steps  
+        self.b_max = n_layers * 2 * input_length  
+        self.momentum = 0  
+        self.velocity = 0  
+        self.t = 0  
+        self.config = config  
+        
+        # 温度相关的状态变量  
+        self.last_budget_grad = None  
+        self.T0 = config.T0  
+        self.last_budget = None 
+        
+    def compute_entropy(self, satisfaction_scores):  
+        # 计算每层的熵  
+        probs = F.softmax(satisfaction_scores / self.config.tau, dim=-1)  
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)  
+        return entropy  
+        
+    def exploration_term(self):  
+        '''
+        # 计算周期性探索项  
+        # E(t) = A \cdot \sin^2(\omega t + \phi) \cdot \exp(-\lambda t)
+        A: 振幅
+        ω： 频率
+        φ 是相位
+        λ 是衰减率
+        t 是时间步
+        '''
+        t = self.t / self.config.t_scale  
+        return (self.config.A * torch.sin(self.config.omega * t + self.config.phi)**2   
+                * torch.exp(-self.config.lambda_ * t))  
+    
+    def update_momentum(self, delta):  
+        # 更新动量  
+        self.momentum = (self.config.beta * self.momentum +   
+                        (1 - self.config.beta) * delta)  
+        self.velocity = (self.config.alpha * self.velocity +   
+                        (1 - self.config.alpha) * self.momentum**2)  
+        
+    def __call__(self, satisfaction_scores):  
+        # 计算熵  （层级熵）
+        layer_entropy = self.compute_entropy(satisfaction_scores)  
+        total_entropy = layer_entropy.mean()  
+        
+        # 计算探索项  
+        explore = self.exploration_term()  
+        
+        # 计算基础预算  
+        budget_ratio = torch.sigmoid(total_entropy / self.config.H_max)  
+        
+        # 预算 b^{(t)}
+        base_budget = (self.b_min + (self.b_max - self.b_min) *   
+                      (budget_ratio + explore))  
+        
+        # 更新动量  
+        delta = base_budget - self.last_budget if self.t > 0 else 0  
+        self.update_momentum(delta)  
+        
+        # 应用动量修正  
+        final_budget = base_budget * (self.momentum /   
+                                    (torch.sqrt(self.velocity) + 1e-8))  
+        
+        # 计算温度  
+        temp = self.compute_temperature()  
+        
+        # 分配层级预算  
+        layer_budgets = self.allocate_layer_budgets(  
+            final_budget, layer_entropy, temp)  
+        
+        self.last_budget = final_budget  
+        self.t += 1  
+        
+        return layer_budgets
+    
+    def compute_temperature(self):  
+        """计算自适应温度  
+        
+        基于预算梯度的比值动态调整温度：  
+        T^{(t)} = T_0 · exp(-η · ‖∇b^{(t)}‖₂/‖∇b^{(t-1)}‖₂)  
+        """  
+        if self.t < 2 or self.last_budget_grad is None:  
+            return self.T0  
+        
+        # 计算当前预算的梯度  
+        if hasattr(self, 'last_budget') and self.last_budget is not None:  
+            current_grad = torch.abs(self.final_budget - self.last_budget)  
+        else:  
+            return self.T0  
+        
+        # 计算梯度比值  
+        grad_ratio = current_grad / (self.last_budget_grad + 1e-8)  
+        
+        # 更新温度  
+        temperature = self.T0 * torch.exp(-self.config.eta * grad_ratio)  
+        
+        # 保存当前梯度用于下次计算  
+        self.last_budget_grad = current_grad  
+        
+        # 限制温度范围  
+        temperature = torch.clamp(temperature,   
+                                min=self.config.min_temperature,  
+                                max=self.config.max_temperature)  
+        
+        return temperature  
+    
+    
+    def allocate_layer_budgets(self, final_budget, layer_entropy, temperature):  
+        """分配层级预算  
+        
+        使用带温度的Softmax进行层级预算分配：  
+        b_l^{(t)} = b^{(t)} · exp(H_l^{(t)}/T^{(t)}) / ∑ᵢexp(H_i^{(t)}/T^{(t)})  
+        """  
+        # 添加探索项的影响  
+        explore = self.exploration_term()  
+        adjusted_temp = temperature * (1 + self.config.gamma * explore)  
+        
+        # 计算分配权重  
+        weights = torch.exp(layer_entropy / adjusted_temp)  
+        normalized_weights = weights / weights.sum()  
+        
+        # 确保预算是整数  
+        base_budgets = (normalized_weights * final_budget).floor()  
+        
+        # 处理舍入误差，确保总和等于final_budget  
+        remaining = final_budget - base_budgets.sum()  
+        if remaining > 0:  
+            # 根据小数部分大小分配剩余预算  
+            decimal_parts = normalized_weights * final_budget - base_budgets  
+            _, indices = torch.sort(decimal_parts, descending=True)  
+            for i in range(int(remaining)):  
+                base_budgets[indices[i]] += 1  
+        
+        # 确保每层至少有最小预算  
+        min_layer_budget = self.b_min / len(layer_entropy)  
+        base_budgets = torch.maximum(base_budgets,   
+                                    torch.tensor(min_layer_budget))  
+        
+        # 应用动态缩放以确保总预算约束  
+        if base_budgets.sum() > final_budget:  
+            scale = final_budget / base_budgets.sum()  
+            base_budgets = (base_budgets * scale).floor()  
+        
+        return base_budgets 
+    
+    
+    
+
+
+class AdaptiveSingularValueEstimator:  
+    def __init__(self, config):  
+        self.momentum = {}  # 每个奇异值的动量  
+        self.velocity = {}  # 每个奇异值的速度  
+        self.t = 0  
+        self.config = config  
+        
+    def compute_entropy(self, lambda_matrix):  
+        # 计算每个奇异值的相对重要性熵  
+        total = lambda_matrix.sum()  
+        if total == 0:  
+            return torch.zeros_like(lambda_matrix)  
+        probs = lambda_matrix / total  
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10))  
+        return entropy  
+        
+    def exploration_term(self):  
+        t = self.t / self.config.t_scale  
+        return (self.config.A * torch.sin(self.config.omega * t + self.config.phi)**2   
+                * torch.exp(-self.config.lambda_ * t))  
+    
+    def update_momentum(self, i, delta):  
+        if i not in self.momentum:  
+            self.momentum[i] = 0  
+            self.velocity[i] = 0  
+            
+        self.momentum[i] = (self.config.beta * self.momentum[i] +   
+                           (1 - self.config.beta) * delta)  
+        self.velocity[i] = (self.config.alpha * self.velocity[i] +   
+                           (1 - self.config.alpha) * self.momentum[i]**2)  
+        
+    def __call__(self, lambda_matrix):  
+        # 计算熵  
+        entropy = self.compute_entropy(lambda_matrix)  
+        
+        # 计算探索项  
+        explore = self.exploration_term()  
+        
+        # 计算预算  
+        budget_ratio = torch.sigmoid(entropy / self.config.H_max)  
+        base_budget = int(self.config.min_rank +   
+                         (self.config.max_rank - self.config.min_rank) *   
+                         (budget_ratio + explore))  
+        
+        # 更新奇异值  
+        new_lambda = lambda_matrix.clone()  
+        lambda_max = lambda_matrix.max()  
+        
+        for i in range(len(lambda_matrix)):  
+            if i < base_budget:  
+                # 计算增量  
+                importance = torch.sigmoid(entropy[i] / self.config.H_max)  
+                delta = self.config.alpha * (importance + explore) * (lambda_max - lambda_matrix[i])  
+                
+                # 更新动量  
+                self.update_momentum(i, delta)  
+                
+                # 应用动量修正  
+                final_delta = delta * (self.momentum[i] /   
+                                     (torch.sqrt(self.velocity[i]) + 1e-8))  
+                
+                # 更新奇异值  
+                new_lambda[i] = lambda_matrix[i] + final_delta  
+        
+        self.t += 1  
+        return new_lambda  
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
-    config = {  
-        'hidden_size': 768,  
-        'prefix_length': 10,  
-        'suffix_length': 10,  
-        'num_layers': 2,  
-        'dropout': 0.1  
-    } 
+    # config = {  
+    #     'hidden_size': 768,  
+    #     'prefix_length': 10,  
+    #     'suffix_length': 10,  
+    #     'num_layers': 2,  
+    #     'dropout': 0.1  
+    # } 
     
-    # 初始化模型  
-    prompt_encoder = BidirectionalAttentionalPromptEncoder(**config)  
+    # # 初始化模型  
+    # prompt_encoder = BidirectionalAttentionalPromptEncoder(**config)  
     
-    # 前向传播  
-    batch_size = 4  
-    prefix_embeddings, suffix_embeddings = prompt_encoder(batch_size)  
+    # # 前向传播  
+    # batch_size = 4  
+    # prefix_embeddings, suffix_embeddings = prompt_encoder(batch_size)  
     
-    # 可视化注意力权重（如果需要）  
-    prefix_to_suffix_attention = prompt_encoder.prefix_to_suffix_attention.attention_weights  
-    suffix_to_prefix_attention = prompt_encoder.suffix_to_prefix_attention.attention_weights  
-    
-    
+    # # 可视化注意力权重（如果需要）  
+    # prefix_to_suffix_attention = prompt_encoder.prefix_to_suffix_attention.attention_weights  
+    # suffix_to_prefix_attention = prompt_encoder.suffix_to_prefix_attention.attention_weights  
     
     
-    print(prefix_to_suffix_attention)
-    print(suffix_to_prefix_attention)
+    
+    
+    # print(prefix_to_suffix_attention)
+    # print(suffix_to_prefix_attention)
+    
+    
+    
+    
+    # 使用示例  
+    # config = Config(  
+    #     min_rank=10,  
+    #     max_rank=100,  
+    #     alpha=0.01,  
+    #     beta=0.9,  
+    #     H_max=1.0,  
+    #     A=0.1,  
+    #     omega=0.1,  
+    #     phi=0,  
+    #     lambda_=0.001,  
+    #     t_scale=1000  
+    # )  
+    
+    config = BudgetSchedulerConfig()
+
+    estimator = AdaptiveSingularValueEstimator(config)  
+
+    # 在训练循环中使用  
+    lambda_matrix = torch.randn(100)  # 初始奇异值  
+    new_lambda = estimator(lambda_matrix)
