@@ -35,6 +35,10 @@ from transformers import (
     set_seed,
 )
 
+from peft import (
+    PeftModel
+)
+
 from .models import (
     InputEncoder,
 )

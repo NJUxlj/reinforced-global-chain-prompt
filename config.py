@@ -679,9 +679,15 @@ class WrapperConfig(object):
                  pattern_id: int = 0,  # indicate the length of the continuous prompt tokens
                  cache_dir: str = None,
                  output_dir=None,
-                 embedding_size=128,
+                 embedding_size=768,
                  prompt_encoder_type="lstm", # ["lstm", "sparse-attention"]
-                 eval_every_step=20):
+                 eval_every_step=20,
+                 n_layers = 12,
+                 max_step=20,
+                 min_step=5,
+                 num_prefix_tokens=10,
+                 num_suffix_tokens=10,
+                 num_labels=4):
 
         self.model_type = model_type
         self.model_name_or_path = model_name_or_path
@@ -694,6 +700,15 @@ class WrapperConfig(object):
         self.embedding_size = embedding_size
         self.prompt_encoder_type = prompt_encoder_type
         self.eval_every_step = eval_every_step
+        
+        self.n_layers = n_layers
+        
+        self.max_step = max_step
+        self.min_syep = min_step
+        
+        self.num_prefix_tokens=num_prefix_tokens
+        self.num_suffix_tokens=num_suffix_tokens
+        self.num_labels=num_labels
         
         
 

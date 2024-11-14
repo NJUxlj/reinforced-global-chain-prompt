@@ -29,6 +29,8 @@ from transformers import (
     AutoModelForSequenceClassification,
 )
 
+from wrapper import *
+
 from config import Config
 
 from tqdm import tqdm
@@ -77,6 +79,46 @@ def get_model_name_using_model(model):
         # 无法匹配已知模型，返回未知模型提示  
         raise ValueError("unknown model, please check your config, it should be [bert | llama | qwen2]") 
 
+def get_base_model_using_model(model):
+    """
+    获取模型包装器的底层的基座模型对象
+
+    """
+    # 处理被Accelerator(DDP)包装的模型
+    if hasattr(model, "module"):
+        print("This model is wrapped by Accelerator(DDP), we use model.module")
+        model = model.module
+    
+        # 获取模型类型  
+    model_type = type(model)
+
+    if hasattr(model, "config"):
+        config = model.config
+    else:
+        raise RuntimeError("This model object does not have a config file, check again~~~")
+
+    if isinstance(model, AutoModel):
+        model = model
+    elif isinstance(model, PeftModel):  
+        print("Info: Model is a PeftModel, getting the base model")  
+        model = model.get_base_model() 
+    elif isinstance(model, AutoModelForSequenceClassification):
+        model = model.base_model
+    elif isinstance(model, BertForSequenceClassification):
+        model = model.bert
+    elif isinstance(model, RobertaForSequenceClassification):
+        model = model.roberta
+    elif isinstance(model, Qwen2ForSequenceClassification):
+        model = model.qwen
+    
+    else:
+        raise ValueError(f"the passed model object is not either SequenceClassification model or AutoModel \
+            The current model type = {model_type}")
+    
+ 
+    
+    
+    return model
 
 def get_max_length_from_model(model):  
     """  

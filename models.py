@@ -2,11 +2,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  
 
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer,TrainingArguments, Trainer
 from config import Config, BudgetSchedulerConfig   
 
 from typing import List, Tuple, Dict, Optional, Any, Union
 import math
+
+
+from wrapper import *
+from config import *
+from utils import (
+    get_model_name_using_model,
+    get_base_model_using_model,
+)
 
 '''
 
@@ -326,120 +334,368 @@ class OutputTransformation(nn.Module):
 
 
 
-def compute_satisfaction_score_v1(k, i, P, Q, λ, l_q, L, d1, d2):  
-    """  
-    方案1: Layer-Weighted Gradient Impact Score  
-    
-    参数:  
-    k: 当前层索引  
-    i: 当前奇异值索引  
-    P, Q: 奇异向量矩阵  
-    λ: 奇异值  
-    l_q: 问题长度  
-    L: 总层数  
-    d1, d2: P和Q的维度  
-    """  
-    # 层深度权重  
-    layer_weight = (k + 1) / L  # 越深层权重越大  
-    
-    # 问题长度影响因子  
-    length_factor = math.log(1 + l_q/30)  # 30是基准长度  
-    
-    # 基础梯度敏感度计算  
-    s_lambda = abs(λ[i] * λ[i].grad) if λ[i].grad is not None else 0  
-    s_P = torch.sum(abs(P[:, i] * P[:, i].grad)) / d1 if P[:, i].grad is not None else 0  
-    s_Q = torch.sum(abs(Q[i, :] * Q[i, :].grad)) / d2 if Q[i, :].grad is not None else 0  
-    
-    # 组合梯度敏感度  
-    gradient_impact = (s_lambda + s_P + s_Q) / 3  
-    
-    # 最终satisfaction score  
-    score = layer_weight * length_factor * gradient_impact  
-    
-    return score 
 
 
 
 
-def compute_satisfaction_score_v2(k, i, P, Q, Lambda, l_q, L, d1, d2, alpha=0.5):  
-    """  
-    额外参数：  
-    α: 控制层深度影响的超参数  
-    """  
-    # 指数层深度权重  
-    layer_weight = 1 - math.exp(-alpha * (k + 1) / L)  
+
+# 3. 修改模型的输入嵌入函数，添加前缀和后缀Prompt Tokens  
+class BaasPrompt(torch.nn.Module):  
+    def __init__(self, 
+                 model, 
+                 prefix_embeddings, 
+                 suffix_embeddings, 
+                 num_prefix_tokens, 
+                 num_suffix_tokens,
+                 min_step=3,
+                 max_step=8,
+                 num_labels=4):  
+        super(BaasPrompt, self).__init__() 
+        '''
+        :param: model: 
+            AutoModelForSequenceClassification
+            BertForSequenceClassification
+            Qwen2ForSequenceClassification
+        
+        ''' 
+        self.model = model  
+        self.device = Config['device']
+        self.prefix_embeddings = prefix_embeddings  
+        self.suffix_embeddings = suffix_embeddings 
+        self.num_prefix_tokens = num_prefix_tokens
+        self.num_suffix_tokens = num_suffix_tokens
+        self.embedding_layer = self.model.get_input_embeddings()
+        
+        self.base_model =  get_base_model_using_model(self.model)
+        self.config = self.base_model.config 
+        self.num_layers = self.config.num_hidden_layers
+        self.hidden_size = self.config.hidden_size 
+        self.min_step = min_step
+        self.max_step = max_step
+        self.num_labels = num_labels
+        
+        
+        scheduler_config = BudgetSchedulerConfig(
+            
+        )
+        
+        # 初始化FixedSVD对象  
+        self.fixed_svd = FixedRankSVD(  
+            num_layers=self.num_layers,  
+            min_step=self.min_step,  
+            max_step=self.max_step,  
+            hidden_size=self.hidden_size,
+            config = scheduler_config,
+        )  
+        
+        # 替换bert模型中的attention模块 , 这是是初始化所有层的prefix和suffix
+        for i, layer in enumerate(self.base_model.encoder.layer):  
+            layer.attention.self = BaasAttention(  
+                config=self.config,  
+                layer_idx=i,  
+                fixed_svd=self.fixed_svd  
+            )  
+        
+        # 冻结分类器参数  
+        for param in self.base_model.classifier.parameters():  
+            param.requires_grad = False  
     
-    # 问题长度自适应因子  
-    length_factor = (l_q / 30) ** 0.5  # 使用平方根来平滑长度影响  
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):  
+        # 原始输入嵌入
+        # print(f"input_ids.shape = {input_ids.shape}")
+        input_ids = input_ids.squeeze(1) 
+        inputs_embeds = self.embedding_layer(input_ids)  
+        
+        batch_size = inputs_embeds.size(0)  
+        
+        # 将前缀和后缀Prompt Embeddings扩展到batch维度  
+        prefix_embeds = self.prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
+        suffix_embeds = self.suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
+        
+        # print(f"prefix.shape = {prefix_embeds.shape}")
+        # print(f"suffix.shape = {suffix_embeds.shape}")
+        # print(f"inputs_embeds.shape = {inputs_embeds.shape}")
+
+        # 拼接前缀、原始输入和后缀嵌入  
+        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 522, 768)
+        
+        # 调整attention_mask  
+        if attention_mask is not None:  
+            prefix_mask = torch.ones(batch_size, self.num_prefix_tokens, device=self.device)  
+            suffix_mask = torch.ones(batch_size, self.num_suffix_tokens, device=self.device)  
+
+            # print(f"attention_mask.shape = {attention_mask.shape}")
+            # print(f"prefix_mask.shape = {prefix_mask.shape}")
+            # print(f"suffix_mask.shape = {suffix_mask.shape}")
+            
+            attention_mask = attention_mask.squeeze(1)
+            attention_mask = torch.cat([prefix_mask, attention_mask, suffix_mask], dim=1)  # (4, 522)
+            
+            # print(f"attention_mask.shape after concat = {attention_mask.shape}") 
+        
+        if token_type_ids is not None:  
+            prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
+            suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=self.device)
+            
+            # print(f"token_type_ids.shape = {token_type_ids.shape}")
+            # print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
+            # print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
+            
+            token_type_ids = token_type_ids.squeeze(1)
+            token_type_ids = torch.cat([prefix_type_ids, token_type_ids, suffix_type_ids], dim=1)
+            
+            token_type_ids = token_type_ids.long() # (4, 522)
+            
+            # print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
+
+        
+        # 调用原始模型的forward方法  
+        outputs = self.model(  
+            inputs_embeds=inputs_embeds,  
+            attention_mask=attention_mask,  
+            token_type_ids=token_type_ids,
+            labels=labels  
+        )  
+        
+        return outputs  
     
-    # 计算奇异值重要性  
-    λ_importance = abs(Lambda[i]) / torch.norm(Lambda)  
-    
-    # 基础梯度影响  
-    base_score = abs(Lambda[i] * torch.autograd.grad(loss, Lambda[i])[0])  
-    
-    # 带权重的P矩阵梯度影响  
-    p_score = sum(  
-        abs(P[j,i] * torch.autograd.grad(loss, P[j,i])[0]) *   
-        math.exp(-j/d1)  # 距离衰减权重  
-        for j in range(d1)  
-    ) / d1  
-    
-    # 带权重的Q矩阵梯度影响  
-    q_score = sum(  
-        abs(Q[i,j] * torch.autograd.grad(loss, Q[i,j])[0]) *   
-        math.exp(-j/d2)  # 距离衰减权重  
-        for j in range(d2)  
-    ) / d2  
-    
-    # 组合得分  
-    S = layer_weight * length_factor * (  
-        0.4 * λ_importance * base_score +   
-        0.3 * p_score +   
-        0.3 * q_score  
+    def update_suffix_embeddings(self, suffix_embeddings):
+        '''
+         更新模型中所有层的后缀嵌入
+        '''
+        
+        
+        
+
+    def print_trainable_parameters(self):  
+        """print trainable parameters' number and ratio"""  
+        trainable_params = 0  
+        all_params = 0  
+        for name, param in self.named_parameters():  
+            num_params = param.numel()  
+            all_params += num_params  
+            if param.requires_grad:  
+                trainable_params += num_params  
+        print(f"trainable param number: {trainable_params}")  
+        print(f"total param number: {all_params}")  
+        print(f"trainable param ratio: {100 * trainable_params / all_params:.2f}%")  
+
+
+
+class BaasAttention(nn.Module):  
+    """自定义的attention模块，用于插入suffix embeddings"""  
+    def __init__(self, config, layer_idx, fixed_svd, prefix_embeddings = None, suffix_embeddings = None):  
+        super().__init__()  
+        self.layer_idx = layer_idx  
+        self.fixed_svd = fixed_svd  
+        
+        self.prefix_embeddings:torch.Tensor = prefix_embeddings
+        self.suffix_embeddings = suffix_embeddings
+        
+        # 多头注意力的配置  
+        self.num_attention_heads = config.num_attention_heads  
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)  
+        self.all_head_size = self.num_attention_heads * self.attention_head_size  
+        
+        # 原始的Q,K,V投影矩阵  W_q, W_k, W_v
+        self.query = nn.Linear(config.hidden_size, self.all_head_size)  
+        self.key = nn.Linear(config.hidden_size, self.all_head_size)  
+        self.value = nn.Linear(config.hidden_size, self.all_head_size)  
+        
+        # dropout和输出投影  
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)  
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)  
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)  
+        
+    def transpose_for_scores(self, x:torch.Tensor):  
+        """将张量转换为多头格式"""  
+        batch_size, seq_len, _ = x.size()  
+        x = x.view(batch_size, seq_len, self.num_attention_heads,   
+                  self.attention_head_size)  
+        return x.permute(0, 2, 1, 3)  # shape = (batch_size, num_heads, seq_len, head_size)
+        
+    def forward(self, hidden_states, attention_mask=None, head_mask=None, output_attentions=False):  
+        batch_size, seq_length, _ = hidden_states.size()  
+        
+        # 1. 获取当前层的suffix embeddings  
+        P, Lambda, Q = self.fixed_svd.get_layer_matrices(self.layer_idx)  
+        suffix_embeddings = torch.matmul(torch.matmul(P, Lambda), Q)  
+        
+        # 2. 扩展suffix_embeddings到batch维度  
+        suffix_embeddings = suffix_embeddings.unsqueeze(0).expand(  
+            batch_size, -1, -1)  
+        
+        # 2. 扩展suffix_embeddings到batch维度  
+        prefix_embeddings = self.prefix_embeddings.unsqueeze(0).expand(  
+            batch_size, -1, -1)  
+        
+        # 3. 将原始输入和suffix embeddings拼接  
+        extended_hidden_states = torch.cat(  
+            [prefix_embeddings, hidden_states, suffix_embeddings], dim=1)  
+        
+        # 4. 计算Q,K,V  
+        query_layer = self.query(hidden_states)  # shape = (hidden_size, hidden_size) * (batch_size, seq_len, hidden_size) = (batch_size, seq_len, hidden_size)
+        key_layer = self.key(extended_hidden_states)  # shape = (batch_size, seq_len_extended, hidden_size)
+        value_layer = self.value(extended_hidden_states)  # shape = (batch_size, seq_len_extended, hidden_size)
+        
+        # 5. 转换为多头格式  
+        query_layer = self.transpose_for_scores(query_layer)  # # shape = (batch_size, num_heads, seq_len, head_size)
+        key_layer = self.transpose_for_scores(key_layer)   # shape = (batch_size, num_heads, seq_len_extended, head_size)
+        value_layer = self.transpose_for_scores(value_layer)  
+        
+        # 6. 计算注意力分数  
+        # 交换最后两个维度
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))   # shape = (batch_size, num_heads, seq_len, seq_len_extended)
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)  
+        
+        
+        '''
+        
+        在transformer的注意力计算中，attention mask的完整维度格式是:
+        [batch_size, num_attention_heads, seq_length, seq_length]
+
+        但为了节省内存和计算效率，我们通常使用更紧凑的格式:
+        [batch_size, 1, 1, seq_length]
+
+        这里的两个1允许通过广播机制自动扩展到完整维度
+        
+        第一个seq_length：
+
+            查询(query)序列的长度
+            表示"我要查询谁"的位置
+            
+        第二个seq_length：
+
+            键(key)序列的长度
+            表示"我可以被查询的"位置
+        
+        '''
+        
+        
+        # 7. 处理attention mask  
+        if attention_mask is not None:  
+            # 扩展attention mask以包含suffix tokens  
+            suffix_mask = torch.ones(  
+                (batch_size, 1, 1, suffix_embeddings.size(1)),   
+                device=attention_mask.device  
+            )  
+            
+            prefix_mask = torch.ones(  
+                (batch_size, 1, 1, prefix_embeddings.size(1)),   
+                device=attention_mask.device  
+            ) 
+            extended_attention_mask = torch.cat(  
+                [prefix_mask, attention_mask, suffix_mask], dim=-1)  # shape = (batch_size, 1, 1, seq_len_extended)
+            
+            attention_scores = attention_scores + extended_attention_mask   # 广播一下  (batch_size, num_heads, seq_len, seq_len_extended)
+        
+        # 8. 应用softmax和dropout  
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)  
+        attention_probs = self.dropout(attention_probs)  
+        
+        # 应用head mask(如果有)  
+        if head_mask is not None:  
+            attention_probs = attention_probs * head_mask  
+        
+        # 9. 计算上下文层  
+        context_layer = torch.matmul(attention_probs, value_layer)  # shape = (batch_size, num_heads, seq_len, seq_len_extended) * (batch_size, num_heads, seq_len_extended, head_size) = (batch_size, num_heads, seq_len, head_size)
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()  # shape = (batch_size, seq_len, num_heads, head_size)
+        context_layer = context_layer.view(batch_size, seq_length, self.all_head_size)  
+        
+        # 10. 通过输出投影和层归一化  
+        output = self.dense(context_layer)  
+        output = self.dropout(output)  
+        output = self.LayerNorm(output + hidden_states)  # residual
+        
+        outputs = (output,)  
+        if output_attentions:  
+            outputs = outputs + (attention_probs,)  
+            
+        return outputs  
+
+
+
+# 使用示例  
+def main():  
+    # 初始化模型  
+    model = BaasPrompt(  
+        model_name='bert-large-uncased',  
+        num_prefix_tokens=4,  
+        min_step=3,  
+        max_step=8,  
+        num_labels=4  # RACE数据集的4个选项  
     )  
     
-    return S  
+    # 训练配置  
+    training_args = TrainingArguments(  
+        output_dir="./results",  
+        num_train_epochs=3,  
+        per_device_train_batch_size=8,  
+        per_device_eval_batch_size=8,  
+        warmup_steps=500,  
+        weight_decay=0.01,  
+        logging_dir="./logs",  
+    )  
+    
+    # 自定义训练器  
+    class BaasTrainer(Trainer):  
+        def training_step(self, model, inputs):  
+            # 每个epoch开始前更新矩阵  
+            model.fixed_svd.decompose_all_layer_weights()  
+            model.fixed_svd.extend_all_layer_matrices(model.num_layers)  
+            
+            # 调用父类的training_step  
+            return super().training_step(model, inputs)  
+    
+    # 创建训练器  
+    trainer = BaasTrainer(  
+        model=model,  
+        args=training_args,  
+        train_dataset=train_dataset,  
+        eval_dataset=eval_dataset,  
+    )  
+    
+    # 开始训练  
+    trainer.train() 
 
 
-
-def compute_satisfaction_score_v3(k, i, P, Q, λ, l_q, L, d1, d2, alpha):  
-    """  
-    方案2: Distance-Aware Gradient Impact Score  
+# def compute_satisfaction_score_v3(k, i, P, Q, λ, l_q, L, d1, d2, alpha):  
+#     """  
+#     方案2: Distance-Aware Gradient Impact Score  
     
-    额外参数:  
-    α: 层深度影响因子  
-    """  
-    # 层深度指数衰减  
-    depth_factor = math.exp(alpha * k / L)  
+#     额外参数:  
+#     α: 层深度影响因子  
+#     """  
+#     # 层深度指数衰减  
+#     depth_factor = math.exp(alpha * k / L)  
     
-    # 位置重要性权重（考虑与输入的距离）  
-    position_weight = 1 / (1 + math.exp(-(k - L/2)))  # Sigmoid函数  
+#     # 位置重要性权重（考虑与输入的距离）  
+#     position_weight = 1 / (1 + math.exp(-(k - L/2)))  # Sigmoid函数  
     
-    # 问题长度归一化因子  
-    length_norm = math.sqrt(l_q / 30)  # 30是基准长度  
+#     # 问题长度归一化因子  
+#     length_norm = math.sqrt(l_q / 30)  # 30是基准长度  
     
-    # 梯度敏感度计算（带距离衰减）  
-    s_lambda = abs(λ[i] * λ[i].grad) if λ[i].grad is not None else 0  
+#     # 梯度敏感度计算（带距离衰减）  
+#     s_lambda = abs(λ[i] * λ[i].grad) if λ[i].grad is not None else 0  
     
-    # P矩阵的梯度计算（考虑行位置的重要性）  
-    if P[:, i].grad is not None:  
-        p_grads = abs(P[:, i] * P[:, i].grad)  
-        position_weights = torch.linspace(1, 0.5, d1)  # 线性衰减权重  
-        s_P = torch.sum(p_grads * position_weights) / d1  
-    else:  
-        s_P = 0  
+#     # P矩阵的梯度计算（考虑行位置的重要性）  
+#     if P[:, i].grad is not None:  
+#         p_grads = abs(P[:, i] * P[:, i].grad)  
+#         position_weights = torch.linspace(1, 0.5, d1)  # 线性衰减权重  
+#         s_P = torch.sum(p_grads * position_weights) / d1  
+#     else:  
+#         s_P = 0  
     
-    # Q矩阵的梯度计算  
-    s_Q = torch.sum(abs(Q[i, :] * Q[i, :].grad)) / d2 if Q[i, :].grad is not None else 0  
+#     # Q矩阵的梯度计算  
+#     s_Q = torch.sum(abs(Q[i, :] * Q[i, :].grad)) / d2 if Q[i, :].grad is not None else 0  
     
-    # 组合梯度影响  
-    gradient_impact = (s_lambda + s_P + s_Q) / 3  
+#     # 组合梯度影响  
+#     gradient_impact = (s_lambda + s_P + s_Q) / 3  
     
-    # 最终satisfaction score  
-    score = depth_factor * position_weight * length_norm * gradient_impact  
+#     # 最终satisfaction score  
+#     score = depth_factor * position_weight * length_norm * gradient_impact  
     
-    return score  
+#     return score  
 
 
 
@@ -451,15 +707,13 @@ class FixedRankSVD:
     实现每一层的suffix embedding的分解， 
     每一层的后缀矩阵分解为 P_k, Lambda_k, Q_k
     然后分别扩展为 P_k, Lambda_k, Q_k （使用Sparse Attention)
-    
-    
     '''
     def __init__(self, num_layers, hidden_size, min_steps, max_steps, config:BudgetSchedulerConfig):  
         self.config = config
-        self.num_layers = config.n_layers  
+        self.n_layers = config.n_layers  
         self.hidden_size = hidden_size  
         self.min_steps = config.min_rank  # min(n_step)  
-        self.max_steps = config.max_rank  # 2 * input_seq_length  
+        self.max_steps = config.max_rank  # input_seq_length  
         
         
         self.P_matrices = {}  # 存储每层的P矩阵  
@@ -472,13 +726,19 @@ class FixedRankSVD:
         
         self.satisfaction_scores = {}
         
-        self.scheduler = AdaptiveBudgetScheduler(  
-            n_layers=config.n_layers,  
-            min_steps=self.min_steps,  
-            config=self.config
-        ) 
+        self.estimator = AdaptiveSingularValueEstimator(
+            config = config
+        )
+    
+    
+    def initiate_layer_weights(self):
+        pass
+    
+    
+    def initiate_all_layer_weights(self):
+        pass
         
-    def initial_decompose(self, E_k):  
+    def decompose_layer_weights(self, E_k):  
         """
         固定维度的SVD分解
         
@@ -496,169 +756,30 @@ class FixedRankSVD:
         Q_k = V[:, :self.min_steps]  
         return P_k, Lambda_k, Q_k
     
-    def vertical_expansion(self, P_k, Lambda_k, Q_k, delta_r, satisfaction_score):  
-        """
-        垂直扩展SVD分解
-        
-        function：
-            使用垂直扩展机制， 通过在P矩阵上方添加新的行来增加推理步骤
-        """  
-        current_steps = P_k.size(0)  
-        new_steps = current_steps + delta_r  
-        
-        # 1. 生成新的行向量  
-        P_new_rows = self.generate_new_rows(  
-            P_k, Lambda_k, Q_k,   
-            delta_r, satisfaction_score  
-        )  
-        
-        # 2. 扩展P矩阵  
-        P_extended = torch.cat([P_k, P_new_rows], dim=0)  
-        
-        # 3. 通过QR分解确保正交性  
-        P_extended, R = torch.qr(P_extended)  
-        
-        # 4. 更新Lambda和Q  
-        Lambda_extended = torch.mm(R, Lambda_k)  
-        Q_extended = Q_k  
-        
-        return P_extended, Lambda_extended, Q_extended
+    
+    def decompose_all_layer_weights(self):
+        pass
+       
 
-
-    def generate_new_rows(self, P_k, Lambda_k, Q_k, delta_r, satisfaction_score):  
-        """生成新的行向量"""  
-        # 1. 计算注意力权重  
-        attention_weights = self.compute_attention_weights(P_k, Lambda_k)  
-        
-        # 2. 生成新的行向量  
-        new_rows = torch.zeros(delta_r, P_k.size(1))  
-        
-        for i in range(delta_r):  
-            # 基于现有行的加权组合  
-            weighted_sum = torch.mm(  
-                attention_weights,   
-                P_k  
-            )  
-            
-            # 应用satisfaction score的影响  
-            scale_factor = torch.sqrt(satisfaction_score)  
-            new_row = scale_factor * weighted_sum  
-            
-            # 正交化  
-            new_row = self.orthogonalize(new_row, P_k)  
-            new_rows[i] = new_row  
-            
-        return new_rows  
     
-    def increase_rank(self, P_k, Lambda_k, Q_k, satisfaction_score, delta_r):  
-        """增加推理步骤数量"""  
-        current_rank = Lambda_k.size(0)  
-        new_rank = min(current_rank + delta_r, self.max_steps)  # delta_r 实际控制了推理步骤的增量
-        
-        # 计算新增奇异值和向量  
-        new_singular_values = self.compute_new_values(  
-            P_k, Lambda_k, Q_k, satisfaction_score  
-        )  
-        
-        # 扩展矩阵维度  
-        # P_new = self.extend_P(P_k, new_singular_values, delta_r)  
-        # Lambda_new = self.extend_Lambda(Lambda_k, new_singular_values)  
-        # Q_new = self.extend_Q(Q_k, new_singular_values, delta_r)  
-        
-        P_new, Lambda_new, Q_new  = self.extend_matrices(P_k, Lambda_k, Q_k, new_singular_values, delta_r)
-        
-        return P_new, Lambda_new, Q_new 
     
-    def sparse_attention(self, scores, top_k=None):  
-        n = scores.size(0)  
-        weights = torch.zeros_like(scores)  
-        
-        # 对每一行进行处理  
-        for i in range(n):  
-            row = scores[i]  
-            # 找到最大的top_k个值的索引  
-            _, indices = torch.topk(row, min(top_k, n))  
-            # 只在这些位置保留原始分数  
-            weights[i, indices] = row[indices]  
-        
-        return weights 
-    
-    def compute_attention_weights(self, P_k, Lambda_k, top_k=None):  
-        """  
-        使用Sparse Attention计算注意力权重  
-        
-        参数:  
-        P_k: 形状为[n, r]的矩阵，其中n是当前步数，r是秩  
-        Lambda_k: 形状为[r, r]的对角矩阵，包含奇异值  
-        top_k: 每个查询要关注的最大键值对数量  
-        
-        返回:  
-        attention_weights: 形状为[n, n]的稀疏注意力权重矩阵  
-        """  
-        n, r = P_k.shape  
-        
-        # 如果没有指定top_k，设置一个默认值  
-        if top_k is None:  
-            top_k = min(int(math.sqrt(n)), n)  
-        
-        # 计算查询和键值矩阵  
-        # 使用P_k和Lambda_k的组合作为特征表示  
-        try:
-            features = torch.mm(P_k, Lambda_k)  # [n, r] x [r, r] = [n, r]  
-        except:
-            try:
-                raise RuntimeError(f"Invalid matrix shape for attention's matrix multiplication, \
-                               \nwhere m1.shape = {P_k.shape}, m2.shape = {Lambda_k.shape}")
-            except:
-                raise TypeError(f"P_k.type = {type(P_k)}, Lambda_k.type = {type(Lambda_k)}, they do not has an attribute \'shape\'")
-        # 计算注意力分数  
-        attention_scores = torch.mm(features, features.t())  # [n, n]  
-        attention_scores = attention_scores / math.sqrt(r)  # 缩放因子  
-        
-        # 实现Sparse Attention：只保留每行最大的top_k个值  
-        # 应用稀疏化  
-        sparse_scores = self.sparse_attention(attention_scores, top_k)  
-        
-        # 应用softmax得到最终的注意力权重  
-        attention_weights = torch.nn.functional.softmax(sparse_scores, dim=-1)  
-        
-        return attention_weights  
-    
-    def compute_new_values(self, P_k, Lambda_k, Q_k, satisfaction_score):  
-        """计算新增奇异值"""  
-        # 使用Sparse Attention来生成新的奇异值  
-        attention_weights = self.compute_attention_weights(P_k, Lambda_k)  # shape = [r, r]
-        
-        # 新奇异值计算公式  
-        new_values = torch.sqrt(  
-            satisfaction_score *   
-            torch.mean(Lambda_k) *   
-            attention_weights  
-        )  
-        
-        return new_values
-    
-    def extend_matrices(self, P_k, Lambda_k, Q_k, new_values, delta_r):  
+    def extend_layer_matrices(self, layer_index, layer_budget):  
         """扩展SVD矩阵的具体实现"""  
         # 扩展P矩阵  
-        P_new = torch.cat([  
-            P_k,  
-            self.compute_new_P_vectors(P_k, new_values, delta_r)  
-        ], dim=1)  
+        new_P, new_Lambda = self.compute_new_P_vectors(layer_index, layer_budget, self.estimator)
         
-        # 扩展Lambda矩阵  
-        Lambda_new = torch.cat([  
-            Lambda_k,  
-            torch.diag(new_values)  
-        ], dim=1)  
         
         # 扩展Q矩阵  
-        Q_new = torch.cat([  
-            Q_k,  
-            self.compute_new_Q_vectors(Q_k, new_values, delta_r)  
-        ], dim=1)  
+        new_Q = self.compute_new_Q_vectors(layer_index, layer_budget, self.estimator)
         
-        return P_new, Lambda_new, Q_new  
+        return new_P, new_Lambda, new_Q  
+
+    
+    def extend_all_layer_matrices(self, num_layers):
+        pass
+    
+    
+    
 
     def compute_new_P_vectors(self, layer_idx, layer_budget, estimator:"AdaptiveSingularValueEstimator"):  
         """  
@@ -726,10 +847,10 @@ class FixedRankSVD:
         
         # 在更新完矩阵后，更新satisfaction score  
         self.satisfaction_scores[layer_idx] = self.compute_satisfaction_score(layer_idx) 
-        return new_P
+        return new_P, new_Lambda
     
 
-    def compute_new_Q_vectors(self, layer_idx, layer_budget):  
+    def compute_new_Q_vectors(self, layer_idx, layer_budget, estimator:"AdaptiveSingularValueEstimator"):  
         """扩展Q矩阵到目标秩  
         
         确保在执行此函数之前， P和 Lambda 已经更新完毕
@@ -743,10 +864,14 @@ class FixedRankSVD:
         """  
         
         Q = self.Q_matrices.get(layer_idx)   # shape = (n_step, h)
-        Lambda = self.Lambda_matrices.get(layer_idx) 
+        # 扩展Lambda矩阵 , 顺便计算新的奇异值， 如果layer_budgetmei有变，那就返回已有的吗，不会重新计算
+        Lambda = self.compute_new_Lambda_vectors(layer_idx, layer_budget, estimator)
         
-        if Q is None or Lambda is None:  
-            raise ValueError(f"Layer {layer_idx}'s SVD Q or Lambda matrices not initialized")  
+        if Q is None:  
+            raise ValueError(f"Layer {layer_idx}'s SVD Q  matrices not initialized")  
+        
+        if Lambda is None:  
+            raise ValueError(f"Layer {layer_idx}'s SVD Lambda  matrices not initialized")  
         
         current_rank = Q.shape[0]   
         feature_dim = Q.shape[1]  
@@ -759,42 +884,53 @@ class FixedRankSVD:
         new_Q = torch.zeros(layer_budget, feature_dim, device=Q.device)  
         new_Q[:current_rank, :] = Q 
         
+        # 获取当前的奇异值序列  
+        current_singular_values = torch.diag(Lambda)  
+        new_Lambda = Lambda.clone()
+        
         # 逐步添加新的行  
         for i in range(current_rank, layer_budget):  
-            # Step 1: 计算键值对  
-            K = torch.mm(new_Q[:i], new_Q[:i].t())  # shape=[i, i]  
+            # new_Lambda = estimator.update_layer_singular_values(
+            #     Lambda,
+            #     layer_idx,
+            #     layer_budget
+            # )  # shape=[i, i]
             
-            # Step 2: 计算稀疏注意力分数  
-            S = torch.mm(K, K.t()) / math.sqrt(feature_dim)  # shape=[i, i] 
+            current_singular_values = torch.diag(new_Lambda[:i+1, :i+1])  
             
-            # Step 3: Top-k 稀疏化  
-            k = min(self.config.k, i)  
-            values, indices = torch.topk(S, k, dim=-1)  
-            S_sparse = torch.zeros_like(S)  
-            S_sparse.scatter_(-1, indices, values)  # shape=[i, i] 
             
-            # Step 4: 注意力权重  
-            A = torch.softmax(S_sparse, dim=-1)  # shape=[i, i]  
+            # 生成新列  
+            q_c = self.generate_orthogonal_column(  
+                new_Q[:i, :i],   
+                new_Lambda[:i+1, :i+1]  # 包含新计算的奇异值  
+            )  # shape=[i, 1]  
             
-            # Step 5: 生成新行  
-            q_new = torch.mm(A, new_Q[:i])  # shape=[i, feature_dim]  
+            # 将新列放入扩展矩阵  
+            new_Q[:i, i:i+1] = q_c  
             
-            # Step 6: 缩放和噪声  
-            lambda_k = Lambda[i-1, i-1]  # 使用前一个奇异值  
-            q_new = math.sqrt(lambda_k) * q_new[-1:] + \
-                   torch.randn(1, feature_dim, device=Q.device) * self.config.epsilon  
+            # 生成新行  
+            Q_extended = new_Q[:i+1, :i+1]  
+            q_r = self.generate_orthogonal_row(  
+                Q_extended,  
+                new_Lambda[:i+1, :i+1]  # 包含新计算的奇异值  
+            )  # shape=[1, i]  
             
-            # Step 7: 正交化  
-            for j in range(i):  
-                q_j = new_Q[j:j+1]  # shape=[1, feature_dim]  
-                proj = (q_j @ q_new.t()) / (q_j @ q_j.t())  
-                q_new = q_new - proj.t() @ q_j  
-                
-            # Step 8: 归一化  
-            q_new = q_new / torch.norm(q_new)  
+            # 将新行放入扩展矩阵  
+            new_Q[i:i+1, :i] = q_r  
             
-            # 将新行添加到扩展矩阵  
-            new_Q[i:i+1, :] = q_new  
+            # 计算对角元素以保持正交性  
+            row_norm = torch.norm(q_r)  
+            col_norm = torch.norm(q_c)  
+            q_ii = math.sqrt(1 - row_norm**2 - col_norm**2)  
+            new_Q[i, i] = q_ii  
+            
+        
+        # 更新类中存储的矩阵  
+        self.Q_matrices[layer_idx] = new_Q  
+        self.Lambda_matrices[layer_idx] = Lambda
+        
+        # 更新satisfaction score  
+        # self.satisfaction_scores[layer_idx] = self.compute_satisfaction_score(layer_idx)  
             
         return new_Q  
 
@@ -814,6 +950,13 @@ class FixedRankSVD:
         Returns:  
             torch.Tensor: 扩展后的Lambda矩阵  
         """  
+        
+        # 再更新所有矩阵之前，先计算满意度分数
+        if not self.satisfaction_scores[layer_idx]:
+            self.satisfaction_scores[layer_idx] = self.compute_satisfaction_score(layer_idx)
+        
+        
+        
         Lambda = self.Lambda_matrices.get(layer_idx)  
         
         if Lambda is None:  
@@ -832,7 +975,7 @@ class FixedRankSVD:
         
         # 填满多出来的这些奇异值，需要用到另一个类
         
-        new_Lambda = estimator.update_layer_singular_values(new_Lambda, layer_idx, layer_budget)
+        new_Lambda = estimator.update_layer_singular_values(new_Lambda, layer_idx, layer_budget, self.satisfaction_scores[layer_idx])
         
         
         
@@ -980,9 +1123,9 @@ class FixedRankSVD:
         2. 奇异值衰减率  
         3. 正交性保持程度  
         """  
-        P = self.P_matrices[layer_idx]  
-        Q = self.Q_matrices[layer_idx]  
-        Lambda = self.Lambda_matrices[layer_idx]  
+        P = self.P_matrices[layer_idx]  # (n_step, n_step)
+        Q = self.Q_matrices[layer_idx]  # (n_step, h)
+        Lambda = self.Lambda_matrices[layer_idx]   # (n_step, n_step)
         
         # 1. 计算重构误差 (reconstruction error)  
         X = torch.mm(torch.mm(P, Lambda), Q)  # 重构矩阵  
@@ -1001,9 +1144,9 @@ class FixedRankSVD:
         ortho_error = torch.norm(P_ortho - I, p='fro') + torch.norm(Q_ortho - I, p='fro')  
         
         # 组合所有指标  
-        satisfaction = (self.config.alpha * (-recon_error) +  # 重构项（负的因为是误差）  
-                       self.config.beta * decay_score +       # 衰减项  
-                       self.config.gamma * (-ortho_error))    # 正交项（负的因为是误差）  
+        satisfaction = (self.config.alpha_s * (-recon_error) +  # 重构项（负的因为是误差）  
+                       self.config.beta_s * decay_score +       # 衰减项  
+                       self.config.gamma_s * (-ortho_error))    # 正交项（负的因为是误差）  
         
         return satisfaction  
 
@@ -1079,19 +1222,31 @@ class EnhancedSVDReasoningAllocator:
         )
 
 
-
-
-class AdaptiveBudgetScheduler:  
-    '''
-    基于熵和动量的推理步数调度器
+    e  
     
-    '''
-    def __init__(self, n_layers, min_steps, input_length, config:BudgetSchedulerConfig):  
-        self.b_min = n_layers * min_steps  
-        self.b_max = n_layers * 2 * input_length  
-        self.momentum = 0  
-        self.velocity = 0  
-        self.t = 0  
+    
+    
+
+
+class AdaptiveSingularValueEstimator:  
+    def __init__(self, config: BudgetSchedulerConfig):  
+        self.momentum = {}  # 每个奇异值的动量  
+        self.velocity = {}  # 每个奇异值的速度  
+        self.t = 0    # 时间步 
+        self.config = config  
+        
+        '''
+        :param: min_step: 每层的平均最小推理步数
+        
+        :param: input_length: 输入问题的长度，每层的最大推理步数为2 * input_length
+        
+        '''
+        
+        self.n_layers = config.n_layers
+
+        # self.b_min = n_layers * min_steps  
+        # self.b_max = n_layers * 2 * input_length  
+
         self.config = config  
         
         # 温度相关的状态变量  
@@ -1099,15 +1254,24 @@ class AdaptiveBudgetScheduler:
         self.T0 = config.T0  
         self.last_budget = None 
         
-    def compute_entropy(self, satisfaction_scores):  
-        # 计算每层的熵 
+    def compute_entropy(self, lambda_matrix):  
+        '''
         
-        # 归一化满意度 
-        probs = F.softmax(satisfaction_scores / self.config.tau, dim=-1)  
-        # 计算层级熵
-        entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)  
+        计算奇异值矩阵Lambda的总熵 
+        
+        这个熵值用于所有奇异值的更新，反映了整个奇异值分布的不确定性
+        
+        lambda_matrix.shape = (n_step, n_step)
+        
+        '''
+        # 计算每个奇异值的相对重要性熵  
+        total = lambda_matrix.sum()  
+        if total == 0:  
+            return torch.zeros_like(lambda_matrix)  
+        probs = lambda_matrix / total  
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10))  
         return entropy  
-        
+         
     def exploration_term(self):  
         '''
         # 计算周期性探索项  
@@ -1118,52 +1282,31 @@ class AdaptiveBudgetScheduler:
         λ 是衰减率
         t 是时间步
         '''
-        t = self.t / self.config.t_scale  
-        return (self.config.A * torch.sin(self.config.omega * t + self.config.phi)**2   
-                * torch.exp(-self.config.lambda_ * t))  
+        
+        # 将所有变量转为张量，不然没法用torch.sin函数
+        t = torch.tensor(self.t, dtype=torch.float32) / self.config.t_scale  
+        omega = torch.tensor(self.config.omega, dtype=torch.float32)  
+        phi = torch.tensor(self.config.phi, dtype=torch.float32)  
+        A = torch.tensor(self.config.A, dtype=torch.float32)  
+        lambda_ = torch.tensor(self.config.lambda_, dtype=torch.float32)  
+        
+        
+        return (A * torch.sin(omega * t + phi)**2 * torch.exp(lambda_ * t))  
     
-    def update_momentum(self, delta):  
-        # 更新动量  
-        self.momentum = (self.config.beta * self.momentum +   
-                        (1 - self.config.beta) * delta)  
-        self.velocity = (self.config.alpha * self.velocity +   
-                        (1 - self.config.alpha) * self.momentum**2)  
-        
-    def __call__(self, satisfaction_scores):  
-        # 计算熵  （层级熵）
-        layer_entropy = self.compute_entropy(satisfaction_scores)  
-        total_entropy = layer_entropy.mean()  
-        
-        # 计算探索项  
-        explore = self.exploration_term()  
-        
-        # 计算基础预算  
-        budget_ratio = torch.sigmoid(total_entropy / self.config.H_max)  
-        
-        # 预算 b^{(t)}
-        base_budget = (self.b_min + (self.b_max - self.b_min) *   
-                      (budget_ratio + explore))  
-        
-        # 更新动量  
-        delta = base_budget - self.last_budget if self.t > 0 else 0  
-        self.update_momentum(delta)  
-        
-        # 应用动量修正  
-        final_budget = base_budget * (self.momentum /   
-                                    (torch.sqrt(self.velocity) + 1e-8))  
-        
-        self.final_budget = final_budget
-        # 计算温度  
-        temp = self.compute_temperature()  
-        
-        # 分配层级预算  
-        layer_budgets = self.allocate_layer_budgets(  
-            final_budget, layer_entropy, temp)  
-        
-        self.last_budget = final_budget  
-        self.t += 1  
-        
-        return layer_budgets
+    def update_momentum(self, i, delta):  
+        '''
+        Args:
+        :param: i: 奇异值的索引
+        :param delta: delta_lambda_i^(t-1)
+        '''
+        if i not in self.momentum:  
+            self.momentum[i] = 0  
+            self.velocity[i] = 0  
+            
+        self.momentum[i] = (self.config.beta * self.momentum[i] +   
+                           (1 - self.config.beta) * delta)  
+        self.velocity[i] = (self.config.alpha * self.velocity[i] +   
+                           (1 - self.config.alpha) * self.momentum[i]**2)  
     
     def compute_temperature(self):  
         """计算自适应温度  
@@ -1195,103 +1338,6 @@ class AdaptiveBudgetScheduler:
                                 max=self.config.max_temperature)  
         
         return temperature  
-    
-    
-    def allocate_layer_budgets(self, final_budget, layer_entropy, temperature):  
-        """分配层级预算  
-        
-        使用带温度的Softmax进行层级预算分配：  
-        b_l^{(t)} = b^{(t)} · exp(H_l^{(t)}/T^{(t)}) / ∑ᵢexp(H_i^{(t)}/T^{(t)})  
-        """  
-        # 添加探索项的影响  
-        explore = self.exploration_term()  
-        adjusted_temp = temperature * (1 + self.config.gamma * explore)  
-        
-        # 计算分配权重  
-        weights = torch.exp(layer_entropy / adjusted_temp)  
-        normalized_weights = weights / weights.sum()  
-        
-        # 确保预算是整数  
-        base_budgets = (normalized_weights * final_budget).floor()  
-        
-        # 处理舍入误差，确保总和等于final_budget  
-        remaining = final_budget - base_budgets.sum()  
-        if remaining > 0:  
-            # 根据小数部分大小分配剩余预算  
-            decimal_parts = normalized_weights * final_budget - base_budgets  
-            _, indices = torch.sort(decimal_parts, descending=True)  
-            for i in range(int(remaining)):  
-                base_budgets[indices[i]] += 1  
-        
-        # 确保每层至少有最小预算  
-        min_layer_budget = self.b_min / len(layer_entropy)  
-        base_budgets = torch.maximum(base_budgets,   
-                                    torch.tensor(min_layer_budget))  
-        
-        # 应用动态缩放以确保总预算约束  
-        if base_budgets.sum() > final_budget:  
-            scale = final_budget / base_budgets.sum()  
-            base_budgets = (base_budgets * scale).floor()  
-        
-        return base_budgets 
-    
-    
-    
-
-
-class AdaptiveSingularValueEstimator:  
-    def __init__(self, config: BudgetSchedulerConfig):  
-        self.momentum = {}  # 每个奇异值的动量  
-        self.velocity = {}  # 每个奇异值的速度  
-        self.t = 0  
-        self.config = config  
-        
-    def compute_entropy(self, lambda_matrix):  
-        '''
-        计算奇异值矩阵Lambda的总熵 
-        
-        这个熵值用于所有奇异值的更新，反映了整个奇异值分布的不确定性
-        
-        lambda_matrix.shape = (n_step, n_step)
-        
-        '''
-        # 计算每个奇异值的相对重要性熵  
-        total = lambda_matrix.sum()  
-        if total == 0:  
-            return torch.zeros_like(lambda_matrix)  
-        probs = lambda_matrix / total  
-        entropy = -torch.sum(probs * torch.log(probs + 1e-10))  
-        return entropy  
-         
-    def exploration_term(self):  
-        '''
-        计算探索项  
-        '''
-        
-        # 将所有变量转为张量，不然没法用torch.sin函数
-        t = torch.tensor(self.t, dtype=torch.float32) / self.config.t_scale  
-        omega = torch.tensor(self.config.omega, dtype=torch.float32)  
-        phi = torch.tensor(self.config.phi, dtype=torch.float32)  
-        A = torch.tensor(self.config.A, dtype=torch.float32)  
-        lambda_ = torch.tensor(self.config.lambda_, dtype=torch.float32)  
-        
-        
-        return (A * torch.sin(omega * t + phi)**2 * torch.exp(lambda_ * t))  
-    
-    def update_momentum(self, i, delta):  
-        '''
-        Args:
-        :param: i: 奇异值的索引
-        :param delta: delta_lambda_i^(t-1)
-        '''
-        if i not in self.momentum:  
-            self.momentum[i] = 0  
-            self.velocity[i] = 0  
-            
-        self.momentum[i] = (self.config.beta * self.momentum[i] +   
-                           (1 - self.config.beta) * delta)  
-        self.velocity[i] = (self.config.alpha * self.velocity[i] +   
-                           (1 - self.config.alpha) * self.momentum[i]**2)  
     
     def compute_delta_lambda(self, lambda_matrix, i, layer_idx):  
         """
@@ -1427,24 +1473,45 @@ class AdaptiveSingularValueEstimator:
         return layer_budgets  
     
     
-    def update_layer_singular_values(self, lambda_matrix, layer_idx, layer_budget, fixed_rank_svd:FixedRankSVD=None):  
+    def update_layer_singular_values(self, new_lambda, layer_idx, layer_budget, satisfaction_scores):  
         """更新单层的奇异值  
         
+         按照预算分配更新奇异值:  
+            λᵢ^(l,t+1) = λᵢ^(l,t) + Δλᵢ^(l,t)  如果 λᵢ^(l,t) 是前 b_l^(t) 大的奇异值  
+            λᵢ^(l,t+1) = λᵢ^(l,t)               否则  
+    
         Args:  
-            lambda_matrix: 当前层的奇异值向量 shape=(n_l,)  
+            new_P: 经过FixedSVD扩展后的P矩阵  
+            new_Q: 经过FixedSVD扩展后的Q矩阵  
+            new_lambda: 经过FixedSVD扩展后的奇异值矩阵  
+            
             layer_idx: 层索引  
             layer_budget: 该层分配到的预算  
-            fixed_rank_svd: FixedRankSVD对象，用于处理SVD分解相关的操作 
-        Returns:  
-            torch.Tensor: 更新后的奇异值向量  
-        """  
+            fixed_rank_svd: FixedRankSVD对象，用于处理SVD分解相关的操作  
+            
+            satisfaction_scores: layer 的满意度分数
         
+        Returns:  
+            torch.Tensor: 更新后的奇异值矩阵  
+        """  
+        # 获取当前维度  
+        current_dim = new_lambda.size(0)  
+        
+        # 1. 获取当前奇异值向量（对角线元素）  
+        current_singular_values = torch.diag(new_lambda)  
+        
+        # 计算需要更新的奇异值数量（b_l^(t)/2）  
+        update_count = max(1, int(layer_budget // 2))  # 确保至少更新1个  
+        
+        # 2. 找出前layer_budget大的奇异值索引  
+        _, top_indices = torch.topk(current_singular_values,   
+                                k=min(update_count, current_dim))  
         
         
         # 1. 首先通过FixedRankSVD扩展P、Lambda、Q矩阵  
-        new_P = fixed_rank_svd.compute_new_P_vectors(layer_idx, layer_budget)
-        new_Q = fixed_rank_svd.compute_new_Q_vectors(layer_idx, layer_budget)
-        new_lambda = fixed_rank_svd.compute_new_Lambda_vectors(layer_idx, layer_budget)  
+        # new_P = fixed_rank_svd.compute_new_P_vectors(layer_idx, layer_budget)
+        # new_Q = fixed_rank_svd.compute_new_Q_vectors(layer_idx, layer_budget)
+        # new_lambda = fixed_rank_svd.compute_new_Lambda_vectors(layer_idx, layer_budget)  
         
         # n_l = lambda_matrix.size(0)  # 该层的奇异值数量  
         # new_lambda = lambda_matrix.clone()  
@@ -1457,9 +1524,22 @@ class AdaptiveSingularValueEstimator:
         # _, top_indices = torch.topk(lambda_matrix, k=min(layer_budget, n_l))  
         
         # 使用扩展后的新维度更新奇异值   
-        for i in range(layer_budget):  
-            delta = self.compute_delta_lambda(new_lambda, i, layer_idx)  
-            new_lambda[i] = new_lambda[i] + delta  
+        # for i in range(layer_budget):  
+        #     delta = self.compute_delta_lambda(new_lambda, i, layer_idx)  
+        #     new_lambda[i] = new_lambda[i] + delta  
+        
+        
+        # 更新奇异值  
+        # 创建更新掩码（mask）  
+        update_mask = torch.zeros_like(current_singular_values, dtype=torch.bool)  
+        update_mask[top_indices] = True  
+        
+        # 对每个需要更新的奇异值计算增量并更新  
+        for i in range(new_lambda.size(0)):  
+            if update_mask[i]:  
+                # 只对满意度分数较高的奇异值计算和应用增量  
+                delta = self.compute_delta_lambda(new_lambda, i, layer_idx)  
+                new_lambda[i, i] = new_lambda[i, i] + delta  
         
         return new_lambda 
     
@@ -1473,6 +1553,9 @@ class AdaptiveSingularValueEstimator:
         Returns:  
             Dict[int, torch.Tensor]: 更新后的各层奇异值矩阵  
         """  
+        
+        
+        
         # 1. 计算总预算b^(t)  
         total_budget = self.compute_total_budget(lambda_matrices)  
         
@@ -1482,6 +1565,8 @@ class AdaptiveSingularValueEstimator:
         # 3. 更新各层的奇异值  
         new_lambda_matrices = {}  
         for layer_idx, lambda_matrix in lambda_matrices.items():  
+            
+            satisfaction_scores = self.compute_satisfaction_scores(lambda_matrix)
             new_lambda = self.update_layer_singular_values(  
                 lambda_matrix,  
                 layer_idx,  
