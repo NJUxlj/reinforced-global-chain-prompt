@@ -393,8 +393,12 @@ class BaasPrompt(torch.nn.Module):
             layer.attention.self = BaasAttention(  
                 config=self.config,  
                 layer_idx=i,  
-                fixed_svd=self.fixed_svd  
+                fixed_svd=self.fixed_svd,
+                prefix_embeddings=self.prefix_embeddings,
+                suffix_embeddings=self.suffix_embeddings,
             )  
+            
+            self.fixed_svd.suffix_weights[i] = suffix_embeddings.clone()
         
         # 冻结分类器参数  
         for param in self.base_model.classifier.parameters():  
@@ -449,6 +453,11 @@ class BaasPrompt(torch.nn.Module):
             # print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
 
         
+        
+        # 每一个batch的反向传播结束以后， 更新所有层的suffix embedding
+        
+        # 所以应该写在训练循环里面 
+        
         # 调用原始模型的forward方法  
         outputs = self.model(  
             inputs_embeds=inputs_embeds,  
@@ -459,12 +468,37 @@ class BaasPrompt(torch.nn.Module):
         
         return outputs  
     
-    def update_suffix_embeddings(self, suffix_embeddings):
+    def update_all_suffix_embeddings(self, suffix_embeddings):
         '''
          更新模型中所有层的后缀嵌入
         '''
         
+        # 此处需要在每个训练步修改  self.fixed_svd 中的参数，
+        # 这样动态更新才有效果
         
+        
+        self.fixed_svd.extend_all_layer_matrices()
+        
+        suffix_weights:Dict[int, torch.Tensor] = {}
+        
+        for i in range(self.num_layers):
+            P = self.fixed_svd.P_matrices[i]
+            Lambda = self.fixed_svd.Lambda_matrices[i]
+            Q = self.fixed_svd.Q_matrices[i]
+            
+            suffix_embedding = torch.mm(torch.mm(P,Lambda),Q)
+        
+            suffix_weights[i] = suffix_embedding
+        
+        # 将suffix_weights更新到Bert中的每一层
+        for i, layer in enumerate(self.base_model.encoder.layer):  
+            layer.attention.self = BaasAttention(  
+                config=self.config,  
+                layer_idx=i,  
+                fixed_svd=self.fixed_svd,
+                prefix_embeddings=self.prefix_embeddings,
+                suffix_embeddings=suffix_weights[i],
+            )  
         
 
     def print_trainable_parameters(self):  
@@ -518,11 +552,11 @@ class BaasAttention(nn.Module):
         batch_size, seq_length, _ = hidden_states.size()  
         
         # 1. 获取当前层的suffix embeddings  
-        P, Lambda, Q = self.fixed_svd.get_layer_matrices(self.layer_idx)  
-        suffix_embeddings = torch.matmul(torch.matmul(P, Lambda), Q)  
+        # P, Lambda, Q = self.fixed_svd.get_layer_matrices(self.layer_idx)  
+        # suffix_embeddings = torch.matmul(torch.matmul(P, Lambda), Q)  
         
         # 2. 扩展suffix_embeddings到batch维度  
-        suffix_embeddings = suffix_embeddings.unsqueeze(0).expand(  
+        suffix_embeddings = self.suffix_embeddings.unsqueeze(0).expand(  
             batch_size, -1, -1)  
         
         # 2. 扩展suffix_embeddings到batch维度  
@@ -589,7 +623,7 @@ class BaasAttention(nn.Module):
             
             attention_scores = attention_scores + extended_attention_mask   # 广播一下  (batch_size, num_heads, seq_len, seq_len_extended)
         
-        # 8. 应用softmax和dropout  
+        # 应用softmax和dropout  
         attention_probs = nn.Softmax(dim=-1)(attention_scores)  
         attention_probs = self.dropout(attention_probs)  
         
@@ -597,12 +631,12 @@ class BaasAttention(nn.Module):
         if head_mask is not None:  
             attention_probs = attention_probs * head_mask  
         
-        # 9. 计算上下文层  
+        # 计算上下文层  
         context_layer = torch.matmul(attention_probs, value_layer)  # shape = (batch_size, num_heads, seq_len, seq_len_extended) * (batch_size, num_heads, seq_len_extended, head_size) = (batch_size, num_heads, seq_len, head_size)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()  # shape = (batch_size, seq_len, num_heads, head_size)
         context_layer = context_layer.view(batch_size, seq_length, self.all_head_size)  
         
-        # 10. 通过输出投影和层归一化  
+        # 通过输出投影和层归一化  
         output = self.dense(context_layer)  
         output = self.dropout(output)  
         output = self.LayerNorm(output + hidden_states)  # residual
@@ -707,6 +741,11 @@ class FixedRankSVD:
     实现每一层的suffix embedding的分解， 
     每一层的后缀矩阵分解为 P_k, Lambda_k, Q_k
     然后分别扩展为 P_k, Lambda_k, Q_k （使用Sparse Attention)
+    
+    
+    P.shape = (n_step, n_step)
+    Lambda.shape = (n_step, n_step)
+    Q.shape = (n_step, hidden_size)  注意：Q是已经经过转置的V矩阵
     '''
     def __init__(self, num_layers, hidden_size, min_steps, max_steps, config:BudgetSchedulerConfig):  
         self.config = config
@@ -721,6 +760,9 @@ class FixedRankSVD:
         self.Lambda_matrices = {}  # 存储每层的Lambda矩阵  
         
         
+        self.suffix_weights:Dict[int, torch.Tensor] = {}  # 存储每层的后缀矩阵
+        
+        
         # self.momentum = {}  
         # self.velocity = {}  
         
@@ -731,36 +773,62 @@ class FixedRankSVD:
         )
     
     
+
+        
+    def decompose_layer_weights(self, layer_id):  
+        """  
+        对指定层的权重进行SVD分解  
+        
+        Args:  
+            layer_id (int): 层的索引  
+            
+        Returns:  
+            tuple: (P, Lambda, Q) 分解后的三个矩阵  
+        """  
+        # 1. 获取该层的suffix权重矩阵  
+        if layer_id not in self.suffix_weights:  
+            raise ValueError(f"Layer {layer_id}'s suffix weights not found")  
+        
+        weight_matrix = self.suffix_weights[layer_id]  # shape = (min_step, hidden_size)
+        
+        # 2. 使用estimator获取该层应该使用的rank数  
+        target_rank = self.min_steps
+         
+        
+        # 3. 执行SVD分解  
+        try:  
+            U, S, V = torch.svd(weight_matrix)  
+        except Exception as e:  
+            print(f"SVD decomposition failed for layer {layer_id}: {e}")  
+            # 如果常规SVD失败，尝试使用更稳定的方法  
+            U, S, V = torch.svd(weight_matrix + 1e-10 * torch.randn_like(weight_matrix))  
+        
+        # 4. 截断到目标rank  
+        P = U[:target_rank, :target_rank]  # [max_steps, target_rank]  
+        Lambda = torch.diag(S[:target_rank])  # [target_rank, target_rank]  
+        Q = V[:, :target_rank].t  # [hidden_size, target_rank]  
+        
+        # 5. 存储分解结果  
+        self.P_matrices[layer_id] = P  
+        self.Lambda_matrices[layer_id] = Lambda  
+        self.Q_matrices[layer_id] = Q  
+        
+        return P, Lambda, Q  
+    
+    
+    def decompose_all_layer_weights(self):
+        '''
+        对所有suffix层的权重进行分解, 分解到 suffix_weight列表中
+        '''
+        for i in range(self.n_layers):
+            self.decompose_layer_weights(i)
+       
     def initiate_layer_weights(self):
         pass
     
     
     def initiate_all_layer_weights(self):
         pass
-        
-    def decompose_layer_weights(self, E_k):  
-        """
-        固定维度的SVD分解
-        
-        Args: 
-            E_k：每一层的后缀矩阵，维度为[K_suffix, H]
-        
-        """ 
-        # U, S, V 可以有两维， 也可以有3维 
-        U, S, V = torch.svd(E_k)   # U-> P, S->\Lambda, V->Q
-        # U.shape = [batch_size, K_suffix, K_suffix] 
-        # S.shape = [batch_size, K_suffix, K_suffix]
-        # V.shape = [batch_size, hidden_size, K_suffix]
-        P_k = U[:, :self.min_steps]  
-        Lambda_k = torch.diag(S[:self.min_steps])  # return a 1-D tensor
-        Q_k = V[:, :self.min_steps]  
-        return P_k, Lambda_k, Q_k
-    
-    
-    def decompose_all_layer_weights(self):
-        pass
-       
-
     
     
     def extend_layer_matrices(self, layer_index, layer_budget):  
@@ -772,12 +840,34 @@ class FixedRankSVD:
         # 扩展Q矩阵  
         new_Q = self.compute_new_Q_vectors(layer_index, layer_budget, self.estimator)
         
+        
+        # 更新到矩阵列表
+        self.P_matrices[layer_index] = new_P
+        self.Lambda_matrices[layer_index] = new_Lambda
+        self.Q_matrices[layer_index] = new_Q
+        
         return new_P, new_Lambda, new_Q  
 
     
-    def extend_all_layer_matrices(self, num_layers):
-        pass
-    
+    def extend_all_layer_matrices(self):
+        
+        '''
+        利用预算调度器对所有层的SVD矩阵进行更新
+        '''
+        total_budget = self.estimator.compute_total_budget(self.Lambda_matrices)
+        layer_budgets:Dict[int, int] = self.estimator.allocate_layer_budgets(
+            self.Lambda_matrices,
+            total_budget
+        )
+        for i in range(self.n_layers):
+            self.extend_layer_matrices(i, layer_budgets[i])
+        
+        
+        # 动态调整推理链长度的本质：
+           # 在训练的每一轮将时间步t，以及其他参数传入 AdaptiveSingularValueEstimator
+        
+        
+        
     
     
 
@@ -890,39 +980,42 @@ class FixedRankSVD:
         
         # 逐步添加新的行  
         for i in range(current_rank, layer_budget):  
-            # new_Lambda = estimator.update_layer_singular_values(
-            #     Lambda,
-            #     layer_idx,
-            #     layer_budget
-            # )  # shape=[i, i]
-            
+
             current_singular_values = torch.diag(new_Lambda[:i+1, :i+1])  
             
             
-            # 生成新列  
-            q_c = self.generate_orthogonal_column(  
-                new_Q[:i, :i],   
-                new_Lambda[:i+1, :i+1]  # 包含新计算的奇异值  
-            )  # shape=[i, 1]  
+            # # 生成新列  
+            # q_c = self.generate_orthogonal_column(  
+            #     new_Q[:i, :i],   
+            #     new_Lambda[:i+1, :i+1]  # 包含新计算的奇异值  
+            # )  # shape=[i, 1]  
             
-            # 将新列放入扩展矩阵  
-            new_Q[:i, i:i+1] = q_c  
+            # # 将新列放入扩展矩阵  
+            # new_Q[:i, i:i+1] = q_c  
             
             # 生成新行  
-            Q_extended = new_Q[:i+1, :i+1]  
-            q_r = self.generate_orthogonal_row(  
-                Q_extended,  
+            Q_extended = new_Q[:i+1, :i] 
+            
+            # P_extended = self.P_matrices[layer_idx]
+            # if len(P_extended) < i:
+            #     self.compute_new_P_vectors(layer_idx, layer_budget, estimator)
+            #     print(f"Layer {layer_idx}'s SVD P  matrices not initialized for n_step = {i}") 
+            
+             
+            q_r = self.generate_orthogonal_row(   # (i+1, i)*(i, i+1)*(i+1, i) = (i+1, i)
+                                                    #  ..... = (n+1, h)
+                Q_extended,  # shape = (i+1, i) = (n+1, h)
                 new_Lambda[:i+1, :i+1]  # 包含新计算的奇异值  
             )  # shape=[1, i]  
             
             # 将新行放入扩展矩阵  
             new_Q[i:i+1, :i] = q_r  
             
-            # 计算对角元素以保持正交性  
-            row_norm = torch.norm(q_r)  
-            col_norm = torch.norm(q_c)  
-            q_ii = math.sqrt(1 - row_norm**2 - col_norm**2)  
-            new_Q[i, i] = q_ii  
+            # # 计算对角元素以保持正交性  
+            # row_norm = torch.norm(q_r)  
+            # col_norm = torch.norm(q_c)  
+            # q_ii = math.sqrt(1 - row_norm**2 - col_norm**2)  
+            # new_Q[i, i] = q_ii  
             
         
         # 更新类中存储的矩阵  
@@ -1096,7 +1189,7 @@ class FixedRankSVD:
         
         
         A = torch.softmax(S_sparse, dim=-1)  
-        R = torch.mm(A, P_extended)  # shape = (n_step+1, n_step+1)
+        R = torch.mm(A, P_extended)  # shape = (n_step+1, n_step+1), 如果是Q矩阵，那就是(n+1, h)
         
         #与奇异值相乘并加入噪声  
         # 选择最后一行作为新行向量  
