@@ -13,6 +13,14 @@ from load import (
     preprocess_function_race,
     load_dataset_from_huggingface,
     preprocess_race,
+
+)
+
+from utils import (
+    prepare_model_tokenizer,
+    get_base_model_using_model,
+    get_max_length_from_model,
+    get_classifier_from_model
 )
 
 
@@ -93,20 +101,21 @@ class PTuningV2BertForSequenceClassification(nn.Module):
     def __init__(self, model, num_labels, prompt_length):  
         super(PTuningV2BertForSequenceClassification, self).__init__()  
         # 加载预训练的BERT模型  
-        self.bert = model
+        self.base_model = get_base_model_using_model(model)
         self.prompt_length = prompt_length  
         self.num_labels = num_labels  
         # 初始化Prompt Encoder  
         self.prompt_encoder = PromptEncoder(  
             prompt_length,   
-            self.bert.config.hidden_size,   
-            self.bert.config.hidden_size  
+            self.base_model.config.hidden_size,   
+            self.base_model.config.hidden_size  
         )  
         # 冻结BERT模型的参数  
-        for param in self.bert.parameters():  
+        for param in self.base_model.parameters():  
             param.requires_grad = False  
         # 分类器  
-        self.classifier = nn.Linear(self.bert.config.hidden_size, num_labels)  
+        # self.classifier = nn.Linear(self.bert.config.hidden_size, num_labels)  
+        self.classifier = get_classifier_from_model(model)
 
     def forward(self, input_ids, attention_mask, labels=None):  
         device = input_ids.device  
@@ -114,7 +123,7 @@ class PTuningV2BertForSequenceClassification(nn.Module):
         # 获取可训练的提示embedding  
         prompt_embeddings = self.prompt_encoder(batch_size, device)  
         # 获取原始的输入embedding  
-        inputs_embeds = self.bert.embeddings(input_ids)  
+        inputs_embeds = self.base_model.embeddings(input_ids)  
         # 将提示embedding与输入embedding拼接  
         inputs_embeds = torch.cat([prompt_embeddings, inputs_embeds], dim=1)  
         # 调整attention mask  
@@ -122,7 +131,7 @@ class PTuningV2BertForSequenceClassification(nn.Module):
         attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)  
         # 通过BERT模型  
         # outputs.shape = (batch_size, max_length, hidden_size)
-        outputs = self.bert(  
+        outputs = self.base_model(  
             inputs_embeds=inputs_embeds,  
             attention_mask=attention_mask  
         )  
@@ -295,23 +304,25 @@ if __name__ == "__main__":
     
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    # 使用 AutoModel可以直接调用model.embedding. 否则不会暴露嵌入层
-    model = AutoModel.from_pretrained(model_path, num_labels=4)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    print(f"Model's current num_labels: {model.config.num_labels}") 
+    
+    # # 使用 AutoModel可以直接调用model.embedding. 否则不会暴露嵌入层
+    # model = AutoModel.from_pretrained(model_path, num_labels=4)
+    # tokenizer = AutoTokenizer.from_pretrained(model_path)
+    # print(f"Model's current num_labels: {model.config.num_labels}") 
      
-    model_config = model.config
-    model_name_or_path = model_config.name_or_path
-    print("model_name_or_path = ", model_name_or_path)
+    # model_config = model.config
+    # model_name_or_path = model_config.name_or_path
+    # print("model_name_or_path = ", model_name_or_path)
     
-    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-        padding_side = "left"
-    else:
-        padding_side = "right"
+    # if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
+    #     padding_side = "left"
+    # else:
+    #     padding_side = "right"
     
-    print("padding_side = ", padding_side)
+    # print("padding_side = ", padding_side)
+    
+    model, tokenizer = prepare_model_tokenizer(model_path,AutoModelForSequenceClassification, model_path)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
 
     
 

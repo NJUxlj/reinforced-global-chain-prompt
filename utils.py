@@ -114,11 +114,63 @@ def get_base_model_using_model(model):
     else:
         raise ValueError(f"the passed model object is not either SequenceClassification model or AutoModel \
             The current model type = {model_type}")
-    
- 
-    
+
     
     return model
+
+def get_classifier_from_model(model: str, num_labels: int = 2):  
+    """  
+    获取预训练模型的分类器  
+    
+    Args:  
+        model : AutoModelForSequenceClassification or BertForSequenceClassification
+        num_labels (int): 分类标签数量  
+    
+    Returns:  
+        nn.Module: 分类器模块  
+    """  
+    # 处理被Accelerator(DDP)包装的模型
+    if hasattr(model, "module"):
+        print("This model is wrapped by Accelerator(DDP), we use model.module")
+        model = model.module
+    
+    # 获取分类器  
+    if hasattr(model, 'classifier'):  
+        # BERT、RoBERTa 等模型的分类器  
+        classifier = model.classifier  
+    elif hasattr(model, 'score'):  
+        # 某些模型可能使用 score 作为分类器名称  
+        classifier = model.score  
+    else:  
+        raise AttributeError("无法找到模型的分类器层")  
+    
+    # 打印分类器信息  
+    print("分类器结构：")  
+    print(classifier)  
+    print(f"\n分类器输入维度: {classifier.in_features}")  
+    print(f"分类器输出维度: {classifier.out_features}") 
+    
+    # 示例：直接使用分类器进行前向传播  
+    batch_size = 4  
+    hidden_size = classifier.in_features  
+    
+    # 模拟来自BERT的特征输出  
+    dummy_features = torch.randn(batch_size, hidden_size)  
+    
+    # 直接使用分类器进行预测  
+    with torch.no_grad():  
+        outputs = classifier(dummy_features)  
+        
+    print(f"\n分类器输出形状: {outputs.shape}")  
+    print("分类器输出示例：")  
+    print(outputs)   
+    
+    
+    print("\n分类器的可训练参数：")  
+    for name, param in classifier.named_parameters():  
+        print(f"{name}: {param.shape}")  
+        
+    return classifier 
 
 def get_max_length_from_model(model):  
     """  
@@ -429,4 +481,10 @@ def main():
 
 if __name__ == "__main__":
     # main()
-    make_save_dirs()
+    # make_save_dirs()
+    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    
+    model, tokenizer = prepare_model_tokenizer(model_path,AutoModelForSequenceClassification, model_path)
+
+    
+    get_classifier_from_model(model)

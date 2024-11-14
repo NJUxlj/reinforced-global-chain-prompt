@@ -39,7 +39,7 @@ from peft import (
     PeftModel
 )
 
-from .models import (
+from models import (
     InputEncoder,
 )
 
