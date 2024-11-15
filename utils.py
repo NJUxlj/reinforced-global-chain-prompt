@@ -6,6 +6,8 @@ import numpy as np
 from itertools import product
 from config import Config
 
+import datetime
+
 
 from gensim.models import Word2Vec, KeyedVectors  
 from typing import List, Union, Optional  
@@ -38,7 +40,24 @@ from sklearn.metrics import precision_recall_fscore_support
 
 
 
+def get_dataset_path_by_name(dataset_name='race'):
+    
+    if dataset_name == "race":
+        dataset_path = Config["datasets"][dataset_name]
+    elif dataset_name == 'dream':
+        dataset_path = Config["datasets"][dataset_name]['all']
+    elif dataset_name == 'sciq':
+        dataset_path = Config["datasets"][dataset_name]
+    elif dataset_name == 'commonsense_qa':
+        dataset_path = Config["datasets"][dataset_name]
+    else:
+        raise ValueError("dataset name not supported")
+
 def get_model_name_using_model(model):
+    '''
+    
+    use the model object's config file to retrieve the model name, e.g. bert-base-uncased
+    '''
     
     if hasattr(model, "module"):
         print("This model is wrapped by Accelerator(DDP), we use model.module")
@@ -118,7 +137,26 @@ def get_base_model_using_model(model):
     
     return model
 
-def get_classifier_from_model(model: str, num_labels: int = 2):  
+def get_hidden_size_using_config():
+    pass
+
+def get_hidden_size_using_model(model):
+    # 处理被Accelerator(DDP)包装的模型
+    if hasattr(model, "module"):
+        print("This model is wrapped by Accelerator(DDP), we use model.module")
+        model = model.module
+    
+        # 获取模型类型  
+    model_type = type(model)
+
+    if hasattr(model, "config"):
+        config = model.config
+    else:
+        raise RuntimeError("This model object does not have a config file, check again~~~")
+
+    return config.hidden_size
+
+def get_classifier_from_model(model)-> nn.Module:  
     """  
     获取预训练模型的分类器  
     
@@ -264,20 +302,35 @@ def get_logger(name="my_logger", logging_dir = None,log_level="INFO"):
     # 配置基本日志设置：设置日志的最低显示级别和格式  
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')  
 
+    
+    # 确保日志目录存在  
+    os.makedirs(logging_dir, exist_ok=True)  
+
+    
+    # 创建具体的日志文件路径  
+    # 添加时间戳避免文件重名  
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")  
+    log_file_name = f"{name}_{timestamp}.log"  
+    log_file_path = os.path.join(logging_dir, log_file_name)  
+    
     # 创建logger对象  
     logger = logging.getLogger(name)  
 
-    # 定义日志文件的路径  
-    log_file_path = logging_dir  
 
     # 创建一个FileHandler处理对象，将日志输出到文件  
     file_handler = logging.FileHandler(log_file_path)  
     # 设置文件处理器的日志级别  
     file_handler.setLevel(logging.INFO)  
+    
+    # 创建控制台处理器  
+    console_handler = logging.StreamHandler()  
+    console_handler.setLevel(logging.INFO)
 
     # 创建格式化器，将格式对象与处理器关联  
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')  
     file_handler.setFormatter(formatter)  
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler) 
 
     # 将FileHandler添加到logger中  
     logger.addHandler(file_handler)  

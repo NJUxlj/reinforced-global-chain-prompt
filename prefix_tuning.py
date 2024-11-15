@@ -13,6 +13,11 @@ from load import (
     preprocess_race,
 )
 
+from utils import(
+    prepare_model_tokenizer,
+    get_model_name_using_model
+)
+
 
 from torch.utils.data import DataLoader
 from datasets import (
@@ -45,6 +50,11 @@ from peft import (
     # AutoPeftModelForMultipleChoice,
 )
 
+
+from accelerate import (
+    Accelerator
+)
+
 from tqdm import tqdm
 
 
@@ -57,7 +67,7 @@ The prefix parameters are inserted in all of the model layers.
 
 
 
-def train_prefix_tuning(model, tokenizer):
+def train_prefix_tuning(model, tokenizer, model_name = None, dataset_name = 'race'):
     # 初始化参数  
     model_name = 'bert-base-uncased'  
     num_labels = 4  # ['A', 'B', 'C', 'D']
@@ -211,22 +221,25 @@ if __name__ == "__main__":
     
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    print(f"Model's current num_labels: {model.config.num_labels}") 
+    # model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
+    # tokenizer = AutoTokenizer.from_pretrained(model_path)
+    # print(f"Model's current num_labels: {model.config.num_labels}") 
      
-    model_config = model.config
-    model_name_or_path = model_config.name_or_path
-    print("model_name_or_path = ", model_name_or_path)
+    # model_config = model.config
+    # model_name_or_path = model_config.name_or_path
+    # print("model_name_or_path = ", model_name_or_path)
     
-    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-        padding_side = "left"
-    else:
-        padding_side = "right"
+    # if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
+    #     padding_side = "left"
+    # else:
+    #     padding_side = "right"
     
-    print("padding_side = ", padding_side)
+    # print("padding_side = ", padding_side)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
-
+    # tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
     
-    train_prefix_tuning(model,tokenizer)
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path)
+    
+    model_name = get_model_name_using_model(model)
+    dataset_name = 'race'
+    train_prefix_tuning(model,tokenizer, model_name, dataset_name)

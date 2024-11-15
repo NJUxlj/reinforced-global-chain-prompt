@@ -1050,11 +1050,12 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
     logging_dir = Config['logging_dir'][model_name]["bidirectional-prompt-tuning"][dataset_name]
-    logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
-    
     if not os.path.exists(logging_dir):
         os.makedirs(logging_dir)  
         print(f"已创建新的log存储路径: {logging_dir}") 
+    logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
+    
+
         
         
     global_step = 0

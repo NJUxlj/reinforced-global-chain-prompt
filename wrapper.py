@@ -39,9 +39,9 @@ from peft import (
     PeftModel
 )
 
-from models import (
-    InputEncoder,
-)
+# from models import (
+#     InputEncoder,
+# )
 
 from config import *
 

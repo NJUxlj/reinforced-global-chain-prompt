@@ -12,7 +12,6 @@ import math
 from wrapper import *
 from config import *
 from utils import (
-    get_model_name_using_model,
     get_base_model_using_model,
 )
 
