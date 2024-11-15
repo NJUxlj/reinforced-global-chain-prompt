@@ -4,20 +4,16 @@ import torch.optim as optim
 from config import Config
 import numpy as np
 import evaluate
+import os
+from dataclasses import dataclass
 from sklearn.metrics import precision_recall_fscore_support
+from typing import Tuple, List, Tuple, Optional, Union, Dict, Any
 
 
-from load import (
-    preprocess_function_race_pt, 
-    preprocess_function_race,
-    load_dataset_from_huggingface,
-    preprocess_race,
-)
 
-from utils import(
-    prepare_model_tokenizer,
-    get_model_name_using_model
-)
+from load import *
+
+from utils import *
 
 
 from torch.utils.data import DataLoader
@@ -31,6 +27,7 @@ from transformers import (
     default_data_collator,
     AutoModelForCausalLM, 
     AutoTokenizer,
+    AutoConfig,
     AutoModelForSequenceClassification,
     AutoModelForMultipleChoice,
     get_linear_schedule_with_warmup
@@ -51,6 +48,12 @@ from peft import (
     # AutoPeftModelForMultipleChoice,
 )
 
+from transformers.modeling_outputs import (
+    SequenceClassifierOutput, # 是一种官方的输出格式
+    BaseModelOutputWithPoolingAndCrossAttentions,
+    MultipleChoiceModelOutput
+)
+
 
 from accelerate import (
     Accelerator
@@ -66,61 +69,86 @@ The prefix parameters are inserted in all of the model layers.
 
 '''
 
+@dataclass  
+class PrefixTuningTrainerConfig:  
+    """MCQA任务的P-tuning V2配置"""  
+    model_name: str = "bert-base-uncased"
+    model_path: str = "bert-base-uncased"  # 预训练模型名称
+    auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
+    dataset_name:str = "race" 
+    prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
+    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    batch_size:int = 32
+    num_epochs:int = 2
+    dropout: float = 0.1                          # dropout率  
+    max_seq_length: int = 512                         # 最大序列长度  
+    learning_rate: float = 0.3                   # 前缀参数的学习率  
+    model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
+    prefix_projection: bool = True               # 是否使用MLP投影前缀  
+    prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
+    warmup_steps: int = 500  # 添加预热步骤  
+    weight_decay: float = 1e-5  # 添加权重衰减 
+    beta2_decay:float = 0.8   # 用于AdaFactor optimizer
+    total_training_steps = 30000  # 总的训练步数
+    early_stop_steps = 10
 
-
-def train_prefix_tuning(model, tokenizer, model_name = None, dataset_name = 'race'):
+def train_prefix_tuning(model, tokenizer, model_name = None, dataset_name = 'race', config:PrefixTuningTrainerConfig=None):
     # 初始化参数  
-    model_name = 'bert-base-uncased'  
-    num_labels = 4  # ['A', 'B', 'C', 'D']
-    prompt_length = 30  
-    batch_size = Config["batch_size"] 
-    lr = 3e-2
-    num_epochs = Config['num_epochs']
-    max_length = 512 - prompt_length
+    model_name = config.model_name
+    model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
+    
+    num_labels = config.num_labels
+    prefix_length = config.prefix_length
+    batch_size = config.batch_size
+    lr = config.learning_rate
+    num_epochs = config.num_epochs
+    
+    max_length = config.max_seq_length
+    print(f"before inserting prompt tokens, {model_name}'s max length = {max_length}")
+    
+    max_length = max_length - prefix_length
+    print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
     
     
     # 加载数据集
-    dataset_name = "race"
-    dataset_path = Config["datasets"][dataset_name]
-    ds = load_dataset_from_huggingface(dataset_path,"high")
-    # coarse-grained preprocessing
-    ds, classes, tokenizer = preprocess_race(ds, tokenizer)
-
-    processed_ds = ds.map(
-        lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
-        batched=True,
-        num_proc=1,
-        remove_columns=ds['train'].column_names,
-        load_from_cache_file=False,
-        desc="Running tokenizer on dataset",    
-    )   
+    dataset_name = config.dataset_name
+    dataset_path = get_dataset_path_by_name(dataset_name)
+    
+    processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
     
     train_ds = processed_ds["train"]
-    eval_ds = processed_ds["test"]
-
-
-    # # 创建数据集和数据加载器  
-    # train_dataset = Racedataset(dataset['train'], tokenizer, prompt_length)  
-    # train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  
+    eval_ds = processed_ds["test"]  
     
-    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size)
-    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size)
-
+    train_dataloader = DataLoader(
+            train_ds, 
+            shuffle=True, 
+            collate_fn=default_data_collator, 
+            batch_size=batch_size,
+            pin_memory=True
+        )
+    
+    eval_dataloader = DataLoader(
+            eval_ds, 
+            collate_fn=default_data_collator, 
+            batch_size=batch_size,
+            pin_memory=True
+        )
+    
     # 初始化模型  
     device = Config['device'] 
     
-    tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
     
-    # Prompt-tuning
+    # Prefix-tuning
     peft_config = PrefixTuningConfig(
         peft_type="PREFIX_TUNING",
         task_type=TaskType.SEQ_CLS, 
-        num_virtual_tokens=prompt_length, 
-        token_dim=768,  
-        num_transformer_submodules=1,
+        num_virtual_tokens=prefix_length, 
+        token_dim = config.prefix_hidden_size,  
+        num_transformer_submodules=2,   # 论文中对attention和mlp都使用了prefix，所以是2而不是1  
         num_attention_heads=12,
         num_layers=12,
         encoder_hidden_size=768,
+        prefix_projection=config.prefix_projection,
     
     )
     

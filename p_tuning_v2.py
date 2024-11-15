@@ -79,18 +79,21 @@ class PtuningV2Config:
     model_path: str = "bert-base-uncased"  # 预训练模型名称
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
-    prefix_length: int = 16                        # 前缀长度  
+    prefix_length: int = 100                        # 前缀长度  
     num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
-    batch_size:int = 16
+    batch_size:int = 32
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                     # 最大序列长度  
-    learning_rate: float = 1e-3                   # 前缀参数的学习率  
+    learning_rate: float = 0.3                   # 前缀参数的学习率  
     model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
-    prefix_projection: bool = False               # 是否使用MLP投影前缀  
+    prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
     warmup_steps: int = 500  # 添加预热步骤  
-    weight_decay: float = 0.01  # 添加权重衰减  
+    weight_decay: float = 1e-5  # 添加权重衰减  
+    beta2_decay:float = 0.8   # 用于AdaFactor optimizer
+    total_training_steps = 30000  # 总的训练步数
+    early_stop_steps = 10
 
 class PrefixEncoder(nn.Module):  
     """前缀编码器"""  
@@ -440,18 +443,6 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
     
-    # ds = load_dataset_from_huggingface(dataset_path,"high")
-    # # coarse-grained preprocessing
-    # ds, classes, tokenizer = preprocess_race(ds, tokenizer)
-
-    # processed_ds = ds.map(
-    #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
-    #     batched=True,
-    #     num_proc=1,
-    #     remove_columns=ds['train'].column_names,
-    #     load_from_cache_file=False,
-    #     desc="Running tokenizer on dataset",    
-    # )   
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
