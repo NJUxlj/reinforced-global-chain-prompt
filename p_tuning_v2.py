@@ -40,7 +40,8 @@ from transformers import (
 
 from transformers.modeling_outputs import (
     SequenceClassifierOutput, # 是一种官方的输出格式
-    BaseModelOutputWithPoolingAndCrossAttentions
+    BaseModelOutputWithPoolingAndCrossAttentions,
+    MultipleChoiceModelOutput
 )
 
 
@@ -80,12 +81,16 @@ class PtuningV2Config:
     dataset_name:str = "race" 
     prefix_length: int = 16                        # 前缀长度  
     num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    batch_size:int = 16
+    num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                     # 最大序列长度  
     learning_rate: float = 1e-3                   # 前缀参数的学习率  
     model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
     prefix_projection: bool = False               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
+    warmup_steps: int = 500  # 添加预热步骤  
+    weight_decay: float = 0.01  # 添加权重衰减  
 
 class PrefixEncoder(nn.Module):  
     """前缀编码器"""  
@@ -175,36 +180,34 @@ class PrefixEncoder(nn.Module):
         return past_key_values.split(2)  # 
 
 
+# # 定义Prompt Encoder，用于生成可训练的提示向量  
+# class PromptEncoder(nn.Module):  
+#     def __init__(self, prompt_length, embedding_size, hidden_size):  
+#         super(PromptEncoder, self).__init__()  
+#         self.prompt_length = prompt_length  
+#         # 初始化可训练的提示embedding  
+#         self.prompt_embeddings = nn.Embedding(prompt_length, embedding_size)  
+#         # 将提示embedding映射到模型的hidden size  
+#         self.transform = nn.Sequential(  
+#             nn.Linear(embedding_size, hidden_size),  
+#             nn.Tanh(),  
+#             nn.Linear(hidden_size, hidden_size),
+#             nn.Tanh(),  
+#         )  
+
+#     def forward(self, batch_size, device):  
+#         # 创建提示的索引  
+#         prompt_indices = torch.arange(self.prompt_length).long().to(device)  
+#         # 获取提示embedding  
+#         prompt_embeddings = self.prompt_embeddings(prompt_indices)  
+#         # 通过transform层  
+#         prompt_embeddings = self.transform(prompt_embeddings)  
+#         # 扩展batch维度  
+#         prompt_embeddings = prompt_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
+#         return prompt_embeddings 
 
 
-
-
-
-# 定义Prompt Encoder，用于生成可训练的提示向量  
-class PromptEncoder(nn.Module):  
-    def __init__(self, prompt_length, embedding_size, hidden_size):  
-        super(PromptEncoder, self).__init__()  
-        self.prompt_length = prompt_length  
-        # 初始化可训练的提示embedding  
-        self.prompt_embeddings = nn.Embedding(prompt_length, embedding_size)  
-        # 将提示embedding映射到模型的hidden size  
-        self.transform = nn.Sequential(  
-            nn.Linear(embedding_size, hidden_size),  
-            nn.Tanh(),  
-            nn.Linear(hidden_size, hidden_size),
-            nn.Tanh(),  
-        )  
-
-    def forward(self, batch_size, device):  
-        # 创建提示的索引  
-        prompt_indices = torch.arange(self.prompt_length).long().to(device)  
-        # 获取提示embedding  
-        prompt_embeddings = self.prompt_embeddings(prompt_indices)  
-        # 通过transform层  
-        prompt_embeddings = self.transform(prompt_embeddings)  
-        # 扩展batch维度  
-        prompt_embeddings = prompt_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
-        return prompt_embeddings  
+ 
 
 # 定义P-Tuning V2的BERT模型  
 class PTuningV2ForSequenceClassification(nn.Module):  
@@ -237,22 +240,10 @@ class PTuningV2ForSequenceClassification(nn.Module):
         # self.prefix_tokens = torch.arange(self.prefix_encoder.prefix_length).long() 
         
         
-        # self.prompt_length = prompt_length  
-        # self.num_labels = num_labels  
-        # # 初始化Prompt Encoder  
-        # self.prompt_encoder = PromptEncoder(  
-        #     prompt_length,   
-        #     self.base_model.config.hidden_size,   
-        #     self.base_model.config.hidden_size  
-        # )  
-        # # 冻结BERT模型的参数  
-        # for param in self.base_model.parameters():  
-        #     param.requires_grad = False  
-        # 分类器  
-        # self.classifier = nn.Linear(self.bert.config.hidden_size, num_labels)  
-        
-        
         self.classifier:nn.Module = get_classifier_from_model(self.model)
+        
+        for param in self.classifier.parameters():  
+            param.requires_grad = False 
         
         self.print_total_params()
         
@@ -310,17 +301,18 @@ class PTuningV2ForSequenceClassification(nn.Module):
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output) # shape = (batch_size, num_labels)
+        # logits = logits.reshape(-1, config.num_labels)
         
         loss = None
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
             
-        if not return_dict:
+        if not return_dict: # 输出嵌套元组
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
         
-        return SequenceClassifierOutput(
+        return MultipleChoiceModelOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
@@ -365,13 +357,17 @@ class PTuningV2ForSequenceClassification(nn.Module):
         for name, param in self.base_model.named_parameters():
             bert_param += param.numel()
             
+        classifier_param = 0
+        for name, param in self.classifier.named_parameters():
+            classifier_param += param.numel()
+            
         all_param = 0
         for name, param in self.named_parameters():
             all_param += param.numel()
             
-        total_param = all_param - bert_param
+        total_param = all_param - bert_param - classifier_param
         print('total trainable param is {}'.format(total_param)) # 9860105
-        print('total trainable param percentage is {}'.format(total_param / all_param)) # 9860105
+        print('total trainable param percentage is {}%'.format((total_param / all_param)*100)) # 9860105
         
 
 
@@ -428,8 +424,8 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     # num_labels = 4  # ['A', 'B', 'C', 'D']
     num_labels = config.num_labels
     prefix_length = config.prefix_length 
-    batch_size = Config['batch_size']
-    num_epochs = Config['num_epochs']  
+    batch_size = config.batch_size
+    num_epochs = config.num_epochs
     learning_rate = config.learning_rate
     max_length = config.max_seq_length
     
@@ -496,13 +492,15 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     optimizer = torch.optim.AdamW([  
         {'params': model.prefix_encoder.parameters(), 'lr': config.learning_rate},  
         {'params': model.classifier.parameters(), 'lr': config.learning_rate}  
-    ]) 
+    ], weight_decay=config.weight_decay) 
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=config.warmup_steps,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
+    
+    # early_stopping = EarlyStopping(patience=3, min_delta=1e-4) 
     
     accelerator = Accelerator(
         # gradient_accumulation_steps=1,  
@@ -516,11 +514,12 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     print("type(model) = ", type(model))
     
-    logging_dir = Config['logging_dir'][model_name]["p-tuning-v2"][dataset_name]
-    if not os.path.exists(logging_dir):
-        os.makedirs(logging_dir)  
-        print(f"已创建新的log存储路径: {logging_dir}") 
-    logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
+    if accelerator.is_main_process:
+        logging_dir = Config['logging_dir'][model_name]["p-tuning-v2"][dataset_name]
+        if not os.path.exists(logging_dir):
+            os.makedirs(logging_dir)  
+            print(f"已创建新的log存储路径: {logging_dir}") 
+        logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
     
 
     # 训练循环  
@@ -593,7 +592,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     # 保存模型
     
     print("model name = ", model_name)
-    save_path = Config['save_model_dir'][model_name]['prompt-tuning-v2'][dataset_name]
+    save_path = Config['save_model_dir'][model_name]['p-tuning-v2'][dataset_name]
     
     # wait every GPU processes to reach here
     torch.distributed.barrier()  
@@ -651,6 +650,8 @@ if __name__ == "__main__":
         learning_rate=Config['learning_rate'],
         max_seq_length=max_seq_length,
         num_labels=4,
+        batch_size=Config['batch_size'],
+        num_epochs = Config['num_epochs'],
         prefix_projection=True,
         prefix_hidden_size=hidden_size,
     )

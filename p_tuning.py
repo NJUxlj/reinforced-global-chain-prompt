@@ -5,6 +5,8 @@ import csv
 import evaluate
 import numpy as np
 from config import Config
+
+from dataclasses import dataclass
 from load import (
     preprocess_function_race_pt, 
     preprocess_function_race,
@@ -49,6 +51,25 @@ from accelerate import (
 
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+
+
+@dataclass  
+class PtuningConfig:  
+    """MCQA任务的P-tuning V2配置"""  
+    model_name: str = "bert-base-uncased"
+    model_path: str = "bert-base-uncased"  # 预训练模型名称
+    auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
+    dataset_name:str = "race" 
+    prefix_length: int = 16                        # 前缀长度  
+    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    batch_size:int = 16
+    num_epochs:int = 2
+    dropout: float = 0.1                          # dropout率  
+    max_seq_length: int = 512                     # 最大序列长度  
+    learning_rate: float = 1e-3                   # 前缀参数的学习率  
+    model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
+    prefix_projection: bool = False               # 是否使用MLP投影前缀  
+    prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
 
 
 

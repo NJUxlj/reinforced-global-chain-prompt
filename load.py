@@ -69,89 +69,153 @@ def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None
 
 
 
-def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 492):
+# def preprocess_function_race_pt(examples, text_column = "article", label_column  ="answer", dataset_name = 'race', max_length = 492):
     
     
     
-    ''' 
-      iteratively modify every batch of data
+#     ''' 
+#       iteratively modify every batch of data
       
-      Args:
-          text_column: the column name of the text
+#       Args:
+#           text_column: the column name of the text
           
-          ds_builder: use it to get the name of dataset
+#           ds_builder: use it to get the name of dataset
           
-          classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
+#           classes: the set of labels (str) e.g. ['A', 'B', 'C', 'D']    ['good', 'bad']
           
-    '''
-    batch_size = len(examples[text_column])
+#     '''
+#     batch_size = len(examples[text_column])
     
-    # use hard prompt to combine [article, question, options] together
-    # race's fields are [article, question, options, answer]
-    inputs = [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
-              Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples[text_column])]  
+#     # use hard prompt to combine [article, question, options] together
+#     # race's fields are [article, question, options, answer]
+#     inputs = [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
+#               Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples[text_column])]  
 
-    # targets = [str(x) for x in examples['answer']] # shape = (batch_size, )
+#     # targets = [str(x) for x in examples['answer']] # shape = (batch_size, )
     
-    global tokenizer
+#     global tokenizer
     
-    # return a dict with keys = ['input_ids', 'attention_mask',...]
-    # if no return_tensors = 'pt', return list as values
-    model_inputs = tokenizer(inputs)
-    # labels = tokenizer(targets) 
+#     # return a dict with keys = ['input_ids', 'attention_mask',...]
+#     # if no return_tensors = 'pt', return list as values
+#     model_inputs = tokenizer(inputs)
+#     # labels = tokenizer(targets) 
     
-    labels = []
-    for answer in examples['answer']:
-        labels.append(ord(answer)-ord('A'))
+#     labels = []
+#     for answer in examples['answer']:
+#         labels.append(ord(answer)-ord('A'))
     
-    # labels['input_ids'].shape = (batch_size,  1)  暂定是该形状
+#     # labels['input_ids'].shape = (batch_size,  1)  暂定是该形状
     
-    # classes = list(set(targets))
-    classes = Config['classes']['race']    
-    for i in range(batch_size):
-        sample_input_ids = model_inputs['input_ids'][i] # shape = (seq_len)
+#     # classes = list(set(targets))
+#     classes = Config['classes']['race']    
+#     for i in range(batch_size):
+#         sample_input_ids = model_inputs['input_ids'][i] # shape = (seq_len)
         
-        # 加上[CLS]
-        sample_input_ids += [tokenizer.cls_token_id]
-        # label_input_ids = labels['input_ids'][i]
-        label_input_ids = labels[i]
+#         # 加上[CLS]
+#         sample_input_ids += [tokenizer.cls_token_id]
+#         # label_input_ids = labels['input_ids'][i]
+#         label_input_ids = labels[i]
         
         
-        # padding
-        model_inputs["input_ids"][i] = [tokenizer.pad_token_id]*(max_length-len(sample_input_ids))+sample_input_ids
+#         # padding
+#         model_inputs["input_ids"][i] = [tokenizer.pad_token_id]*(max_length-len(sample_input_ids))+sample_input_ids
         
-        # model_inputs["input_ids"].shape = (batch_size, max_length)
-        # model_inputs["input_ids"][i].shape = (max_length)
-        model_inputs['attention_mask'][i] = [0]*(max_length-len(sample_input_ids))+[1]+model_inputs['attention_mask'][i]
+#         # model_inputs["input_ids"].shape = (batch_size, max_length)
+#         # model_inputs["input_ids"][i].shape = (max_length)
+#         model_inputs['attention_mask'][i] = [0]*(max_length-len(sample_input_ids))+[1]+model_inputs['attention_mask'][i]
         
-        # labels[i] 在分类任务中不用补齐
-        # labels["input_ids"][i] = [-100]*(max_length - len(label_input_ids))+label_input_ids
+#         # labels[i] 在分类任务中不用补齐
+#         # labels["input_ids"][i] = [-100]*(max_length - len(label_input_ids))+label_input_ids
         
-        # truncate and transfer to tensor
-        model_inputs["input_ids"][i] = torch.tensor(model_inputs["input_ids"][i][:max_length])
-        model_inputs["attention_mask"][i] = torch.tensor(model_inputs["attention_mask"][i][:max_length])
-        # labels["input_ids"][i] = torch.tensor(labels["input_ids"][i][:max_length])
-        # labels[i] = torch.LongTensor(label_input_ids)  
+#         # truncate and transfer to tensor
+#         model_inputs["input_ids"][i] = torch.tensor(model_inputs["input_ids"][i][:max_length])
+#         model_inputs["attention_mask"][i] = torch.tensor(model_inputs["attention_mask"][i][:max_length])
+#         # labels["input_ids"][i] = torch.tensor(labels["input_ids"][i][:max_length])
+#         # labels[i] = torch.LongTensor(label_input_ids)  
         
-    # model_inputs['labels'] = labels["input_ids"]
-    model_inputs['labels'] = labels
+#     # model_inputs['labels'] = labels["input_ids"]
+#     model_inputs['labels'] = labels
     
     
-    # 打印形状
-    print("batch_size = ", len(model_inputs["input_ids"]), " or ", len(model_inputs["labels"]))
-    print("seq_length for input = ", len(model_inputs['input_ids'][1]))
-    # print("seq_length for label = ", len(model_inputs["labels"][1]))
-    print("seq_length for attention_mask = ", len(model_inputs["attention_mask"][1]))
+#     # 打印形状
+#     print("batch_size = ", len(model_inputs["input_ids"]), " or ", len(model_inputs["labels"]))
+#     print("seq_length for input = ", len(model_inputs['input_ids'][1]))
+#     # print("seq_length for label = ", len(model_inputs["labels"][1]))
+#     print("seq_length for attention_mask = ", len(model_inputs["attention_mask"][1]))
     
-    print("=============================================================================")
-    # print("labels = \n", model_inputs["labels"])
-    print("model_inputs[\"labels\"][1]) = ", model_inputs["labels"][1])
+#     print("=============================================================================")
+#     # print("labels = \n", model_inputs["labels"])
+#     print("model_inputs[\"labels\"][1]) = ", model_inputs["labels"][1])
         
-    return model_inputs
+#     return model_inputs
+
+
+def preprocess_function_copa():
+     # COPA  
+    if self.data_args.dataset_name == "copa":
+        examples["text_a"] = []
+        for premise, question in zip(examples["premise"], examples["question"]):
+            joiner = "because" if question == "cause" else "so"
+            text_a = f"{premise} {joiner}"                    
+            examples["text_a"].append(text_a)
+
+        result1 = self.tokenizer(examples["text_a"], examples["choice1"], padding=self.padding, max_length=self.max_seq_length, truncation=True) 
+        result2 = self.tokenizer(examples["text_a"], examples["choice2"], padding=self.padding, max_length=self.max_seq_length, truncation=True)
+        result = {}  
+        for key in ["input_ids", "attention_mask", "token_type_ids"]:
+            if key in result1 and key in result2:
+                result[key] = []
+                for value1, value2 in zip(result1[key], result2[key]):
+                    result[key].append([value1, value2])
+        return result
     
 
-def preprocess_function_race(examples, first_four_columns = ["article", "question", "options", "answer"],
-                             dataset_name = 'race', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_record():
+    entity_shuffler = random.Random(44)
+    results = {
+        "input_ids": list(),
+        "attention_mask": list(),
+        "token_type_ids": list(),
+        "label": list()
+    }
+    for passage, query, entities, answers in zip(examples["passage"], examples["query"], examples["entities"], examples["answers"]):
+        passage = passage.replace("@highlight\n", "- ")
+        
+        for answer in answers:
+            input_ids = []
+            attention_mask = []
+            token_type_ids = []
+            candidates = [ent for ent in entities if ent not in answers]
+            # if len(candidates) < max_train_candidates_per_question - 1:
+            #     continue
+            if len(candidates) > max_train_candidates_per_question - 1:
+                entity_shuffler.shuffle(candidates)
+                candidates = candidates[:max_train_candidates_per_question - 1]
+            candidates = [answer] + candidates
+
+            for ent in candidates:
+                question = query.replace("@placeholder", ent)
+                result = self.tokenizer(passage, question, padding=self.padding, max_length=self.max_seq_length, truncation=True)
+                input_ids.append(result["input_ids"])
+                attention_mask.append(result["attention_mask"])
+                if "token_type_ids" in result: token_type_ids.append(result["token_type_ids"])
+
+            results["input_ids"].append(input_ids)
+            results["attention_mask"].append(attention_mask)
+            if len(token_type_ids) > 0: results["token_type_ids"].append(token_type_ids)
+            results["label"].append(0)
+
+    return results
+
+    
+
+def preprocess_function_race(
+        examples:Dict, 
+        first_four_columns = ["article", "question", "options", "answer"],
+        dataset_name = 'race', 
+        max_length = 512, 
+        tokenizer = None
+    )->Dict[str,Union[List,List[List]]]:
     
     ''' 
       iteratively modify every batch of data
@@ -172,13 +236,12 @@ def preprocess_function_race(examples, first_four_columns = ["article", "questio
     
     batch_size = len(examples[first_four_columns[0]])
     
-    
-    # # 构建输入文本  
-    # inputs = [  
-    #     f"Article: {examples['article'][i]}\n\nQuestion: {examples['question'][i]}\n\nOptions: {examples['options'][i]}\n\nAnswer:"  
-    #     for i in range(len(examples[text_column]))  
-    # ]  
-    
+    results = {
+        "input_ids": list(),
+        "attention_mask": list(),
+        "token_type_ids": list(),
+        "label": list()
+    }
     # 初始化结果列表  
     input_texts = []  
     labels = []  
@@ -186,24 +249,37 @@ def preprocess_function_race(examples, first_four_columns = ["article", "questio
     # 处理每个样本  
     for i in range(batch_size):  
         # 获取当前样本的各个字段  
-        article = examples[first_four_columns[0]][i]  # article/support  
-        question = examples[first_four_columns[1]][i]  
+        article = examples[first_four_columns[0]][i].strip()  # article/support  
+        question = examples[first_four_columns[1]][i].strip() 
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
-        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        answer = examples[first_four_columns[3]][i].strip()   # 答案标签（A/B/C/D）  
         
         # 将选项转换为字典格式，方便后续处理  
         # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
         
-        # 构建输入文本  
-        # 格式：[CLS] 文章 [SEP] 问题 [SEP] 选项A [SEP] 选项B [SEP] 选项C [SEP] 选项D [SEP]  
-        input_text = f'''
+        
+        for option in options:
+            input_ids = []
+            attention_mask = []
+            token_type_ids = []
+            labels = []
+            
+            first_sentences = [article] * len(options)  
+            second_sentences = [f"{question} {opt}" for opt in options]  
+        
+            for first_sentence, second_sentence in zip(first_sentences, second_sentences):
+                input_text = f"{first_sentence}  {second_sentence}"
+                input_texts.append(input_text)
+                labels.append(label)
+            
+                input_text = f'''
                         Article:{article}
                         Question:{question}
                         Options:
-                        {options[0]}
-                        {options[1]}
-                        {options[2]}
-                        {options[3]} 
+                        {options[0].strip()}
+                        {options[1].strip()}
+                        {options[2].strip()}
+                        {options[3].strip()} 
                         Answer:
                         '''
         

@@ -331,9 +331,9 @@ def get_logger(name="my_logger", logging_dir = None,log_level="INFO"):
     file_handler.setFormatter(formatter)  
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler) 
-
-    # 将FileHandler添加到logger中  
     logger.addHandler(file_handler)  
+    
+    return logger
 
 
 
