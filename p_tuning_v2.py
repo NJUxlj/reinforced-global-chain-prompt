@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim import Adam, AdamW
 import numpy as np
 import argparse
 import evaluate
@@ -71,7 +72,7 @@ from sklearn.metrics import precision_recall_fscore_support
 
 
 
-
+# we follow the setting of prompt-tuning (Lester et al., 2021)
 @dataclass  
 class PtuningV2Config:  
     """MCQA任务的P-tuning V2配置"""  
@@ -94,6 +95,7 @@ class PtuningV2Config:
     beta2_decay:float = 0.8   # 用于AdaFactor optimizer
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
+    optimizer_class:type = Adam
 
 class PrefixEncoder(nn.Module):  
     """前缀编码器"""  

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim import AdamW, Adam
 from config import Config
 import numpy as np
 import evaluate
@@ -82,7 +83,7 @@ class PrefixTuningTrainerConfig:
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
-    learning_rate: float = 0.3                   # 前缀参数的学习率  
+    learning_rate: float = 5e-5                   # 前缀参数的学习率  
     model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
@@ -91,6 +92,7 @@ class PrefixTuningTrainerConfig:
     beta2_decay:float = 0.8   # 用于AdaFactor optimizer
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
+    optimizer_class:type = AdamW 
 
 def train_prefix_tuning(model, tokenizer, model_name = None, dataset_name = 'race', config:PrefixTuningTrainerConfig=None):
     # 初始化参数  
@@ -148,7 +150,8 @@ def train_prefix_tuning(model, tokenizer, model_name = None, dataset_name = 'rac
         num_attention_heads=12,
         num_layers=12,
         encoder_hidden_size=768,
-        prefix_projection=config.prefix_projection,
+        prefix_projection=config.prefix_projection, # # 论文中使用了MLP进行prefix投影
+        prefix_projection_hidden_size=768 * 4,  # 论文中projection层的中间维度是hidden_size的4倍  
     
     )
     
