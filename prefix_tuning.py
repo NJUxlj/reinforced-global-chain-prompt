@@ -79,7 +79,7 @@ class PrefixTuningTrainerConfig:
     dataset_name:str = "race" 
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
     num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
-    batch_size:int = 32
+    batch_size:int = 5
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
