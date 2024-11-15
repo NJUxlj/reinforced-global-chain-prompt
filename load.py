@@ -237,14 +237,17 @@ def preprocess_function_race(
     batch_size = len(examples[first_four_columns[0]])
     
     results = {
-        "input_ids": list(),
+        "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
-        "token_type_ids": list(),
-        "label": list()
+        "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+        "labels": list()    # List[int]
     }
     # 初始化结果列表  
     input_texts = []  
-    labels = []  
+    # labels = [] 
+    # labels = ord(examples[first_four_columns[3]]) - ord("A") 
+    
+    # print("labels =\n", labels)
     
     # 处理每个样本  
     for i in range(batch_size):  
@@ -254,58 +257,58 @@ def preprocess_function_race(
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
         answer = examples[first_four_columns[3]][i].strip()   # 答案标签（A/B/C/D）  
         
+        label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
+        
+        # 确保标签符合n_classes，不超范围  
+        assert (0 <= label < 4), "There are labels out of range [0, 3]." 
+        
+        
         # 将选项转换为字典格式，方便后续处理  
         # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
         
+        input_ids:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
+        attention_mask = []
+        token_type_ids = []
         
-        for option in options:
-            input_ids = []
-            attention_mask = []
-            token_type_ids = []
-            labels = []
+        for i, option in enumerate(options):
+            # 拼接question和option
+            option_text = f"{question} {option.strip()}"
             
-            first_sentences = [article] * len(options)  
-            second_sentences = [f"{question} {opt}" for opt in options]  
-        
-            for first_sentence, second_sentence in zip(first_sentences, second_sentences):
-                input_text = f"{first_sentence}  {second_sentence}"
-                input_texts.append(input_text)
-                labels.append(label)
+            # 将article, 拼接后的question 一起放入tokenizer转为input_ids
+             
+            result = tokenizer(
+                    article, 
+                    option_text, 
+                    padding="max_length", 
+                    max_length=max_length, 
+                    truncation=True,
+                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                )
+
+            # input_ids.append(result["input_ids"])
+            # attention_mask.append(result["attention_mask"])
+            # if "token_type_ids" in result: token_type_ids.append(result["token_type_ids"])
+
+            results["input_ids"].append(result["input_ids"])
+            results["attention_mask"].append(result["attention_mask"])
+            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # 标签：正确选项为1，其他为0  
+            results['labels'].append(1 if i == label else 0) 
             
-                input_text = f'''
-                        Article:{article}
-                        Question:{question}
-                        Options:
-                        {options[0].strip()}
-                        {options[1].strip()}
-                        {options[2].strip()}
-                        {options[3].strip()} 
-                        Answer:
-                        '''
+        # results["input_ids"].append(input_ids)
+        # results["attention_mask"].append(attention_mask)
+        # if len(token_type_ids) > 0: results["token_type_ids"].append(token_type_ids)
+        # results["labels"].append(label)
         
-        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
-        label = ord(answer) - ord('A')  
-        
-        input_texts.append(input_text)  
-        labels.append(label)  
     
-    model_inputs = tokenizer(  
-        input_texts,  
-        padding = "max_length",
-        truncation=True,  
-        max_length=max_length,  
-        add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
-    )  
-    
-    # 确保标签符合n_classes，不超范围  
-    assert all(0 <= label < 4 for label in labels), "There are labels out of range [0, 3]." 
+
 
     # print("labels = ", labels)
     # labels = torch.tensor(labels, dtype=torch.long)
-    model_inputs['labels'] = labels  # 保持为整数列表  
+    # model_inputs['labels'] = labels  # 保持为整数列表  
 
     
-    return model_inputs  
+    return results  
 
 
 def preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
@@ -760,7 +763,7 @@ class McqDatasetWrapper:
             max_seq_length: 最大序列长度  
             label_map: 标签映射字典，例如 {"A": 0, "B": 1, "C": 2, "D": 3}  
         """  
-        self.tokenizer = BertTokenizerFast.from_pretrained(model_name_or_path)  
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)  
         self.max_seq_length = max_seq_length  
         self.label_map = label_map or {"A": 0, "B": 1, "C": 2, "D": 3}  
         self.split = None
