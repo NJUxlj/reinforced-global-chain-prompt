@@ -4,7 +4,7 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from config import Config
-
+from dataclasses import dataclass
 
 import argparse
 import evaluate
@@ -55,6 +55,48 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)  
 
 from sklearn.metrics import precision_recall_fscore_support  
+
+
+
+
+
+
+
+@dataclass  
+class AdaLoraTrainerConfig:  
+    """MCQA任务的P-tuning V2配置"""  
+    model_name: str = "bert-base-uncased"
+    model_path: str = "bert-base-uncased"  # 预训练模型名称
+    peft_method: str = "adalora"
+    auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
+    dataset_name:str = "race" 
+    prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
+    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    batch_size:int = 5
+    num_epochs:int = 2
+    dropout: float = 0.1                          # dropout率  
+    max_seq_length: int = 512                         # 最大序列长度  
+    learning_rate: float = 5e-5                   # 前缀参数的学习率  
+    model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
+    
+    prefix_projection: bool = True               # 是否使用MLP投影前缀  
+    prefix_hidden_size: int = 768               # MLP中的P_theta'  即，MLP输入的隐单元维度  huggingface 默认它==encoder_hidden_size
+    prefix_projection_hidden_size:int = 4*prefix_hidden_size  # 论文中重参数化用的MLP层的中间维度是hidden_size的4倍 
+    encoder_hidden_size:int = prefix_hidden_size  # 编码器的隐藏层大小
+    
+    warmup_steps: int = 500  # 添加预热步骤  
+    weight_decay: float = 1e-5  # 添加权重衰减 
+    beta1_decay:float = 0.9   #beta1: 一阶矩估计的指数衰减率（默认0.9）用于Adam优化器
+    beta2_decay:float = 0.8   # 用于AdaFactor optimizer
+    total_training_steps = 30000  # 总的训练步数
+    early_stop_steps = 10
+    optimizer_class:type = AdamW 
+
+
+
+
+
+
 
 def compute_metrics_lora(eval_preds):  
     """  

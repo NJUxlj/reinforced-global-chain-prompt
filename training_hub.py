@@ -60,7 +60,7 @@ def train_all():
     
     model_names = ["bert-base-uncased"]
     # pt_names = ["p_tuning_v2", "prompt_tuning", "prefix_tuning", "p_tuning"]
-    pt_names = ["prompt_tuning", "p_tuning"]
+    pt_names = ["prompt_tuning", "p_tuning", "p_tuning_v2"]
     
     # dataset_names = ['race', 'sciq', 'dream', 'commonsense_qa']
     dataset_names = ['race']
@@ -90,6 +90,7 @@ def train_all():
                                 model_path = model_path,
                                 dataset_name = dataset_name,
                                 max_seq_length = max_length,
+                                num_epochs= 5,
                             )
                             peft_dict[method](config)
 
@@ -102,6 +103,7 @@ def train_all():
                                 model_path = model_path,
                                 dataset_name = dataset_name,
                                 max_seq_length = max_length,
+                                num_epochs= 5,
                             )
                             peft_dict[method](config)
                         
@@ -114,6 +116,7 @@ def train_all():
                                 model_path = model_path,
                                 dataset_name = dataset_name,
                                 max_seq_length = max_length,
+                                num_epochs= 5,
                             )
                             peft_dict[method](config)
                             
@@ -126,6 +129,7 @@ def train_all():
                                 model_path = model_path,
                                 dataset_name = dataset_name,
                                 max_seq_length = max_length,
+                                num_epochs= 5,
                             )
                             peft_dict[method](config)
                             

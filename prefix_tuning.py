@@ -161,7 +161,7 @@ def verify_peft_config(model, peft_config:PrefixTuningConfig, prefix_trainer_con
 def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     # 初始化参数  
     model_name = config.model_name
-    model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
+    model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path, config.num_labels)
     
     num_labels = config.num_labels
     prefix_length = config.prefix_length

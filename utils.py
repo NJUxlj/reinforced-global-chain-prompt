@@ -140,6 +140,9 @@ def get_base_model_using_model(model):
 def get_hidden_size_using_config():
     pass
 
+def get_hidden_size_by_model_name(model_name:str):
+    pass
+
 def get_hidden_size_using_model(model):
     # 处理被Accelerator(DDP)包装的模型
     if hasattr(model, "module"):
@@ -516,9 +519,9 @@ class GensimWord2VecWrapper:
         vectors = self.get_word_vectors(words, pad_to_length)  
         return torch.stack(vectors)  
     
-    
-    
-    
+
+
+
 
 
 def main():

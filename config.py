@@ -4,7 +4,7 @@ import multiprocessing
 import psutil  
 import json
 import os 
-
+from collections import namedtuple  
 from abc import ABC
 
 from typing import List, Tuple, Dict, Optional
@@ -35,6 +35,8 @@ else:
 
 
 MODEL_WEIGHT_NAME = "/model.pt"
+
+SAVE_DIR = "save_model_dir"
 
 Config = {
     "output_dir":"./output",
@@ -515,6 +517,120 @@ Config = {
         "race":"",
     }
 }
+
+
+
+
+class DotDict(dict):  
+    """一个同时支持点号访问和键值访问的字典类  
+    
+    用法示例:  
+        >>> d = DotDict({'a': 1, 'b': {'c': 2}})  
+        >>> print(d.a)        # 点号访问: 1  
+        >>> print(d['a'])     # 键值访问: 1  
+        >>> print(d.b.c)      # 嵌套点号访问: 2  
+        >>> print(d['b']['c']) # 嵌套键值访问: 2  
+    """  
+    
+    def __init__(self, *args, **kwargs):  
+        """初始化方法，支持dict的所有初始化方式  
+        
+        Args:  
+            *args: 变长位置参数，可以是字典  
+            **kwargs: 变长关键字参数  
+        """  
+        # 递归转换嵌套的字典  
+        for key, value in self.items():  
+            if isinstance(value, dict):  
+                self[key] = DotDict(value)  
+    
+    def __getattr__(self, key):  
+        """处理访问不存在的属性  
+        
+        Args:  
+            key (str): 属性名  
+            
+        Raises:  
+            AttributeError: 当属性不存在时抛出  
+        """  
+        try:  
+            return self[key]  
+        except KeyError:  
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'") 
+    
+    def __setattr__(self, key, value):  
+        """设置属性值  
+        
+        Args:  
+            key (str): 属性名  
+            value: 属性值  
+        """  
+        # 如果值是字典，递归转换  
+        if isinstance(value, dict):  
+            value = DotDict(value)  
+        self[key] = value 
+    
+    def __setitem__(self, key, value):  
+        """处理键值赋值  
+        
+        Args:  
+            key: 键名  
+            value: 要设置的值  
+        """  
+        # 如果值是字典，递归转换  
+        if isinstance(value, dict):  
+            value = DotDict(value)  
+        super().__setitem__(key, value)  
+        
+    def __delattr__(self, key):  
+        """处理删除属性  
+        
+        Args:  
+            key (str): 要删除的属性名  
+            
+        Raises:  
+            AttributeError: 当属性不存在时抛出  
+        """  
+        try:  
+            del self[key]  
+        except KeyError:  
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'")  
+    
+    # def __repr__(self):  
+    #     """返回对象的字符串表示"""  
+    #     items = [f"{k}={v!r}" for k, v in self.__dict__.items()]  
+    #     return f"{self.__class__.__name__}({', '.join(items)})"  
+    
+    def to_dict(self):  
+        """将DotDict对象转换回普通字典  
+        
+        Returns:  
+            dict: 转换后的普通字典  
+        """  
+        result = {}  
+        for key, value in self.__dict__.items():  
+            if isinstance(value, DotDict):  
+                result[key] = value.to_dict()  
+            else:  
+                result[key] = value  
+        return result  
+    
+    # def __eq__(self, other):  
+    #     """实现相等性比较"""  
+    #     if not isinstance(other, (DotDict, dict)):  
+    #         return False  
+    #     return self.to_dict() == (other.to_dict() if isinstance(other, DotDict) else other)  
+    
+    
+
+# Config = DotDict(Config)  
+
+# Config.save_model_dir
+
+
+
+
+
 
 
 

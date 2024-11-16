@@ -78,8 +78,8 @@ class PtuningConfig:
     model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
     
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
-    prefix_hidden_size: int = 512    
-    encoder_hidden_size:int = 768  # 编码器的隐藏层大小# prefix token 的维度 (P_theta')
+    prefix_hidden_size: int = 768    
+    encoder_hidden_size:int = 512  # 重参数化器MLP的隐藏层大小# prefix token 的维度 (P_theta')
     
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减  
@@ -141,12 +141,15 @@ def train_p_tuning(config:PtuningConfig):
         peft_type="P_TUNING",
         task_type= TaskType.SEQ_CLS, 
         num_virtual_tokens=prefix_length, 
-        token_dim=config.prefix_hidden_size,
-        num_transformer_submodules=2,
-        num_attention_heads=12,
-        num_layers=12,
+        token_dim=config.prefix_hidden_size, # 与基础模型bert保持一致
+        # num_transformer_submodules=1,
+        # num_attention_heads=12,
+        # num_layers=12,
         encoder_reparameterization_type="MLP",
         encoder_hidden_size=config.encoder_hidden_size,
+        encoder_num_layers=2,
+        encoder_dropout= 0.1,
+        inference_mode=False   # 训练模式
     )
     
     # Input Shape: (batch_size, total_virtual_tokens)
@@ -329,6 +332,7 @@ if __name__ == '__main__':
         model_path = model_path,
         max_seq_length=max_seq_length,
         dataset_name= 'race',
+        num_epochs=5,
     )
     
     train_p_tuning(config)
