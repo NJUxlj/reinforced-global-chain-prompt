@@ -78,6 +78,7 @@ class PtuningV2Config:
     """MCQA任务的P-tuning V2配置"""  
     model_name: str = "bert-base-uncased"
     model_path: str = "bert-base-uncased"  # 预训练模型名称
+    peft_method: str = "p-tuning-v2"
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
     prefix_length: int = 100                        # 前缀长度  
@@ -248,8 +249,8 @@ class PTuningV2ForSequenceClassification(nn.Module):
         
         self.classifier:nn.Module = get_classifier_from_model(self.model)
         
-        for param in self.classifier.parameters():  
-            param.requires_grad = False 
+        # for param in self.classifier.parameters():  
+        #     param.requires_grad = False 
         
         self.print_total_params()
         
@@ -521,7 +522,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     for epoch in range(num_epochs):  
         model.train() 
         total_loss = 0
-        for epoch, batch in enumerate(tqdm(train_dataloader)):  
+        for step, batch in enumerate(tqdm(train_dataloader)):  
             
             labels = batch["labels"]  
             
@@ -551,7 +552,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
             # optimizer.step()  
             # total_loss += loss.item()
             
-            if epoch == len(train_dataloader) - 1:  
+            if step == len(train_dataloader) - 1:  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  
@@ -641,11 +642,11 @@ if __name__ == "__main__":
         model_path=model_path,
         auto_model_class = AutoModelForSequenceClassification,
         dataset_name=dataset_name,
-        learning_rate=Config['learning_rate'],
+        # learning_rate=Config['learning_rate'],
         max_seq_length=max_seq_length,
-        num_labels=4,
-        batch_size=Config['batch_size'],
-        num_epochs = Config['num_epochs'],
+        # num_labels=4,
+        # batch_size=Config['batch_size'],
+        # num_epochs = Config['num_epochs'],
         prefix_projection=True,
         prefix_hidden_size=hidden_size,
     )

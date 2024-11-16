@@ -261,7 +261,7 @@ def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
 
 
 
-def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_path = None):
+def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_path = None, num_labels = 4):
     '''
      return model, tokenizer
     '''
@@ -270,9 +270,9 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     model = auto_model_class.from_pretrained(model_path, config=config)
     
     if tokenizer_path is not None:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast = True)
         
     print(f"Model's current num_labels: {model.config.num_labels}") 
      
@@ -287,7 +287,7 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     
     print("padding_side = ", padding_side)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side, use_fast=True)
     
     return model, tokenizer
 

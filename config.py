@@ -95,6 +95,12 @@ Config = {
                 "sciq": "save/bert-base-uncased/bidirectional-prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
                 "commonsense_qa": "save/bert-base-uncased/bidirectional-prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME
             },
+            "p-tuning":{
+                "race": "save/bert-base-uncased/p-tuning/race"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-base-uncased/p-tuning/dream"+MODEL_WEIGHT_NAME,  
+                "sciq": "save/bert-base-uncased/p-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-base-uncased/p-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+            },
             "p-tuning-v2":{
                 "race": "save/bert-base-uncased/p-tuning-v2/race"+MODEL_WEIGHT_NAME,
                 "race-h": "save/bert-base-uncased/p-tuning-v2/race-h"+MODEL_WEIGHT_NAME,
@@ -153,9 +159,21 @@ Config = {
                 "sciq": "save/bert-large-uncased/p-tuning-v2/sciq"+MODEL_WEIGHT_NAME,
                 "commonsense_qa": "save/bert-large-uncased/p-tuning-v2/commonsense_qa"+MODEL_WEIGHT_NAME,
             },
+            "prefix-tuning":{
+                "race": "save/bert-large-uncased/prefix-tuning/race"+MODEL_WEIGHT_NAME,
+                "dream": "save/bert-large-uncased/prefix-tuning/dream"+MODEL_WEIGHT_NAME,
+                "sciq": "save/bert-large-uncased/prefix-tuning/sciq"+MODEL_WEIGHT_NAME,
+                "commonsense_qa": "save/bert-large-uncased/prefix-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+            },
         },
         "qwen": {
             'Qwen2.5-0.5B':{
+                "prompt-tuning":{
+                    "race": "save/qwen/Qwen2.5-0.5B/prompt-tuning/race"+MODEL_WEIGHT_NAME,
+                    "dream": "save/qwen/Qwen2.5-0.5B/prompt-tuning/dream"+MODEL_WEIGHT_NAME,
+                    "sciq": "save/qwen/Qwen2.5-0.5B/prompt-tuning/sciq"+MODEL_WEIGHT_NAME,
+                    "commonsense_qa": "save/qwen/Qwen2.5-0.5B/prompt-tuning/commonsense_qa"+MODEL_WEIGHT_NAME,
+                },
 
             },
             'Qwen2.5-1.5B':{
@@ -239,11 +257,18 @@ Config = {
                 "sciq": "logs/bert-base-uncased/bidirectional-prompt-tuning/sciq",
                 "commonsense_qa": "logs/bert-base-uncased/bidirectional-prompt-tuning/commonsense_qa",
             },
+            
+            "p-tuning":{
+                "race": "logs/bert-base-uncased/p-tuning/race",  
+                "dream": "logs/bert-base-uncased/p-tuning/dream",
+                "sciq": "logs/bert-base-uncased/p-tuning/sciq",
+                "commonsense_qa": "logs/bert-base-uncased/p-tuning/commonsense_qa",
+            },
             "p-tuning-v2":{
                 "race": "logs/bert-base-uncased/p-tuning-v2/race",
-                "race-h": "logs/bert-base-uncased/p-tuning-v2/race-h",
-                "race-m": "logs/bert-base-uncased/p-tuning-v2/race-m",
-                "race-c": "logs/bert-base-uncased/p-tuning-v2/race-c",
+                # "race-h": "logs/bert-base-uncased/p-tuning-v2/race-h",
+                # "race-m": "logs/bert-base-uncased/p-tuning-v2/race-m",
+                # "race-c": "logs/bert-base-uncased/p-tuning-v2/race-c",
                 "dream": "logs/bert-base-uncased/p-tuning-v2/dream",
                 "sciq": "logs/bert-base-uncased/p-tuning-v2/sciq",
                 "commonsense_qa": "logs/bert-base-uncased/p-tuning-v2/commonsense_qa"
@@ -279,6 +304,12 @@ Config = {
                 "sciq": "logs/bert-large-uncased/prompt-tuning/sciq",
                 "commonsense_qa": "logs/bert-large-uncased/prompt-tuning/commonsense_qa",
             },
+            "prefix-tuning":{
+                "race": "logs/bert-large-uncased/prefix-tuning/race",
+                "dream": "logs/bert-large-uncased/prefix-tuning/dream",
+                "sciq": "logs/bert-large-uncased/prefix-tuning/sciq",
+                "commonsense_qa": "logs/bert-large-uncased/prefix-tuning/commonsense_qa"
+            },
             "bidirectional-prompt-tuning":{
                 "race": "logs/bert-large-uncased/bidirectional-prompt-tuning/race",
                 "dream": "logs/bert-large-uncased/bidirectional-prompt-tuning/dream",
@@ -300,7 +331,9 @@ Config = {
         },
         "qwen": {
             'Qwen2.5-0.5B':{
-
+                "prompt-tuning":{
+                    
+                }
             },
             'Qwen2.5-1.5B':{
                 "prompt-tuning":{

@@ -1,14 +1,12 @@
 import torch
+import torch.nn as nn
+from torch.optim import Adam
 import numpy as np
 from config import Config
+from dataclasses import dataclass
 
-
-from load import (
-    preprocess_function_race_pt, 
-    preprocess_function_race,
-    load_dataset_from_huggingface,
-    preprocess_race,
-)
+from load import *
+from utils import *
 
 
 from torch.utils.data import DataLoader
@@ -20,6 +18,9 @@ from datasets import (
 from transformers import (
     set_seed,
     default_data_collator,
+    AutoModel,
+    BertModel,
+    AutoConfig,
     AutoModelForCausalLM, 
     AutoTokenizer,
     AutoModelForSequenceClassification,
@@ -29,6 +30,7 @@ from transformers import (
 from peft import (
     TaskType,
     PeftType,
+    PromptEncoder,
     PromptEncoderConfig, 
     get_peft_model, 
     get_peft_config,
@@ -43,101 +45,105 @@ from peft import (
 )
 
 from tqdm import tqdm
+from sklearn.metrics import precision_recall_fscore_support 
+
+
+@dataclass  
+class PromptTuningTrainerConfig:  
+    """MCQA任务的P-tuning V2配置"""  
+    model_name: str = "bert-base-uncased"
+    model_path: str = "bert-base-uncased"  # 预训练模型名称
+    peft_method: str = "prompt-tuning"
+    auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
+    dataset_name:str = "race" 
+    prefix_length: int = 100                        # 前缀长度  
+    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    batch_size:int = 32
+    num_epochs:int = 2
+    dropout: float = 0.1                          # dropout率  
+    max_seq_length: int = 512                     # 最大序列长度  
+    learning_rate: float = 0.3                   # 前缀参数的学习率  
+    model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
+    
+    prefix_projection: bool = True               # 是否使用MLP投影前缀  
+    prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
+    encoder_hidden_size:int = prefix_hidden_size  # 编码器的隐藏层大小
+    
+    warmup_steps: int = 500  # 添加预热步骤  
+    weight_decay: float = 1e-5  # 添加权重衰减  
+    beta1_decay:float = 0.9   #beta1: 一阶矩估计的指数衰减率（默认0.9）用于Adam优化器
+    beta2_decay:float = 0.8   # beta2: 二阶矩估计的指数衰减率（默认0.999）
+    total_training_steps = 30000  # 总的训练步数
+    early_stop_steps = 10
+    optimizer_class:type = Adam
 
 
 
 
-
-
-
-
-
-# 加载数据集
-
-# dataset_path = Config["datasets"]['race']
-# ds = load_dataset_from_huggingface(dataset_path,"high")
-
-# classes = [k.replace("_", " ") for k in ds["train"].features["Label"].names]
-# ds = ds.map(
-#     lambda x: {"text_label": [classes[label] for label in x["Label"]]},
-#     batched=True,
-#     num_proc=1,
-# )
-# ds["train"][0]
-
-
-
-def train_prompt_tuning(model, tokenizer):
-
-
-    lr = 3e-2
-    num_epochs = Config['num_epochs']
-    batch_size = Config['batch_size']
-
-
+def train_prompt_tuning(config:PromptTuningTrainerConfig):
+    # 初始化参数  
+    model_name = config.model_name
+    
+    # 配置num_labels
+    model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path, num_labels=config.num_labels )
+    
+    num_labels = config.num_labels
+    
+    prefix_length = config.prefix_length
+    batch_size = config.batch_size
+    lr = config.learning_rate
+    num_epochs = config.num_epochs
+    
+    max_length = config.max_seq_length
+    print(f"before inserting prompt tokens, {model_name}'s max length = {max_length}")
+    
+    max_length = max_length - prefix_length
+    print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
+    
+    
     # 加载数据集
-    dataset_name = "race"
-
-    dataset_path = Config["datasets"][dataset_name]
-    ds = load_dataset_from_huggingface(dataset_path,"high")
-
-    # coarse-grained preprocessing
-    ds, classes, tokenizer = preprocess_race(ds, tokenizer)
+    dataset_name = config.dataset_name
+    dataset_path = get_dataset_path_by_name(dataset_name)
     
-    Config["classes"][dataset_name] = classes
-    
-    # fine-grained preprocessing
-    # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
-    num_virtual_tokens=10
-    max_length = 512-num_virtual_tokens
-    peft_type = PeftType.PROMPT_TUNING
-    
-    processed_ds = ds.map(
-        lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
-        batched=True,
-        num_proc=1,
-        remove_columns=ds['train'].column_names,
-        load_from_cache_file=False,
-        desc="Running tokenizer on dataset",    
-    )   
+    processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
     
     train_ds = processed_ds["train"]
-    eval_ds = processed_ds["test"]
+    eval_ds = processed_ds["test"]  
     
-    # print("train_ds[0] = ", train_ds[0])
-
+    train_dataloader = DataLoader(
+            train_ds, 
+            shuffle=True, 
+            collate_fn=default_data_collator, 
+            batch_size=batch_size,
+            pin_memory=True
+        )
     
-
+    eval_dataloader = DataLoader(
+            eval_ds, 
+            collate_fn=default_data_collator, 
+            batch_size=batch_size,
+            pin_memory=True
+        )
     
-    
-    # print("train_ds[0]", train_ds[0])
-    # print("eval_ds[0]",eval_ds[0])
-    
-    print("dataset is preprocessed successfully ~~~")
-    
-    
-    # train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
-    # eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size, pin_memory=True)
-    train_dataloader = DataLoader(train_ds, shuffle=True, collate_fn=default_data_collator, batch_size=batch_size)
-    eval_dataloader = DataLoader(eval_ds, collate_fn=default_data_collator, batch_size=batch_size)
-    
-    tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
+    # 初始化模型  
+    device = Config['device'] 
     
     # Prompt-tuning
     peft_config = PromptTuningConfig(
         peft_type="PROMPT_TUNING",
         task_type=TaskType.SEQ_CLS, 
-        num_virtual_tokens=num_virtual_tokens, 
-        token_dim=768,  
-        num_transformer_submodules=1,
+        num_virtual_tokens=prefix_length, 
+        token_dim = config.prefix_hidden_size,  
+        # num_transformer_submodules=1,   # 此参数在最新版本中已不再使用
         # In many cases, this is set to 1, 
         # meaning that the prompt tuning will interact with a single submodule, 
         # often the self-attention submodule, to inject the prompt information into the model.
-        num_attention_heads=12,
-        num_layers=1,
-        prompt_tuning_init = "TEXT",
+
+        # num_attention_heads=12,   # 自动根据模型类型指定
+        # num_layers=12,    # 自动指定
+        prompt_tuning_init = "TEXT",  # 使用文本初始化prompt 
         prompt_tuning_init_text = "Classify the answer of this question among  A, B, C, and D",
-        tokenizer_name_or_path = tokenizer_path,
+        tokenizer_name_or_path = tokenizer,  # 路径 or 模型名称 or 对象 or 模型本地路径
     )
     
     # Input Shape: (batch_size, total_virtual_tokens)
@@ -206,57 +212,27 @@ def train_prompt_tuning(model, tokenizer):
     # 保存权重
     torch.save(model.state_dict(), Config['save_model_dir']['bert-base-uncased']['prompt-tuning']['race'])    
 
-def inference_on_race(save_path, ds:Dataset):
-    '''
-     inference on race dataset, just a simple test
-     
-     save_path: 训练好的模型权重, make sure it is a PeftModel
-    '''
-    ds.column_names
-    model = AutoPeftModelForSequenceClassification.from_pretrained(save_path).to("cuda")
-    
-    tokenizer_path = Config["models"]["bert-base-uncased"]["model_path"]
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    
-    device = Config['device']   
-    i = 15
-    inputs = f"Artical:{ds['article'][i]}\n\nQuestion:{ds['question'][i]}\n\n \
-              Options:{ds['options'][i]}\n\nAnswer:"
-              
-    inputs = tokenizer(inputs, return_tensors="pt")
-    # inputs: {"input_ids": tensor([[  101, 10001, 10002,  ...,     0,     0,     0]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0]])}
-    
-    with torch.no_grad():
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        
-        # outputs.shape = (batch_size, max_length)
-        outputs = model.generate(input_ids=inputs["input_ids"], max_new_tokens=10)
-        print(tokenizer.batch_decode(outputs.detach().cpu().numpy(), skip_special_tokens=True))
+
 
 
 
 if __name__ == '__main__':
     '''
-    
+
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=4)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    print(f"Model's current num_labels: {model.config.num_labels}") 
-     
-    model_config = model.config
-    model_name_or_path = model_config.name_or_path
-    print("model_name_or_path = ", model_name_or_path)
-    
-    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-        padding_side = "left"
-    else:
-        padding_side = "right"
-    
-    print("padding_side = ", padding_side)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side)
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path )
 
-    
-    train_prompt_tuning(model,tokenizer)
+    max_seq_length = get_max_length_from_model(model)
+
+    config = PromptTuningTrainerConfig(
+        model_name = "bert-base-uncased",
+        model_path = model_path,
+        dataset_name="race",
+        max_seq_length=max_seq_length,
+    )
+
+
+    train_prompt_tuning(config)
     
