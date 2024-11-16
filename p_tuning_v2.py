@@ -92,7 +92,8 @@ class PtuningV2Config:
     prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减  
-    beta2_decay:float = 0.8   # 用于AdaFactor optimizer
+    beta1_decay:float = 0.9   #beta1: 一阶矩估计的指数衰减率（默认0.9）用于Adam优化器
+    beta2_decay:float = 0.8   # beta2: 二阶矩估计的指数衰减率（默认0.999）
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
     optimizer_class:type = Adam
@@ -485,7 +486,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     optimizer = torch.optim.AdamW([  
         {'params': model.prefix_encoder.parameters(), 'lr': config.learning_rate},  
         {'params': model.classifier.parameters(), 'lr': config.learning_rate}  
-    ], weight_decay=config.weight_decay) 
+    ], weight_decay=config.weight_decay, betas=(config.beta1_decay, config.beta2_decay)) 
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
