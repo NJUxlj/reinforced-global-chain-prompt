@@ -1,3 +1,4 @@
+
 import torch
 import platform
 import multiprocessing  
@@ -7,7 +8,10 @@ import os
 from collections import namedtuple  
 from abc import ABC
 
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
+from typing import Any, Dict, TypeVar, Optional, Union, Type 
+
+from typing_extensions import Self, Annotated
 
 system_name = platform.system() 
 
@@ -38,7 +42,242 @@ MODEL_WEIGHT_NAME = "/model.pt"
 
 SAVE_DIR = "save_model_dir"
 
-Config = {
+
+
+
+
+
+
+T = TypeVar('T', bound='DotDict') 
+
+class DotDict(dict):  
+    """一个同时支持点号访问和键值访问的字典类，支持 IDE 智能提示
+    
+    用法示例:  
+        >>> d = DotDict({'a': 1, 'b': {'c': 2}})  
+        >>> print(d.a)        # 点号访问: 1  
+        >>> print(d['a'])     # 键值访问: 1  
+        >>> print(d.b.c)      # 嵌套点号访问: 2  
+        >>> print(d['b']['c']) # 嵌套键值访问: 2  
+    """  
+    
+    def __init__(self, dict_data: Optional[Dict[str, Any]] = None, **kwargs):  
+        """初始化方法，支持dict的所有初始化方式  
+        
+         Args:  
+            dict_data: 初始化的字典数据  
+            **kwargs: 额外的关键字参数  
+        """  
+        super().__setattr__('_data', {})
+        self.__annotations__ = {}  # 初始化类型注解字典  
+        
+        if dict_data is None:  
+            dict_data = {}  
+        
+        # 合并字典和关键字参数  
+        dict_data.update(kwargs)
+        
+        
+        # 递归转换并设置类型注解  
+        for key, value in dict_data.items():  
+            if isinstance(value, dict):  
+                value = self.__class__(value)  # 转为DotDict类型
+            self.__setattr__(key, value)  
+            
+            # 添加类型注解  
+            if isinstance(value, (int, float, str, bool)):  
+                self.__annotations__[key] = Annotated[type(value), f"{key}:\n{value}"]  
+            elif isinstance(value, self.__class__):  
+                self.__annotations__[key] =  Annotated[self.__class__, f"{key}, value is a dict"]   
+            else:  
+                self.__annotations__[key] = Annotated[Any, f"{key}, value is any type"]    # 默认为Any类型
+            
+            
+            
+    
+    def __getattr__(self, key:str)->Any:  
+        """处理访问不存在的属性  
+        
+        Args:  
+            key (str): 属性名  
+            
+        Raises:  
+            AttributeError: 当属性不存在时抛出  
+        """  
+        try:  
+            return self._data[key]  
+        except KeyError:  
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'") 
+    
+    def __setattr__(self, key:str, value:Any)->None:  
+        """设置属性值  
+        
+        Args:  
+            key (str): 属性名  
+            value: 属性值  
+        """  
+        if isinstance(value, dict) and not isinstance(value, DotDict):  
+            value = self.__class__(value)  
+        
+        # 更新类型注解  
+        if not hasattr(self, '__annotations__'):  
+            self.__annotations__ = {}  
+            
+        if isinstance(value, (int, float, str, bool)):  
+            self.__annotations__[key] = Annotated[type(value), f"key = {key}; \nvalue = {value};"]  
+        elif isinstance(value, self.__class__):  
+            self.__annotations__[key] = Annotated[self.__class__, f"key = {key}, value is a dict"]    
+        else:  
+            self.__annotations__[key] =  Annotated[Any, f"key = {key}, value is any"]   
+            
+        if key == '_data':  
+            super().__setattr__(key, value)  
+        else:  
+            self._data[key] = value
+            
+            
+            
+    def __getitem__(self, key: str) -> Any:  
+        """实现字典式访问  
+
+        Args:  
+            key: 键名  
+
+        Returns:  
+            对应的值  
+        """  
+        return self._data[key]
+    
+    def __setitem__(self, key:str, value:Any)->None:  
+        """处理键值赋值  
+        
+        Args:  
+            key: 键名  
+            value: 要设置的值  
+        """  
+        self.__setattr__(key, value) 
+        
+        
+    def get(self, key: str, default: Any = None) -> Any:  
+        """获取值，支持默认值  
+
+        Args:  
+            key: 键名  
+            default: 默认值  
+
+        Returns:  
+            对应的值或默认值  
+        """  
+        return self._data.get(key, default)  
+        
+    
+    def __delattr__(self, key):  
+        """处理删除属性     
+        
+        Args:  
+            key (str): 要删除的属性名  
+            
+        Raises:  
+            AttributeError: 当属性不存在时抛出  
+        """  
+        if key == '_data':  
+            super().__delattr__(key) 
+        else:  
+            try:  
+                del self._data[key]  
+                # 同时删除类型注解  
+                if hasattr(self, '__annotations__') and key in self.__annotations__:  
+                    del self.__annotations__[key]  
+            except KeyError:  
+                raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'") 
+        
+    def __repr__(self) -> str:  
+        """字符串表示"""  
+        items = [f"{k}={v!r}" for k, v in self._data.items()]  
+        return f"{self.__class__.__name__}({', '.join(items)})"    
+    
+    def to_dict(self) -> Dict[str, Any]:  
+        """转换回普通字典  
+
+        Returns:  
+            转换后的字典  
+        """  
+        result = {}  
+        for key, value in self._data.items():  
+            if isinstance(value, DotDict):  
+                result[key] = value.to_dict()  
+            else:  
+                result[key] = value  
+        return result  
+    
+    @classmethod  
+    def from_dict(cls: Type[T], dict_data: Dict[str, Any]) -> T:  
+        """从字典创建 DotDict 对象  
+
+        Args:  
+            dict_data: 源字典  
+            使用方括号定义泛型类型：Type[具体类型]
+
+        Returns:  
+            DotDict 对象  
+        """  
+        return cls(dict_data)
+    
+    def __eq__(self, other: Any) -> bool:  
+        """判断相等性  
+        
+        Args:  
+            other: 要比较的对象  
+            
+        Returns:  
+            bool: 两个对象是否相等  
+        """  
+        if not isinstance(other, (DotDict, dict)):  
+            return False  
+        
+        if isinstance(other, dict):  
+            other_dict = other  
+        else:  
+            other_dict = other._data  
+            
+        return self._data == other_dict  
+
+    def __ne__(self, other: Any) -> bool:  
+        """判断不相等性  
+        
+        Args:  
+            other: 要比较的对象  
+            
+        Returns:  
+            bool: 两个对象是否不相等  
+        """  
+        return not self.__eq__(other)
+
+    def __iter__(self):  
+        """迭代器实现"""  
+        return iter(self._data)  
+    
+    def __len__(self) -> int:  
+        """长度实现"""  
+        return len(self._data)  
+    
+    def keys(self):  
+        """返回所有键"""  
+        return self._data.keys()  
+    
+    def values(self):  
+        """返回所有值"""  
+        return self._data.values()  
+    
+    def items(self):  
+        """返回所有键值对"""  
+        return self._data.items()  
+
+
+
+
+
+Config = DotDict({
     "output_dir":"./output",
     
     "vocab":"data/chars.txt",
@@ -516,114 +755,8 @@ Config = {
         "race-c":"",
         "race":"",
     }
-}
+})
 
-
-
-
-class DotDict(dict):  
-    """一个同时支持点号访问和键值访问的字典类  
-    
-    用法示例:  
-        >>> d = DotDict({'a': 1, 'b': {'c': 2}})  
-        >>> print(d.a)        # 点号访问: 1  
-        >>> print(d['a'])     # 键值访问: 1  
-        >>> print(d.b.c)      # 嵌套点号访问: 2  
-        >>> print(d['b']['c']) # 嵌套键值访问: 2  
-    """  
-    
-    def __init__(self, *args, **kwargs):  
-        """初始化方法，支持dict的所有初始化方式  
-        
-        Args:  
-            *args: 变长位置参数，可以是字典  
-            **kwargs: 变长关键字参数  
-        """  
-        # 递归转换嵌套的字典  
-        for key, value in self.items():  
-            if isinstance(value, dict):  
-                self[key] = DotDict(value)  
-    
-    def __getattr__(self, key):  
-        """处理访问不存在的属性  
-        
-        Args:  
-            key (str): 属性名  
-            
-        Raises:  
-            AttributeError: 当属性不存在时抛出  
-        """  
-        try:  
-            return self[key]  
-        except KeyError:  
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'") 
-    
-    def __setattr__(self, key, value):  
-        """设置属性值  
-        
-        Args:  
-            key (str): 属性名  
-            value: 属性值  
-        """  
-        # 如果值是字典，递归转换  
-        if isinstance(value, dict):  
-            value = DotDict(value)  
-        self[key] = value 
-    
-    def __setitem__(self, key, value):  
-        """处理键值赋值  
-        
-        Args:  
-            key: 键名  
-            value: 要设置的值  
-        """  
-        # 如果值是字典，递归转换  
-        if isinstance(value, dict):  
-            value = DotDict(value)  
-        super().__setitem__(key, value)  
-        
-    def __delattr__(self, key):  
-        """处理删除属性  
-        
-        Args:  
-            key (str): 要删除的属性名  
-            
-        Raises:  
-            AttributeError: 当属性不存在时抛出  
-        """  
-        try:  
-            del self[key]  
-        except KeyError:  
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'")  
-    
-    # def __repr__(self):  
-    #     """返回对象的字符串表示"""  
-    #     items = [f"{k}={v!r}" for k, v in self.__dict__.items()]  
-    #     return f"{self.__class__.__name__}({', '.join(items)})"  
-    
-    def to_dict(self):  
-        """将DotDict对象转换回普通字典  
-        
-        Returns:  
-            dict: 转换后的普通字典  
-        """  
-        result = {}  
-        for key, value in self.__dict__.items():  
-            if isinstance(value, DotDict):  
-                result[key] = value.to_dict()  
-            else:  
-                result[key] = value  
-        return result  
-    
-    # def __eq__(self, other):  
-    #     """实现相等性比较"""  
-    #     if not isinstance(other, (DotDict, dict)):  
-    #         return False  
-    #     return self.to_dict() == (other.to_dict() if isinstance(other, DotDict) else other)  
-    
-    
-
-# Config = DotDict(Config)  
 
 # Config.save_model_dir
 
