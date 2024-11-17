@@ -61,37 +61,22 @@ class DotDict(dict):
         >>> print(d['b']['c']) # 嵌套键值访问: 2  
     """  
     
-    def __init__(self, dict_data: Optional[Dict[str, Any]] = None, **kwargs):  
-        """初始化方法，支持dict的所有初始化方式  
-        
-         Args:  
-            dict_data: 初始化的字典数据  
-            **kwargs: 额外的关键字参数  
+    def __init__(self, dict_data: Optional[Dict[str, Any]] = None):  
+        """初始化 DotDict 实例。  
+
+        Args:  
+            dict_data: 初始字典数据  
         """  
-        super().__setattr__('_data', {})
-        self.__annotations__ = {}  # 初始化类型注解字典  
+        # 直接使用普通字典存储数据  
+        self._data = {}  
         
-        if dict_data is None:  
-            dict_data = {}  
-        
-        # 合并字典和关键字参数  
-        dict_data.update(kwargs)
-        
-        
-        # 递归转换并设置类型注解  
-        for key, value in dict_data.items():  
-            if isinstance(value, dict):  
-                value = self.__class__(value)  # 转为DotDict类型
-            self.__setattr__(key, value)  
-            
-            # 添加类型注解  
-            if isinstance(value, (int, float, str, bool)):  
-                self.__annotations__[key] = Annotated[type(value), f"{key}:\n{value}"]  
-            elif isinstance(value, self.__class__):  
-                self.__annotations__[key] =  Annotated[self.__class__, f"{key}, value is a dict"]   
-            else:  
-                self.__annotations__[key] = Annotated[Any, f"{key}, value is any type"]    # 默认为Any类型
-            
+        if dict_data is not None:  
+            for key, value in dict_data.items():  
+                # 递归转换嵌套的字典  
+                if isinstance(value, dict):  
+                    self._data[key] = DotDict(value)  
+                else:  
+                    self._data[key] = value 
             
             
     
@@ -116,24 +101,16 @@ class DotDict(dict):
             key (str): 属性名  
             value: 属性值  
         """  
-        if isinstance(value, dict) and not isinstance(value, DotDict):  
-            value = self.__class__(value)  
-        
-        # 更新类型注解  
-        if not hasattr(self, '__annotations__'):  
-            self.__annotations__ = {}  
-            
-        if isinstance(value, (int, float, str, bool)):  
-            self.__annotations__[key] = Annotated[type(value), f"key = {key}; \nvalue = {value};"]  
-        elif isinstance(value, self.__class__):  
-            self.__annotations__[key] = Annotated[self.__class__, f"key = {key}, value is a dict"]    
-        else:  
-            self.__annotations__[key] =  Annotated[Any, f"key = {key}, value is any"]   
-            
+        # 特殊处理 _data 属性  
         if key == '_data':  
             super().__setattr__(key, value)  
-        else:  
-            self._data[key] = value
+            return  
+            
+        # 递归转换嵌套的字典  
+        if isinstance(value, dict) and not isinstance(value, DotDict):  
+            value = DotDict(value)  
+        
+        self._data[key] = value 
             
             
             
@@ -193,8 +170,7 @@ class DotDict(dict):
         
     def __repr__(self) -> str:  
         """字符串表示"""  
-        items = [f"{k}={v!r}" for k, v in self._data.items()]  
-        return f"{self.__class__.__name__}({', '.join(items)})"    
+        return f"{self.__class__.__name__}({self._data})"   
     
     def to_dict(self) -> Dict[str, Any]:  
         """转换回普通字典  
@@ -277,7 +253,7 @@ class DotDict(dict):
 
 
 
-Config = DotDict({
+Config = {
     "output_dir":"./output",
     
     "vocab":"data/chars.txt",
@@ -755,7 +731,10 @@ Config = DotDict({
         "race-c":"",
         "race":"",
     }
-})
+}
+
+Config = DotDict(Config)
+
 
 
 # Config.save_model_dir

@@ -143,7 +143,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         # num_layers=12,    # 自动指定
         prompt_tuning_init = "TEXT",  # 使用文本初始化prompt 
         prompt_tuning_init_text = "Classify the answer of this question among  A, B, C, and D",
-        tokenizer_name_or_path = tokenizer,  # 路径 or 模型名称 or 对象 or 模型本地路径
+        tokenizer_name_or_path = config.model_path,  # 路径 or 模型名称 or 模型本地路径
     )
     
     # Input Shape: (batch_size, total_virtual_tokens)
