@@ -188,3 +188,8 @@ def main():
 
     with open(args.demo_save_dir, 'w', encoding="utf-8") as write_f:
         json.dump(demos, write_f, indent=4, ensure_ascii=False)
+
+
+
+if __name__ == '__main__':
+    main()
