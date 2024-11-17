@@ -243,7 +243,7 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     # 初始化结果列表  
-    input_texts = []  
+    # input_texts = []  
     # labels = [] 
     # labels = ord(examples[first_four_columns[3]]) - ord("A") 
     
@@ -268,7 +268,7 @@ def preprocess_function_race(
         
         input_ids:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
         attention_mask = []
-        token_type_ids = []
+        token_type_ids = []  # if tokenizer.model_type == "bert" else None
         
         for i, option in enumerate(options):
             # 拼接question和option
@@ -351,9 +351,12 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
     # 获取批次大小  
     batch_size = len(examples[first_four_columns[0]])  
     
-    # 初始化结果列表  
-    input_texts = []  
-    labels = []  
+    results = {
+            "input_ids": list(),   # List[List[List[int]]]
+            "attention_mask": list(),
+            "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+            "labels": list()    # List[int]
+        }
     
     # 处理每个样本  
     for i in range(batch_size):  
@@ -363,42 +366,41 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
         answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
         
+        label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
+
+        assert (0 <= label < 4), "There are labels out of range [0, 3]." 
+
+        
         # 将选项转换为字典格式，方便后续处理  
         # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
         
-        # 构建输入文本  
-        # 格式：[CLS] 文章 [SEP] 问题 [SEP] 选项A [SEP] 选项B [SEP] 选项C [SEP] 选项D [SEP]  
-        input_text = f'''
-                        Context:{support}
-                        Question:{question}
-                        Options:
-                        {options[0]}
-                        {options[1]}
-                        {options[2]}
-                        {options[3]} 
-                        Answer:
-                        '''
+        input_ids:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
+        attention_mask = []
+        token_type_ids = []
         
-        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
-        label = ord(answer) - ord('A')  
         
-        input_texts.append(input_text)  
-        labels.append(label)  
-    
-    # 使用tokenizer处理文本（假设tokenizer是类的成员变量）  
-    model_inputs = tokenizer(  
-        input_texts,  
-        padding="max_length",  
-        truncation=True,  
-        max_length=max_length,  
-        # return_tensors=None  # 返回列表而不是张量  
-        add_special_tokens=True  # 确保添加特殊标记  [CLS] [SEP]
-    )  
-    
-    # 添加标签到结果中  
-    model_inputs["labels"] = labels  
-    
-    return model_inputs  
+        for i, option in enumerate(options):
+            # 拼接question和option
+            option_text = f"{question} {option.strip()}"
+            
+            # 将article, 拼接后的question 一起放入tokenizer转为input_ids
+             
+            result = tokenizer(
+                    support, 
+                    option_text, 
+                    padding="max_length", 
+                    max_length=max_length, 
+                    truncation=True,
+                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                )
+            
+            results["input_ids"].append(result["input_ids"])
+            results["attention_mask"].append(result["attention_mask"])
+            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # 标签：正确选项为1，其他为0  
+            results['labels'].append(1 if i == label else 0) 
+            
+    return results
 
 def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
                                dataset_name = 'dream', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
@@ -424,9 +426,12 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
     # 获取批次大小  
     batch_size = len(examples[first_four_columns[0]])  
     
-    # 初始化结果列表  
-    input_texts = []  
-    labels = []  
+    results = {
+        "input_ids": list(),   # List[List[List[int]]]
+        "attention_mask": list(),
+        "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+        "labels": list()    # List[int]
+    } 
     
     # 处理每个样本  
     for i in range(batch_size):  
@@ -435,43 +440,40 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
         question = examples[first_four_columns[1]][i]  
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
         answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
+        assert (0 <= label < 3), "There are labels out of range [0, 3]." 
+
+        # input_text = f'''
+        #                 Dialogue:{dialogue}
+        #                 Question:{question}
+        #                 Options:
+        #                 {options[0]}
+        #                 {options[1]}
+        #                 {options[2]}
+        #                 Answer:
+        #                 '''
         
-        # 将选项转换为字典格式，方便后续处理  
-        # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
-        
-        # 构建输入文本  
-        # 格式：[CLS] 文章 [SEP] 问题 [SEP] 选项A [SEP] 选项B [SEP] 选项C [SEP] 选项D [SEP]  
-        input_text = f'''
-                        Dialogue:{dialogue}
-                        Question:{question}
-                        Options:
-                        {options[0]}
-                        {options[1]}
-                        {options[2]}
-                        Answer:
-                        '''
-        
-        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
-        label = ord(answer) - ord('A')  
-        
-        input_texts.append(input_text)  
-        labels.append(label)  
+        for i, option in enumerate(options):
+            # 拼接question和option
+            option_text = f"{question} {option.strip()}"
+            
+             
+            result = tokenizer(
+                    dialogue, 
+                    option_text, 
+                    padding="max_length", 
+                    max_length=max_length, 
+                    truncation=True,
+                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                )
+
+            results["input_ids"].append(result["input_ids"])
+            results["attention_mask"].append(result["attention_mask"])
+            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # 标签：正确选项为1，其他为0  
+            results['labels'].append(1 if i == label else 0) 
     
-    # 使用tokenizer处理文本（假设tokenizer是类的成员变量）  
-    model_inputs = tokenizer(  
-        input_texts,  
-        padding="max_length",  
-        truncation=True,  
-        max_length=max_length,  
-        # return_tensors=None  # 返回列表而不是张量  
-        add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
-        # batch_size = 32,
-    )  
-    
-    # 添加标签到结果中  
-    model_inputs["labels"] = labels  
-    
-    return model_inputs 
+    return results
 
 
 def preprocess_function_commonsense_qa(examples, first_four_columns = ["article", "question", "options", "answer"], 
@@ -498,14 +500,17 @@ def preprocess_function_commonsense_qa(examples, first_four_columns = ["article"
     # 获取批次大小  
     batch_size = len(examples[first_four_columns[0]])  
     
+    results = {
+        "input_ids": list(),   # List[List[List[int]]]
+        "attention_mask": list(),
+        "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+        "labels": list()    # List[int]
+    }
     # 初始化结果列表  
-    input_texts = []  
-    labels = []  
+    # input_texts = []  
+    # labels = []  
     
-    # print(" first_four_columns = ", first_four_columns)
-    print()
-    # print("examples = \n", examples)
-    
+
     # 处理每个样本  
     for i in range(batch_size):  
         # 获取当前样本的各个字段  
@@ -513,45 +518,44 @@ def preprocess_function_commonsense_qa(examples, first_four_columns = ["article"
         question = examples[first_four_columns[1]][i]  
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
         answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
+        assert (0 <= label < 5), "There are labels out of range [0, 4]." 
         
-        # print("question_concept =", question_concept)
-        # print("question =", question)
-        # print("options =", options)
-        # print("answer =", answer)  
+        # input_text = f'''
+        #                 Question concept:{question_concept}
+        #                 Question:{question}
+        #                 Options:
+        #                 {options[0]}
+        #                 {options[1]}
+        #                 {options[2]}
+        #                 {options[3]} 
+        #                 Answer:
+        #                 '''
+        
+        for i, option in enumerate(options):
+            # 拼接question和option
+            option_text = f"{question} {option.strip()}"
+            
+            # 将article, 拼接后的question 一起放入tokenizer转为input_ids
              
-        input_text = f'''
-                        Question concept:{question_concept}
-                        Question:{question}
-                        Options:
-                        {options[0]}
-                        {options[1]}
-                        {options[2]}
-                        {options[3]} 
-                        Answer:
-                        '''
-        
-        # 将答案标签转换为数字（A->0, B->1, C->2, D->3）  
-        label = ord(answer) - ord('A')  
-        
-        input_texts.append(input_text)  
-        labels.append(label)  
-    
-    # 使用tokenizer处理文本（假设tokenizer是类的成员变量）  
-    model_inputs = tokenizer(  
-        input_texts,  
-        padding="max_length",  
-        truncation=True,  
-        max_length=max_length,  
-        # return_tensors=None  # 返回列表而不是张量  
-        add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
-    )  
-    
-    # 添加标签到结果中  
-    model_inputs["labels"] = labels  
-    
-    return model_inputs
+            result = tokenizer(
+                    question_concept, 
+                    option_text, 
+                    padding="max_length", 
+                    max_length=max_length, 
+                    truncation=True,
+                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                )
 
+            results["input_ids"].append(result["input_ids"])
+            results["attention_mask"].append(result["attention_mask"])
+            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # 标签：正确选项为1，其他为0  
+            results['labels'].append(1 if i == label else 0) 
+            
+        
 
+    return results
 
 
     
@@ -1032,8 +1036,8 @@ class McqDatasetWrapper:
             处理后的字典数据，包含以下字段：  
             - dialogue: 对话文本（合并后）  
             - question: 问题  
-            - options: 选项列表  
-            - label: 正确答案的索引  
+            - options: 选项列表  ["A. xxx", "B. xxx", "C. xxx"]
+            - label: 正确答案: [A, B, C]
             - dialogue_id: 对话ID（可选，用于追踪）  
         """  
         processed_data = {  
@@ -1147,8 +1151,8 @@ class McqDatasetWrapper:
         {  
             "support": str,        # 文章内容  
             "question": str,       # 问题  
-            "options": List[str],  # 选项列表（4个选项）  
-            "answer": int         # 正确答案的索引  
+            "options": List[str],  # 选项列表（4个选项） ["A. xxx", "B. xxx", ...] 
+            "answer": str         # 正确答案， 已经被转为 A,B,C,D
         }  
         
         Args:  
@@ -1330,6 +1334,18 @@ class McqDatasetWrapper:
             but now are "huggingface Dataset"
         """  
         config = self.dataset_configs[dataset_name.lower()]  
+        
+        # 获取当前工作目录  
+        current_working_directory = os.getcwd()  
+
+        # 假设父级目录是项目的根目录  /root/black-prompt/autocot/.. = /root/black-prompt
+        project_root_directory = os.path.abspath(os.path.join(current_working_directory, '..'))  
+
+        # 判断当前工作目录是否为父级目录  
+        if current_working_directory == project_root_directory:  
+            pass
+        else:  # 如果是在子目录下(比如autocot)执行的脚本, 需要在数据集路径前+“.”, 以加载根目录下的数据集
+            config.local_path = "."+config.local_path
         
         # 根据文件格式选择加载方式  
         if config.file_format == "json":  

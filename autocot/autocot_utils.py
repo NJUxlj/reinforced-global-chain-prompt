@@ -2,14 +2,21 @@
 '''
 Adapted from https://github.com/kojima-takeshi188/zero_shot_cot
 '''
-
+import os
+import sys
 from statistics import mean
 from torch.utils.data import (
     Dataset,
     DataLoader
 )
 
-from ..load import (
+# 获取当前文件所在目录的父目录  
+parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
+
+# 将父目录添加到sys.path  
+sys.path.insert(0, parent_directory) 
+
+from load import (
     preprocess_function_race,
     load_dataset_from_huggingface,
     preprocess_race,
@@ -58,7 +65,7 @@ class Arguments:
     num_samples: int = 1  
     log_dir: str = "./cot_log"  # 日志文件夹路径 
     api_time_interval:float = 1.0
-    dataset_path: str = "./data/race"
+    dataset_path: str = "../data/race"
     dataset: str = "race"
 
 

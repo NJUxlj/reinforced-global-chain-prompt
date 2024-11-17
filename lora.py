@@ -157,9 +157,35 @@ def compute_metrics_lora(eval_preds):
 
 
 
+# class CustomLoraTrainer(Trainer):  
+#     """自定义Trainer类来重写保存逻辑"""  
+#     def save_model(self, output_dir: Union[str, os.PathLike] = None, _internal_call: bool = False):  
+#         """重写保存模型的方法，只保存LoRA权重"""  
+#         if output_dir is None:  
+#             output_dir = self.args.output_dir  
+            
+#         # 确保输出目录存在  
+#         os.makedirs(output_dir, exist_ok=True)  
+        
+#         # 获取模型状态  
+#         state_dict = self.model.state_dict()  
+        
+#         # 只保存adapter_model.bin和adapter_config.json  
+#         self.model.save_pretrained(  
+#             output_dir,  
+#             save_function=self.save_model_card,  
+#             save_adapter=True,       # 只保存adapter权重  
+#             save_base_model=False    # 不保存基础模型  
+#         )  
+        
+#         # 保存训练参数  
+#         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))  
+
 
 
 def train_lora(config:LoraTrainerConfig):
+    
+    fix_seed(42)
     
     # 初始化参数  
     model_name = config.model_name
@@ -206,6 +232,13 @@ def train_lora(config:LoraTrainerConfig):
     device = Config['device'] 
     
     
+    accelerator = Accelerator(  
+        gradient_accumulation_steps=4,  # 与TrainingArguments中的设置保持一致  
+        # mixed_precision='fp16',         # 启用混合精度训练  
+        log_with="all",                # 启用所有可用的日志记录器  
+        project_dir=f"logs/{model_name}/{config.peft_method}/{dataset_name}/",           # 指定日志目录  
+    )  
+    
     
     lora_config = LoraConfig(
         peft_type=PeftType.LORA,
@@ -222,36 +255,9 @@ def train_lora(config:LoraTrainerConfig):
     model.print_trainable_parameters()
     
     
-    
-    # # preprocess dataset
-    # dataset_name = "race"
-    # dataset_path = Config["datasets"][dataset_name]
-    # ds = load_dataset_from_huggingface(dataset_path,"high")
-    
-    # # coarse-grained preprocessing
-    # ds, classes, tokenizer = preprocess_race(ds, tokenizer)
-    
-    # Config["classes"][dataset_name] = classes
-    
-    # fine-grained preprocessing
-    # processed_ds = ds.map(
-    #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), # 从load.py导入  max_length = 492, 等下要加20个virtual tokens
-    #     batched=True,
-    #     num_proc=1,
-    #     remove_columns=ds['train'].column_names,
-    #     load_from_cache_file=False,
-    #     desc="Running tokenizer on dataset",    
-    # )   
-    
-    # train_ds = processed_ds["train"]
-    # eval_ds = processed_ds["test"]
-    
-    
-    
-    
     args = TrainingArguments(
         # peft_model_id,
-        output_dir=Config["output_dir"],  # 用来存储save_strategy保存的模型检查点
+        output_dir=Config[SAVE_DIR][config.model_name][config.peft_method][config.dataset_name],  # 用来存储save_strategy保存的模型检查点
         evaluation_strategy="epoch",   #  将评估策略改为每隔一定步数评估一次 
         # eval_steps = 5,               #  每隔 5 个步骤进行一次评估 
         logging_strategy="epoch",     # 日志记录策略设为每隔一定步数记录一次 
@@ -270,7 +276,12 @@ def train_lora(config:LoraTrainerConfig):
         report_to=["none"],                # 不报告到其他平台，如 TensorBoard 等  
         logging_first_step=False,           # 记录第一个步骤的日志  
         log_level='info',                  # 设置日志级别  
+
+         # 添加分布式训练相关配置  
+        ddp_find_unused_parameters=False,  # 提高分布式训练效率  
+        dataloader_pin_memory=True,        # 提高数据加载效率  
     )
+    
     
     trainer = Trainer(
         model,
@@ -281,10 +292,62 @@ def train_lora(config:LoraTrainerConfig):
         data_collator=default_data_collator,
         compute_metrics=compute_metrics_lora,
     )
-    trainer.train()
+    
+    
+    # trainer.train()
+    
+    # 使用accelerator包装训练过程  
+    with accelerator.main_process_first():  
+        # 确保只在主进程上进行数据预处理  
+        trainer.train()  
+    
+    # 在主进程上保存模型  
+    if accelerator.is_main_process:  
+        # trainer.save_model() 
+        
+        # 最后检查点的路径
+        last_checkpoint = trainer.state.best_model_checkpoint or args.output_dir 
+
+        # peft_state_dict = get_peft_model_state_dict(trainer.model)
+        
+        
+        # 同时保存了adapter_model.safetensors, adapter_config.json
+        trainer.model.save_pretrained(
+            last_checkpoint,      # 内置仅保存adapter
+            # save_adapter=True,      # 只保存adapter权重  
+            # save_base_model=False   # 不保存基础模型  
+        )
+        print(f"LoRA weights saved to {last_checkpoint}")  
 
 
 
+def load_trained_lora_model(config:LoraTrainerConfig, lora_weights_path: str):  
+    """  
+    加载基础模型和训练好的LoRA权重  
+    
+    Args:  
+        base_model_name: 基础模型名称或路径  
+        lora_weights_path: LoRA权重保存路径  
+    
+    Returns:  
+        加载了LoRA权重的模型  
+    """  
+    # 加载基础模型  
+    base_model = AutoModelForSequenceClassification.from_pretrained(  
+        config.model_path,  
+        num_labels=config.num_labels,  
+        device_map="auto"  
+    )  
+    
+    # 加载LoRA权重  
+    model = PeftModel.from_pretrained(  
+        model = base_model,  
+        # model_id: A path to a directory containing a PEFT configuration file saved using the save_pretrained method (./my_peft_config_directory/).
+        model_id = lora_weights_path,   
+        is_trainable=False  # 设置为推理模式  
+    )  
+    
+    return model  
 
 
 if __name__ == "__main__":
@@ -306,6 +369,7 @@ if __name__ == "__main__":
         model_path=model_path,
         dataset_name=dataset_name,
         max_seq_length=max_seq_length,
+        num_epochs = 5,
     )
     
 

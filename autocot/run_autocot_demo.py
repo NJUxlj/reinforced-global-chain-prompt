@@ -42,7 +42,7 @@ def parse_arguments():
     parser.add_argument( # where to save the contructed demonstrations of the prompt
         "--demo_save_dir", type=str, default="demos/race", help="where to save the contructed demonstrations"
     )
-    parser.add_argument("--random_seed", type=int, default=192, help="random seed")
+    parser.add_argument("--random_seed", type=int, default=42, help="random seed")
     
     parser.add_argument(
         "--encoder", type=str, default="all-MiniLM-L6-v2", help="which sentence-transformer encoder for clustering"
@@ -120,11 +120,11 @@ def main():
     cluster_assignment = clustering_model.labels_
     
     clustered_sentences = [[] for i in range(num_clusters)]
-    # 
+    # dict{sentence_id: {cluster_id: sentence-cluster-distance}}
     dist = clustering_model.transform(corpus_embeddings)
-    # dict{} key: cluster_id, value: a list of sentence embeddings
+    # List[List[distance1, distance2,...], List[]]
     clustered_dists = [[] for i in range(num_clusters)]
-    # dict{} key: cluster_id, value: a list of sentence indices
+    # List[List[sentence_id1, sentence_id2,...], List[]]
     clustered_idx = [[] for i in range(num_clusters)]
     
     for sentence_id, cluster_id in enumerate(cluster_assignment):
@@ -136,21 +136,31 @@ def main():
     
     for i in range(len(clustered_dists)):
         print("Cluster ", i+1)
-        # 把一组句子下标，和一组句子到聚类中心的距离，封装成一个元组列表
+        # 把一个cluster中的sentence_id对应的下标，和一组句子到聚类中心的距离，封装成一个元组列表
+            # 注意：range(len(clustered_dists[i])产生的下标序列，不等于 cluster_i 的sentence_id数组
+            # 例如:
+                # clustered_dists[i] = [101, 201, 122, 56, 90]
+                # range(len(clustered_dists[i]) = [0, 1, 2, 3, 4]
+                
+        # map: 把list()函数映射到 zip返回的迭代器上
         tmp = list(map(list, zip(range(len(clustered_dists[i])), clustered_dists[i])))
         # 把当前cluster中所有的question-cluster距离，按照离聚类中心从小到大进行排序
+        # [(3, 999), (1, 203), (2, 124), (0, 99), (4, 55)]
         top_min_dist = sorted(tmp, key=lambda x: x[1], reverse=False)
         if not args.sampling == "center":
             random.shuffle(top_min_dist)
+            
         for element in top_min_dist: # for each question q_j^(i) in q^(i)
-            min_idx = element[0] # 取出最短的距离对应question的下标
+            min_idx = element[0] # 取出离cluster的最短距离对应(sentence_id)的下标 id
+            # clustered_idx[i][min_idx] 取到 min_idx对应的sentence_id
             c_rationale = rationale[clustered_idx[i][min_idx]].strip() # r_j^(i)
             c_pred_ans = pred_ans[clustered_idx[i][min_idx]].strip() # a_j^(i)
 
             # if satisfy the criterion
             if len(question[clustered_idx[i][min_idx]].strip().split()) <= 60 \
                 and len(c_rationale.replace("\n\n", "\n").split("\n")) <= max_ra_len and c_rationale[-1] == "." and c_pred_ans != "":
-                if args.task in ["race", "multirc", "arc", "record"]:
+                if args.task in ["race", "dream", "sciq", "commonsense_qa"]:
+                    # 如果预测的答案既不在倒数第二句话中，也不在最后十句话中
                     if not (c_pred_ans.strip() in c_rationale.split(".")[-2] or c_pred_ans.strip() in c_rationale.split()[-10:]):
                         continue
                 c_question = question[clustered_idx[i][min_idx]]

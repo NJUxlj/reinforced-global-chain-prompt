@@ -14,6 +14,13 @@ python run_inference.py \
 
 import argparse
 from autocot_utils import *
+
+# 获取当前文件所在目录的父目录  
+parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
+
+# 将父目录添加到sys.path  
+sys.path.insert(0, parent_directory) 
+
 from config import Config
 from config import NUM_CPU_PROCESSES
 
@@ -22,7 +29,7 @@ def parse_arguments():
     
     parser = argparse.ArgumentParser(description="Zero-shot-CoT")
     
-    parser.add_argument("--random_seed", type=int, default=1, help="random seed")
+    parser.add_argument("--random_seed", type=int, default=42, help="random seed")
     
     parser.add_argument(
         "--dataset", type=str, default="race", choices=["race", "dream", "sciq", "commonsense_qa"], help="dataset used for experiment, select from [ race, dream, sciq, commonsense_qa ]"

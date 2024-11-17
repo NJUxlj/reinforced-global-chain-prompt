@@ -1,14 +1,19 @@
 
 import argparse
-
+import os
+import sys
 from dataclasses import dataclass
-from ..load import *
+
+# 获取当前文件所在目录的父目录  
+parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
+
+# 将父目录添加到sys.path  
+sys.path.insert(0, parent_directory) 
+
+from load import *
 from autocot_utils import *
 
-from ..config import NUM_CPU_PROCESSES
-
-
-
+from config import NUM_CPU_PROCESSES
 
 
 
@@ -66,6 +71,7 @@ def cot(method, question):
 
 
 
+# 此脚本并不依赖于parseargs, 我已经把必须的参数打包成了Arguments类，放在autocot_utils.py里
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Zero-shot-CoT")
@@ -75,7 +81,7 @@ def parse_arguments():
         "--model", type=str, default="gpt-4o", help="model used for decoding. Please select from [gpt-4o, gpt-4o-mini]"
     )
     parser.add_argument(
-        "--method", type=str, default="auto_cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot"], help="method"
+        "--method", type=str, default="zero-shot-cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot"], help="method"
     )
     parser.add_argument(
         "--cot_trigger_no", type=int, default=1, help="A trigger sentence that elicits a model to execute chain of thought"
@@ -96,7 +102,7 @@ def parse_arguments():
         "--temperature", type=float, default=0, help=""
     )
     parser.add_argument(
-        "--log_dir", type=str, default="./log/", help="log directory"
+        "--log_dir", type=str, default="./cot_log/", help="log directory"
     )
     args = parser.parse_args()
 
@@ -110,7 +116,7 @@ def parse_arguments():
 
 
 
-def zero_shot_cot(question, answer, args):
+def zero_shot_cot(question, answer, args:Arguments):
     decoder = Decoder()
     cot_trigger = "Let's think step by step."
     
@@ -169,8 +175,14 @@ def zero_shot_cot(question, answer, args):
         
 
 def cot_log_generator(dataset_name:str):
+    '''
+        在某个数据集上生成zero-shot-cot日志
+    '''
     # args = parse_arguments()
-    args = Arguments()
+    args = Arguments(
+        dataset_path='../data/race/',
+        dataset='race',
+    )
     
     logger = setup_logger(dataset_name, args)
     
@@ -193,7 +205,7 @@ def cot_log_generator(dataset_name:str):
         sys.stdout = LoggerWriter(logger, logging.INFO)
 
         # generate logs
-        for i, example in enumerate(train_ds[:1000]):
+        for i, example in enumerate(train_ds[:300]):
             print(f"{i}st data")  
             print("1_th_sampling")  
             

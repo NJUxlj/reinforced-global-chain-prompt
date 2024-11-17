@@ -2,6 +2,7 @@ import os
 import torch
 import logging
 import evaluate
+import random
 import numpy as np
 from itertools import product
 from config import Config
@@ -394,6 +395,21 @@ def make_save_dirs(model_name:Union[List,str] = None, pt_method:Union[List, str]
         save_paths.append(save_path)  
     
     return save_paths
+
+
+
+def fix_seed(seed):
+    '''
+    set the seed of the random number generator
+    '''
+    # random
+    random.seed(seed)
+    # Numpy
+    np.random.seed(seed)
+    # Pytorch
+    torch.manual_seed(seed) # CPU seed
+    torch.cuda.manual_seed_all(seed) # GPU seed
+    torch.backends.cudnn.deterministic = True 
 
 
 
