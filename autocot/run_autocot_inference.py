@@ -131,8 +131,12 @@ def main():
     with open(args.output_dir, "a") as wp:
 
         for i, data in enumerate(dataloader):
+            
+            
+            # data.type = dict{'question':["xxxx", "xxxx"] , 'answer':["A", "B", ...] }
+            
             if i < args.resume_id - 1: # 断点续传， 实际需要续传的断点index = resume_id -1
-            # if i < 297:
+                #  跳过不需要的问题
                 continue
             
             output_line = {} 
@@ -142,7 +146,9 @@ def main():
             
             
             # Prepare question template ...
-            x, y = data
+            # x, y = data
+            x = data['question']
+            y = data['answer']
             x = "Q: " + x[0] + "\n" + "A:"
             y = y[0].strip()            
             
@@ -153,7 +159,7 @@ def main():
             if args.method == "zero_shot":
                 x= x + " " + args.direct_answer_trigger_for_zeroshot
             elif args.method == "zero_shot_cot":
-                x= x + " " + args.cot_trigger
+                x= x + " " + args.cot_trigger # Let's think step by step
             elif args.method == "few_shot": # input + demonstrations + A:
                 x = demo + x
             elif args.method == "few_shot_cot":  # input + demonstrations + A:
@@ -183,14 +189,18 @@ def main():
                 print("x + pred = ", x + pred)
             
             # Cleansing of predicted answer ...
-            pred = answer_cleansing(args, pred)
+            
+            
+            # pred = answer_cleansing(args, pred)
             
             
             output_line['pred_ans'] = pred
+            
+            # wrapped question
             output_line['wrap_que'] = x
             
             # 把对一个样本的完整推理过程写入到输出文件中
-            output_json = json.dumps(output_line)
+            output_json = json.dumps(output_line) # transform to json string
             
             wp.write(output_json + '\n')
             
@@ -205,6 +215,7 @@ def main():
             correct_list.append(correct)
             total += 1
             
+            # cot推理的样本数量达到上限，直接停止
             if (args.limit_dataset_size != 0) and ((i+1) >= args.limit_dataset_size):
                 break
     # Calculate accuracy ...

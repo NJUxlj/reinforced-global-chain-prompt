@@ -682,13 +682,13 @@ def preprocess_func_autocot(config: DatasetConfig, examples:Dict[str,List]):
 
 def preprocess_dataset_autocot(dataset_name):
     """  
-    处理整个数据集  [必须返回训练集]
+    处理整个数据集  [必须返回训练集, 并且只包含两个字段: {question, answer}]
     
     Args:  
         dataset: 原始的训练集 (split = train)  
         dataset_name: 数据集名称，用于选择预处理函数
     Returns:  
-        处理后的数据集 [训练集] , 字段只有两个 : {question, answer}
+    :param return:   处理后的数据集 [训练集] , 字段只有两个 : {question, answer}
     """ 
     wrapper = McqDatasetWrapper()
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
@@ -833,7 +833,8 @@ class McqDatasetWrapper:
 
     def load_json_dataset(self, config: DatasetConfig) -> DatasetDict:  
         """  
-        从本地JSON文件加载数据集  
+        从本地JSON文件加载数据集, 包括 [train, validate, test], 没有对应的split文件就不加
+        train, validation(dev) 都有，但是 test 不一定有
         
         Args:  
             config: 数据集配置  

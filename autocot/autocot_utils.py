@@ -184,6 +184,8 @@ def get_reformated_dataset(args)->Dataset:
 def setup_data_loader(args):
     '''
      return a huggingface dataset wrapped by a DataLoader
+     
+     it only contains 2 fields: {question, answer}
     
     '''
     # fix randomness of dataloader to ensure reproducibility
@@ -248,7 +250,7 @@ def answer_cleansing(args, pred, must_choice=False):
 
 
     if args.method in ("few_shot", "few_shot_cot", "auto_cot"):
-        # split 之前： "The answer is: 1 or The answer is: 2 or 3 or 4 or 5"
+        # split 之前： "Therefore, among A to D, the answer is A."
         # preds after split = ["1 or", "2 or 3 or 4 or 5" ]
         preds = pred.split(args.direct_answer_trigger_for_fewshot) # trigger: "The answer is:"
         # True, 表示模型输出的结果中包含了多个候选答案
@@ -265,7 +267,7 @@ def answer_cleansing(args, pred, must_choice=False):
     elif args.dataset == "arc":
         pred = re.findall(r'A|B|C', pred)
     else:
-        raise ValueError("dataset is not properly defined ... Please select from [race, record, multirc, arc]")
+        raise ValueError("dataset is not properly defined ... Please select from [race, sciq, dream, commonsense_qa]")
     
     
     # If there is no candidate in list, null is set.
