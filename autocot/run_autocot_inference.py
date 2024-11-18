@@ -138,7 +138,8 @@ def main():
     dataloader, config = setup_data_loader(args)
     
     # 我们要从dataloader中抽取k个样本进行推理。
-    
+    # 获取一个只包含k个question的新dataloader
+    dataloader = cluster_dataloader(dataloader, args, config)
     
     if args.method == "few_shot":
         demo = create_demo_text(args, cot_flag=False)

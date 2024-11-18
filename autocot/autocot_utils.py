@@ -11,6 +11,9 @@ from torch.utils.data import (
 )
 
 from transformers import default_data_collator
+from sklearn.cluster import KMeans 
+from sentence_transformers import SentenceTransformer 
+from collections import defaultdict  
 
 # 获取当前文件所在目录的父目录  
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
@@ -258,6 +261,132 @@ def setup_data_loader(args):
     # - 或者是可以直接转换为tensor的数据 
     
     return dataloader, config
+
+
+
+def get_text_embeddings(
+    texts: List[str], 
+    encoder: str = 'all-MiniLM-L6-v2',    
+    batch_size: int = 32,  
+    device: str = Config['device'],      
+    )-> Tuple[np.ndarray, List[str]]:
+    
+    """  
+    将DataLoader中的文本转换为向量表示  
+    
+    Args:  
+    :params: texts: 一个数据集的question列表
+    :params: encoder: SentenceTransformer模型名称  
+    :params: batch_size: 批处理大小  
+    :params: device: 设备类型 ('cuda', 'cpu' 或 None)  
+    
+    返回:  
+    embeddings: 文本的向量表示  
+    texts: 对应的原始文本列表  
+    """  
+    model = SentenceTransformer(encoder)  
+    if device is not None:  
+        model = model.to(device) 
+        
+
+    # 生成文本嵌入  
+    embeddings = model.encode(  
+        texts,  
+        batch_size=batch_size,  
+        show_progress_bar=True,  
+        convert_to_numpy=True  
+    )  
+    
+    return embeddings, texts
+
+def cluster_dataloader(
+    dataloader, 
+    args, 
+    config:DatasetConfig, 
+    num_example = 300, 
+    n_clusters=5, 
+    random_state=42
+    )->Tuple[np.ndarray, KMeans, Dict[int, List[str]]]:  
+    """  
+    对DataLoader中的前 num_example 个数据进行KMeans聚类  
+    
+    Args  
+    :param: dataloader: torch.utils.data.DataLoader, 包含要聚类的数据  
+    :param: n_clusters: int, 聚类的数量  
+    :param: random_state: int, 随机种子
+    :param: num_example 从数据集中取几个样本进行聚类
+    
+    返回:  
+    labels: 聚类标签  
+    kmeans: 训练好的KMeans模型  
+    clusters: 每个簇的文本字典  
+    """  
+    
+    # 收集DataLoader中的所有数据  
+    texts = []  # List[str]
+    steps = 0
+    for batch in dataloader: 
+        """batch
+        {
+            "question": ["What is the capital of France?","xxxxx", "yyyyy"]
+            "answer": ["Paris", "xxx", "yyy"]
+        }
+        """ 
+        # 如果batch是元组（比如同时包含数据和标签），只取第一个元素（数据）  
+        # (data, label) = (tensor(batch_size, seq_len), tensor(batch_size,))
+        if isinstance(batch, (tuple, list)):  
+            batch = batch[0]  
+        # 将数据移到CPU并转换为numpy数组
+        questions = batch[config.question_key]  # List[str]
+        for question in questions:
+            if steps >= num_example:
+                print("Reach the max number {} of examples, stop collecting questions...".format(num_example))
+                break
+            steps+=1
+            texts.append(question)  
+    
+    
+    embeddings, texts= get_text_embeddings(texts, args.encoder)
+    
+    
+    # 使用KMeans进行聚类  
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)  
+    labels = kmeans.fit_predict(embeddings) 
+    
+    assert len(labels)==len(embeddings), "length of embeddings and labels are not the same"
+    assert len(labels)==len(texts), "length of labels and texts are not the same" 
+    
+    
+    # 计算每个样本到其质心的距离 
+    distances = np.zeros(len(texts))   # index = sentence_id, value=distance
+    for i, (embedding, label) in enumerate(zip(embeddings, labels)): 
+        centroid = kmeans.cluster_centers_[label]  
+        distance = np.linalg(embedding-centroid) 
+        distance[i] = distance
+
+    # 将文本按簇组织  
+    clusters = defaultdict(list)
+    for text, label, distance in zip(texts, labels, distances): 
+        clusters[label].append((text, distance))
+    
+    # 对每个簇内的文本按距离排序  
+    sorted_clusters = {}  
+    for label in clusters:  
+        # 按距离从近到远排序  
+        sorted_texts = sorted(clusters[label], key=lambda x: x[1])  
+        sorted_clusters[label] = sorted_texts  
+    
+    return labels, kmeans, sorted_clusters 
+
+
+def get_k_questions_from_clusters(
+    clusters: Dict[int, List[str]],
+    k: int = 10
+    )->List[str]:
+    '''
+    从聚类结果中随机选择k个问题
+    '''
+    pass
     
 def answer_cleansing(args, pred, must_choice=False):
     '''
