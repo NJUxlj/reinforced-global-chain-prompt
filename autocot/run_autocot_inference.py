@@ -70,6 +70,10 @@ def parse_arguments():
     )
     
     parser.add_argument(
+        "--encoder", type=str, default="all-MiniLM-L6-v2", help="which sentence-transformer encoder for clustering"
+    )
+    
+    parser.add_argument(
         "--method", type=str, default="auto_cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot"], help="method"
     )
     parser.add_argument(
@@ -139,7 +143,10 @@ def main():
     
     # 我们要从dataloader中抽取k个样本进行推理。
     # 获取一个只包含k个question的新dataloader
-    dataloader = cluster_dataloader(dataloader, args, config)
+    k = 8
+    labels, kmeams, sorted_clusters = cluster_dataloader(dataloader, args, config, begin_example=300, num_example=300, n_clusters=k)
+    
+    dataloader_k = get_k_questions_dataloader_from_clusters(sorted_clusters, args, config, n_clusters=k)
     
     if args.method == "few_shot":
         demo = create_demo_text(args, cot_flag=False)
@@ -186,7 +193,7 @@ def main():
     
     with open(args.output_dir, "w", encoding='utf-8') as wp:
 
-        for i, data in enumerate(dataloader):
+        for i, data in enumerate(dataloader_k):
             
             
             # data.type = dict{'question':["xxxx", "xxxx"] , 'answer':["A", "B", ...] }
@@ -282,9 +289,9 @@ def main():
             # 推理后去除推理链中的换行符, 使得output_line只占一行
             z = z.replace("\n\n","\n").replace("\n", '\n') # r'\n'
             
-            print(" =====================")
-            print("after replacement, the rationale  =  \n", z)
-            print("=================================")
+            # print(" =====================")
+            # print("after replacement, the rationale  =  \n", z)
+            # print("=================================")
             
             output_line['rationale'] = z
             

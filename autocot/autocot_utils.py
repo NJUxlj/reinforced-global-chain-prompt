@@ -303,8 +303,9 @@ def cluster_dataloader(
     dataloader, 
     args, 
     config:DatasetConfig, 
+    begin_example = 300,
     num_example = 300, 
-    n_clusters=5, 
+    n_clusters=8, 
     random_state=42
     )->Tuple[np.ndarray, KMeans, Dict[int, List[str]]]:  
     """  
@@ -315,6 +316,7 @@ def cluster_dataloader(
     :param: n_clusters: int, 聚类的数量  
     :param: random_state: int, 随机种子
     :param: num_example 从数据集中取几个样本进行聚类
+    :param: begin_example 从原数据集的第几个样本开始截取？(从0开始)
     
     返回:  
     labels: 聚类标签  
@@ -325,6 +327,7 @@ def cluster_dataloader(
     # 收集DataLoader中的所有数据  
     texts = []  # List[str]
     steps = 0
+    stop = False
     for batch in dataloader: 
         """batch
         {
@@ -339,11 +342,21 @@ def cluster_dataloader(
         # 将数据移到CPU并转换为numpy数组
         questions = batch[config.question_key]  # List[str]
         for question in questions:
-            if steps >= num_example:
+            if steps < begin_example:
+                steps+=1
+                continue
+            if (steps-begin_example+1) >= num_example: # 599 -300 +1 
+                texts.append(question) 
                 print("Reach the max number {} of examples, stop collecting questions...".format(num_example))
+                stop  =True
                 break
-            steps+=1
             texts.append(question)  
+            steps+=1
+        
+        if stop:
+            break
+            
+    print("len(texts) ==", len(texts))
     
     
     embeddings, texts= get_text_embeddings(texts, args.encoder)
@@ -356,13 +369,14 @@ def cluster_dataloader(
     assert len(labels)==len(embeddings), "length of embeddings and labels are not the same"
     assert len(labels)==len(texts), "length of labels and texts are not the same" 
     
+    # dist = kmeans.transform(embeddings)
     
     # 计算每个样本到其质心的距离 
     distances = np.zeros(len(texts))   # index = sentence_id, value=distance
     for i, (embedding, label) in enumerate(zip(embeddings, labels)): 
         centroid = kmeans.cluster_centers_[label]  
-        distance = np.linalg(embedding-centroid) 
-        distance[i] = distance
+        distance = np.linalg.norm(embedding-centroid) 
+        distances[i] = distance
 
     # 将文本按簇组织  
     clusters = defaultdict(list)
@@ -379,14 +393,72 @@ def cluster_dataloader(
     return labels, kmeans, sorted_clusters 
 
 
-def get_k_questions_from_clusters(
-    clusters: Dict[int, List[str]],
-    k: int = 10
+class SingleQuestionDataset(Dataset):  
+    """单字段数据集类"""  
+    def __init__(self, questions: List[str], field_name:str):  
+        self.questions = questions  
+        self.field_name = field_name
+    
+    def __len__(self):  
+        return len(self.questions)  
+    
+    def __getitem__(self, idx):  
+        # 处理批量索引的情况  
+        if isinstance(idx, list):  
+            return {self.field_name: [self.questions[i] for i in idx]} 
+        return {self.field_name: self.questions[idx]}  
+
+
+def get_k_questions_dataloader_from_clusters(
+    sorted_clusters: Dict[int, List[Tuple[str, float]]],
+    args,
+    config:DatasetConfig,
+    n_clusters: int = 8
     )->List[str]:
     '''
-    从聚类结果中随机选择k个问题
+    从聚类结果中的每一类按照离质心从近到远选择k个问题
     '''
-    pass
+    k_questions:List[str] = []
+    for label in sorted_clusters:
+        sorted_text = sorted_clusters[label]
+        k_questions.append(sorted_text[0][0])
+    
+    
+    # 将k个questions转为只有一个quesiton字段的dataloader
+    dataset = SingleQuestionDataset(k_questions, config.question_key) 
+    
+    fix_seed(args.random_seed)
+    worker_seed = torch.initial_seed() % 2**32
+    print("worker_seed : {}".format(worker_seed))
+
+    def seed_worker(worker_id):
+        '''
+        用于多个CPU进程之间的随机数种子同步
+        '''
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    dataloader_num_workers = multiprocessing.cpu_count()
+    dataloader_num_workers = min(dataloader_num_workers, args.max_num_worker)
+    
+    
+    def collate_fn(batch):
+        # batch_size must == 1
+        return batch[0]
+    
+    dataloader = DataLoader(
+        dataset=dataset,
+        shuffle=True,
+        batch_size=1,  
+        drop_last=False, #  如果最后一个批次的数据量小于 batch_size，是否丢弃该批次。
+        num_workers=dataloader_num_workers,
+        worker_init_fn=seed_worker,
+        pin_memory=True,        
+        collate_fn=collate_fn   
+    )
+    
+    return dataloader  
+
     
 def answer_cleansing(args, pred, must_choice=False):
     '''
