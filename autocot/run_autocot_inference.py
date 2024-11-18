@@ -202,7 +202,7 @@ def main():
                 print(f"Data: {data}")  
                 raise RuntimeError(f"Warning: Invalid data format or empty at index {i}")  
                 
-            if config.question_key not in data or config.label_key not in data:  
+            if config.question_key not in data: #  or config.label_key not in data:  
                 print(f"Warning: Missing required keys at index {i}")  
                 print(f"Available keys: {data.keys()}")  
                 raise RuntimeError(f"Warning: Missing required keys at index {i}") 
@@ -221,16 +221,17 @@ def main():
             # Prepare question template ...
             # x, y = data
             x = data[config.question_key]
-            y = data[config.label_key]
+            
+            # y = data[config.label_key]
             # x = "Q: " + x[0] + "\n" + "A:"
             x = "Q: " + x + " " + "A: "
 
             # y = y[0].strip()            
-            y = y.strip()            
+            # y = y.strip()            
 
             
             output_line["question"] = x
-            output_line["gold_ans"] = y
+            # output_line["gold_ans"] = y
             
             # adding different answer triggers
             if args.method == "zero_shot":
@@ -305,20 +306,22 @@ def main():
             
             # Choose the most frequent answer from the list ...
             print("pred : {}".format(pred))
-            print("GT : " + y)
+            # print("GT : " + y)
             print('*************************')
             
             # checking answer
-            correct = (np.array([pred])==np.array([y])).sum().item()
-            correct_list.append(correct)
+            # correct = (np.array([pred])==np.array([y])).sum().item()
+            # correct_list.append(correct)
+            
             total += 1
             
             # cot推理的样本数量达到上限，直接停止
             if (args.limit_dataset_size != 0) and ((i+1) >= args.limit_dataset_size):
                 break
+            
     # Calculate accuracy ...
-    accuracy = (sum(correct_list)*1.0/total) * 100
-    print("accuracy : {}%".format(accuracy))
+    # accuracy = (sum(correct_list)*1.0/total) * 100
+    # print("accuracy : {}%".format(accuracy))
             
 if __name__ == "__main__":
     main()
