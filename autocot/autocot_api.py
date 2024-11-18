@@ -17,6 +17,31 @@ from config import NUM_CPU_PROCESSES
 
 
 
+'''
+python autocot_api.py \
+--dataset race \
+--method zero_shot_cot
+
+
+
+python autocot_api.py \
+--dataset sciq \
+--method zero_shot_cot
+
+python autocot_api.py \
+--dataset dream \
+--method zero_shot_cot
+
+
+python autocot_api.py \
+--dataset commonsense_qa \
+--method zero_shot_cot
+
+'''
+
+
+
+
 
 def cot(method, question):
     args = parse_arguments()
@@ -80,6 +105,15 @@ def parse_arguments():
     parser.add_argument(
         "--model", type=str, default="gpt-4o", help="model used for decoding. Please select from [gpt-4o, gpt-4o-mini]"
     )
+    
+    parser.add_argument(
+        "--dataset", type=str, default="race", help="select a dataset from ['race','sciq','dream','commonsense_qa']"
+    )
+    
+    parser.add_argument(
+        "--dataset_path", type=str, default="./data/race", help="dataset path"
+    )
+    
     parser.add_argument(
         "--method", type=str, default="zero-shot-cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot"], help="method"
     )
@@ -108,7 +142,19 @@ def parse_arguments():
 
     args.direct_answer_trigger_for_fewshot = "The answer is"
     args.direct_answer_trigger_for_zeroshot = "The answer is"
-    args.direct_answer_trigger_for_zeroshot_cot = "The answer is"
+    args.direct_answer_trigger_for_zeroshot_cot = "Therefore, the answer is"
+    
+    if args.dataset == 'race':
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through D, the answer is"
+    elif args.dataset=='sciq':
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through D, the answer is"
+    elif args.dataset=='dream':
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through C, the answer is"
+    elif args.dataset=='commonsense_qa':
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through E, the answer is"
+    else:
+        raise ValueError("dataset is not properly defined... check args.dataset")
+        
     args.cot_trigger = "Let's think step by step."
 
     return args
@@ -116,9 +162,9 @@ def parse_arguments():
 
 
 
-def zero_shot_cot(question, answer, args:Arguments):
+def zero_shot_cot(question, answer, args):
     decoder = Decoder()
-    cot_trigger = "Let's think step by step."
+    # cot_trigger = "Let's think step by step."
     
     question = question.replace("\n\n", "\n").replace("\n", " ").strip()
     x = "Q: " + question + "\n" + "A:"
@@ -128,7 +174,7 @@ def zero_shot_cot(question, answer, args:Arguments):
     # print('*****************************')
 
 
-    x:str = x + " " + cot_trigger
+    x:str = x + " " + args.cot_trigger
     '''
     Q: xxxxx
     A: Let's think step by step
@@ -136,21 +182,21 @@ def zero_shot_cot(question, answer, args:Arguments):
 
     # print("Prompted Input:")
     # we define the separatpor of reasoning steps is "\n"
-    print(x, end = "")
-    
+    print(x)
+    print()
    
 
     # generate the reasoning chain including the final answer
-    z = decoder.decode(args, x, args.max_length)
+    z = decoder.decode(args, x, args.max_length_cot)
     # later, we need to use the '\n' to separate the reasoning steps
-    z = z.replace("\n\n", "\n").replace("\n", r"\n").strip()
+    z = z.replace("\n\n", "\n").strip()
 
     # let the model extract the final answer from the reasoning chain
     z2 = x + z + " " + args.direct_answer_trigger_for_zeroshot_cot
     
     pred = decoder.decode(args, z2, args.max_length_direct)
     # print("Reasoning Chain Output:")
-    print(z + " " + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)
+    print(z + "\n" + args.direct_answer_trigger_for_zeroshot_cot + " " + pred)
     # print('*****************************')
 
     
@@ -174,22 +220,24 @@ def zero_shot_cot(question, answer, args:Arguments):
     
         
 
-def cot_log_generator(dataset_name:str):
+def cot_log_generator():
     '''
         在某个数据集上生成zero-shot-cot日志
     '''
-    # args = parse_arguments()
-    args = Arguments(
-        dataset_path='../data/race/',
-        dataset='race',
-    )
+    args = parse_arguments()
+    # args = Arguments(
+    #     dataset_path='../data/race/',
+    #     dataset='race',
+    # )
     
-    logger = setup_logger(dataset_name, args)
+    args = parse_arguments()
+    
+    logger = setup_logger(args.dataset, args)
     
     # 保存原始的stdout  
     original_stdout = sys.stdout  
     
-    train_ds, first_four_columns = preprocess_dataset_autocot(dataset_name)
+    train_ds, first_four_columns = preprocess_dataset_autocot(args.dataset)
 
     question_key = first_four_columns[1]
     answer_key = first_four_columns[3]
@@ -223,7 +271,7 @@ def cot_log_generator(dataset_name:str):
     
 
 if __name__ == "__main__":
-    cot_log_generator('race')
+    cot_log_generator()
     # train_ds, first_four_columns = preprocess_dataset_autocot('race')
     # print(first_four_columns)
     

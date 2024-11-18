@@ -7,7 +7,7 @@ import sys
 from statistics import mean
 from torch.utils.data import (
     Dataset,
-    DataLoader
+    DataLoader,
 )
 
 # 获取当前文件所在目录的父目录  
@@ -16,13 +16,7 @@ parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 将父目录添加到sys.path  
 sys.path.insert(0, parent_directory) 
 
-from load import (
-    preprocess_function_race,
-    load_dataset_from_huggingface,
-    preprocess_race,
-    preprocess_dataset_autocot,
-    preprocess_func_autocot
-)
+from load import *
 
 from config import Config
 
@@ -61,7 +55,7 @@ class Arguments:
     max_length: int = 256  
     max_length_direct: int = 32  
     temperature: float = 0  
-    direct_answer_trigger_for_zeroshot_cot: str = "The answer is"  
+    direct_answer_trigger_for_zeroshot_cot: str = "Therefore, the answer (uppercase alphabetic letter) is"  
     num_samples: int = 1  
     log_dir: str = "./cot_log"  # 日志文件夹路径 
     api_time_interval:float = 1.0
@@ -169,25 +163,21 @@ def get_reformated_dataset(args)->Dataset:
     # questions = []
     # answers = []
     # decoder = json.JSONDecoder()
+    
 
     dataset = None
-    if args.dataset == 'race':
-        dataset_path = Config['datasets']['race']
-        dataset = load_dataset_from_huggingface(dataset_path, "all", split = 'train')
+    if args.dataset == 'race' or args.dataset == 'dream' or args.dataset == 'sciq' or args.dataset == 'commonsense_qa':
+        # dataset_path = Config['datasets']['race']
+        # dataset = load_dataset_from_huggingface(dataset_path, "all", split = 'train')
+
+
+        dataset, first_four_columns = preprocess_dataset_autocot(args.dataset)
         print(f"Dataset after loading: type:{type(dataset)}; features:{dataset.features}") 
         print(f"Dataset size after loading: {len(dataset) if dataset is not None else 'None'}")  
-
-        dataset = preprocess_dataset_autocot("race", dataset)
-        # print(f"Dataset size after preprocess: {len(dataset) if dataset is not None else 'None'}")  
     
-    elif args.dataset == "dream":
-        pass
-    elif args.dataset == "sciq":
-        pass
-    elif args.dataset == "commonsense_qa":
-        pass
     else:
         raise ValueError("dataset is not properly defined ... Please select from [ race, dream, sciq, commonsense_qa]")
+
     return dataset
 
 
@@ -220,6 +210,7 @@ def setup_data_loader(args):
     if dataset_size == 0:  
         raise ValueError("Dataset is empty! Please check get_reformated_dataset function.") 
 
+    
     # print("Dataset info:")  
     # print(f"Dataset type: {type(dataset)}")  
     # if hasattr(dataset, 'features'):  
@@ -242,7 +233,7 @@ def setup_data_loader(args):
         dataset=dataset,
         shuffle=True,
         batch_size=args.minibatch_size,
-        drop_last=False,
+        drop_last=False, #  如果最后一个批次的数据量小于 batch_size，是否丢弃该批次。
         num_workers=dataloader_num_workers,
         worker_init_fn=seed_worker,
         pin_memory=True,
@@ -313,9 +304,12 @@ def create_demo_text(args, cot_flag)->str:
      将demo文件中的json对象数组拼接成一整个字符串返回
      
      适用于 few-shot， few-shot-cot, auto-cot
+     
+     :return: cot_flag: True 表示拼接cot格式的demos（如auto-cot)， False 表示不使用cot格式拼接
     '''
     x, z, y = [], [], []
     
+    # demo文件中只包含了 k 个 clusters 对应的k个demos
     
     with open(args.demo_path, encoding="utf-8") as f:
         json_data = json.load(f)

@@ -70,32 +70,31 @@ def parse_arguments():
         "--temperature", type=float, default=0, help="temperature for GPT-3"
     )
     parser.add_argument(
-        "--log_dir", type=str, default="./log/", help="log directory"
+        "--log_dir", type=str, default="./autocot_log/", help="log directory"
     )
     
     
     args = parser.parse_args()
     
-    if args.dataset == "race":
-        args.dataset_path = "./dataset/AQuA/test.json"
-        args.direct_answer_trigger = "\nTherefore, among A through D, the answer is"
-    elif args.dataset == "dream":
-        args.dataset_path = "./dataset/grade-school-math/test.jsonl"
-        args.direct_answer_trigger = "\nTherefore, the answer (arabic numerals) is"
-    elif args.dataset == "sciq":
-        args.dataset_path = "./dataset/CommonsenseQA/dev_rand_split.jsonl"
-        args.direct_answer_trigger = "\nTherefore, among A through E, the answer is"
-    elif args.dataset == "commonsense_qa":
-        args.dataset_path = "./dataset/AddSub/AddSub.json"
-        args.direct_answer_trigger = "\nTherefore, the answer (arabic numerals) is"
-    
-
+    args.direct_answer_trigger = "\nTherefore, the answer is"
     # "Therefore, the answer ..." -> "The answer ..."
     trigger = args.direct_answer_trigger.replace("\nTherefore, ", "")
     args.direct_answer_trigger_for_zeroshot = trigger[0].upper() + trigger[1:] # "The answer is"
-    args.direct_answer_trigger_for_zeroshot_cot = args.direct_answer_trigger
+    args.direct_answer_trigger_for_zeroshot_cot = args.direct_answer_trigger # Therefore, the answer is ...
     args.direct_answer_trigger_for_fewshot = "The answer is"
     args.cot_trigger = "Let's think step by step."
+    
+    if args.dataset == "race":
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through D, the answer is"
+    elif args.dataset == "dream":
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through C, the answer is"
+    elif args.dataset == "sciq":
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through D, the answer is"
+    elif args.dataset == "commonsense_qa":
+        args.direct_answer_trigger_for_zeroshot_cot = "\nTherefore, among A through E, the answer is"
+    else:
+        raise ValueError("dataset is not properly defined... please select from [ race, dream, sciq, commonsense_qa ]")
+
     
     return args
 

@@ -20,7 +20,15 @@ from typing import List, Tuple, Dict
 python run_autocot_demo.py \
 --task race \
 --pred_file cot_log/race_zero_shot_cot.log \
---demo_save_dir demos/race
+--demo_save_dir demos/race \
+--max_ra_len 20
+
+
+python run_autocot_demo.py \
+--task sciq \
+--pred_file cot_log/sciq_zero_shot_cot.log \
+--demo_save_dir demos/sciq \
+--max_ra_len 20
 
 
 '''
@@ -88,8 +96,8 @@ def main():
         for line in fp:
             if "Q: " in line:
                 c_question = line.strip()
-            if "A: " in line:
-                answer_seg = line # 初始化为 Let's think step by step.
+            if "A: " in line and "step by step" in line:
+                answer_seg = line # 初始化为 A: Let's think step by step.
             elif "Therefore" in line and "the answer" in line:
                 c_rationale = answer_seg # 检测到推理链结束，准备接收推理链
 
@@ -156,13 +164,14 @@ def main():
             c_rationale = rationale[clustered_idx[i][min_idx]].strip() # r_j^(i)
             c_pred_ans = pred_ans[clustered_idx[i][min_idx]].strip() # a_j^(i)
 
-            # if satisfy the criterion
-            if len(question[clustered_idx[i][min_idx]].strip().split()) <= 60 \
-                and len(c_rationale.replace("\n\n", "\n").split("\n")) <= max_ra_len and c_rationale[-1] == "." and c_pred_ans != "":
-                if args.task in ["race", "dream", "sciq", "commonsense_qa"]:
+            # if satisfy the criterion   # 原论文中的criteron已经不适用了
+            # if len(question[clustered_idx[i][min_idx]].strip().split()) <= 60 \
+            if len(c_rationale.replace("\n\n", "\n").split("\n")) <= max_ra_len and c_pred_ans != "":
+                if not args.task in ["race", "dream", "sciq", "commonsense_qa"]:
+                    continue
                     # 如果预测的答案既不在倒数第二句话中，也不在最后十句话中
-                    if not (c_pred_ans.strip() in c_rationale.split(".")[-2] or c_pred_ans.strip() in c_rationale.split()[-10:]):
-                        continue
+                    # if not (c_pred_ans.strip() in c_rationale.split()[-10:]):
+                    #     continue
                 c_question = question[clustered_idx[i][min_idx]]
                 c_rationale = c_rationale.replace("\n\n", "\n").replace("\n", " ").strip()
                 c_rationale = " ".join(c_rationale.split())

@@ -688,7 +688,7 @@ def preprocess_dataset_autocot(dataset_name):
         dataset: 原始的训练集 (split = train)  
         dataset_name: 数据集名称，用于选择预处理函数
     Returns:  
-        处理后的数据集 [训练集] 
+        处理后的数据集 [训练集] , 字段只有两个 : {question, answer}
     """ 
     wrapper = McqDatasetWrapper()
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
