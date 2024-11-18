@@ -10,6 +10,8 @@ from torch.utils.data import (
     DataLoader,
 )
 
+from transformers import default_data_collator
+
 # 获取当前文件所在目录的父目录  
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
 
@@ -103,7 +105,7 @@ def decoder_for_gpt4(args, input, max_length):
           top_p=1,
           frequency_penalty=0,
           presence_penalty=0,
-          stop=["\n"]
+          stop=None
         )
     else:
         response = client.chat.completions.create( # zero-shot, zero-shot-cot
@@ -156,7 +158,7 @@ class MyDataset(Dataset):
 
 
 
-def get_reformated_dataset(args)->Dataset:
+def get_reformated_dataset(args)->Tuple[Dataset, DatasetConfig]:
     '''
      获取数据集，并将数据集reformat成两列[question, answer]
     '''
@@ -171,14 +173,15 @@ def get_reformated_dataset(args)->Dataset:
         # dataset = load_dataset_from_huggingface(dataset_path, "all", split = 'train')
 
 
-        dataset, first_four_columns = preprocess_dataset_autocot(args.dataset)
+        dataset, config = preprocess_dataset_autocot(args.dataset)
+        
         print(f"Dataset after loading: type:{type(dataset)}; features:{dataset.features}") 
         print(f"Dataset size after loading: {len(dataset) if dataset is not None else 'None'}")  
     
     else:
         raise ValueError("dataset is not properly defined ... Please select from [ race, dream, sciq, commonsense_qa]")
 
-    return dataset
+    return dataset, config
 
 
 def setup_data_loader(args):
@@ -206,7 +209,7 @@ def setup_data_loader(args):
     print("dataloader_num_workers: " ,dataloader_num_workers)
     
     # load data and reformat the question and answer
-    dataset:Dataset = get_reformated_dataset(args)
+    dataset, config = get_reformated_dataset(args)
     dataset_size = len(dataset)
     print(f"Dataset size = {dataset_size}") 
     if dataset_size == 0:  
@@ -218,54 +221,81 @@ def setup_data_loader(args):
     # if hasattr(dataset, 'features'):  
     #     print(f"Dataset features: {dataset.features}")  
     
-    
+    # collate_fn可能返回了空字典
     def collate_fn(batch):
         '''
-        由于使用了自定义的 collate_fn 直接返回 batch[0]，每个 batch 将直接返回单个样本
-        数据类型将与 dataset 中单个样本的类型相同
-        通常是一个字典（dict）类型，包含问题和答案等字段
+        必须配合 batch_size=1 一起使用！！！！！
         
-        即使设置了 batch_size > 1，实际上每次迭代仍然只会得到一个样本
-        这相当于强制将实际的 batch_size 设为 1, 实际上取消了批处理的效果
+        注意：
+            如果batch_size>1, 那这么做实际上舍弃了其余的batch-1个样本！！！
         
         '''
-        return batch[0]
+        
+        # 确保batch不为空  
+        if not batch:  
+            raise ValueError("Empty batch received") 
+        # 返回单个样本，但确保包含所需的键  
+        sample = batch[0]  
+        if not (config.question_key in sample and config.label_key in sample):  
+            raise KeyError(f"Required keys {config.question_key} and {config.label_key} not found in sample: {sample}")  
+        
+        return sample  
     
     dataloader = DataLoader(
         dataset=dataset,
         shuffle=True,
-        batch_size=args.minibatch_size,
+        batch_size=1,
         drop_last=False, #  如果最后一个批次的数据量小于 batch_size，是否丢弃该批次。
         num_workers=dataloader_num_workers,
         worker_init_fn=seed_worker,
-        pin_memory=True,
-        collate_fn=collate_fn # 需确保batch_size = 1
+        pin_memory=True,        
+        collate_fn=collate_fn   # 这里不能用default_data_collator, 它专门用来处理tokenize后的数据
     )
     
-    return dataloader
+    # default_data_collator期望处理的数据格式是：  
+    # - 已经tokenize过的数据  
+    # - 包含input_ids, attention_mask等字段  
+    # - 或者是可以直接转换为tensor的数据 
+    
+    return dataloader, config
     
 def answer_cleansing(args, pred, must_choice=False):
+    '''
+    历史遗留函数， race数据集用不了规则匹配，因为他无规则
+    
+    '''
 
-    print("prediction value before cleaning : " + pred)
+    print("prediction length before cleaning : ",len(pred))
+    
+    print("some of the prediction are: \n", pred[:20])
 
 
-    if args.method in ("few_shot", "few_shot_cot", "auto_cot"):
+    if args.method == "few_shot":
         # split 之前： "Therefore, among A to D, the answer is A."
-        # preds after split = ["1 or", "2 or 3 or 4 or 5" ]
         preds = pred.split(args.direct_answer_trigger_for_fewshot) # trigger: "The answer is:"
         # True, 表示模型输出的结果中包含了多个候选答案
         answer_flag = True if len(preds) > 1 else False 
-        pred = preds[-1] # 挑最后一个候选答案  "2 or 3 or 4 or 5"
-
+        pred = preds[-1] 
+    if args.method == "zero_shot_cot":
+        # split 之前： "Therefore, among A to D, the answer is A."
+        preds = pred.split(args.direct_answer_trigger_for_zeroshot_cot) # trigger: "The answer is:"
+        pred = preds[-1]
     
+    if args.method == "auto_cot":
+        pattern = r'(?i)(?=[Oo]ption\s*:?\s*[A-Z])'  
+        segments:list = re.split(pattern, pred) 
+        segments.pop(0)
+        pred = segments[0][1]
+        
+    # 正则表达式匹配答案
     if args.dataset == "race":
-        pred:List = re.findall(r'A|B|C|D|E', pred) # ['2', '3', '4', '5']
-    elif args.dataset == "record":
-        pred = re.findall(r'A|B|C|D|E|F', pred)
-    elif args.dataset == "multirc":
+        pred:List = re.findall(r'A|B|C|D', pred) # ['2', '3', '4', '5']
+    elif args.dataset == "dream":
         pred = re.findall(r'A|B|C', pred)
-    elif args.dataset == "arc":
-        pred = re.findall(r'A|B|C', pred)
+    elif args.dataset == "sciq":
+        pred = re.findall(r'A|B|C|D', pred)
+    elif args.dataset == "commensense_qa":
+        pred = re.findall(r'A|B|C|D|E', pred)
     else:
         raise ValueError("dataset is not properly defined ... Please select from [race, sciq, dream, commonsense_qa]")
     
@@ -430,7 +460,7 @@ def extract_answer(text: str) -> str:
         ''
     """
     # 使用正则表达式匹配 "The answer is X" 模式，其中X是一个大写字母
-    pattern = r"The answer is ([A-D])[.\s]" # [.\s] 匹配一个句号或空格
+    pattern = r"the answer is ([A-D])[.\s]" # [.\s] 匹配一个句号或空格
     match = re.search(pattern, text)
     
     if match:

@@ -656,7 +656,9 @@ def preprocess_func_autocot(config: DatasetConfig, examples:Dict[str,List]):
 
     contexts = [str(art) for art in examples[config.article_key]]  
     questions = [str(q) for q in examples[config.question_key]]  
-    options = [str(opt) for opt in examples[config.options_key]] 
+    
+    # examples[config.options_key]: List[List[str]]
+    options = [" ".join(opt) for opt in examples[config.options_key]] 
     
     new_questions: List[str] = [  
         f'''{config.article_key}:
@@ -671,11 +673,17 @@ def preprocess_func_autocot(config: DatasetConfig, examples:Dict[str,List]):
         for context, question, option in zip(contexts, questions, options)  
     ]  
     
-    examples[config.question_key] = new_questions 
+    # examples[config.question_key] = new_questions 
     
-    examples.pop(config.article_key)  
-    examples.pop(config.options_key)  
-    return examples
+    # examples.pop(config.article_key)  
+    # examples.pop(config.options_key)  
+    
+    # 创建新的字典而不是修改原字典  
+    return {  
+        config.question_key: new_questions,  
+        config.label_key: examples[config.label_key]  
+    }  
+    # return examples
 
 
 
@@ -692,7 +700,7 @@ def preprocess_dataset_autocot(dataset_name):
     """ 
     wrapper = McqDatasetWrapper()
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
-    config = wrapper.dataset_configs[dataset_name]
+    config:DatasetConfig = wrapper.dataset_configs[dataset_name]
     
     train_ds = dataset['train']
     
@@ -700,6 +708,12 @@ def preprocess_dataset_autocot(dataset_name):
     print("\nTesting preprocess_func_autocot with first example...")  
     try:  
         first_example = train_ds[0]  
+        # print("train_ds[0] = \n",train_ds[0])
+        # print(f"type(train_ds[0]) = {type(train_ds[0])}")
+        # print("===========================")
+        # print("train_ds[:10] = \n",train_ds[:10])
+        # print(f"type(train_ds[:10]) = {type(train_ds[:10])}")
+        # print("=============================")
         processed_example = preprocess_func_autocot(config, first_example)  
         
         print(f"First example after processing: {processed_example}")  
@@ -714,7 +728,7 @@ def preprocess_dataset_autocot(dataset_name):
         batched=True,
         batch_size= Config['batch_size'],
         num_proc=NUM_CPU_PROCESSES,
-        # remove_columns= ['example_id'],           # dataset.column_names,
+        remove_columns= [col for col in train_ds.column_names if col not in [config.question_key, config.label_key]],  
         load_from_cache_file=False,
         desc=f"Running tokenizer on dataset {dataset_name}, when doing Auto-CoT",
     )
@@ -725,11 +739,13 @@ def preprocess_dataset_autocot(dataset_name):
     print(f"\nProcessed dataset type: {type(processed_dataset)}")
     print(f"Processed dataset name: {dataset_name}")  
     print(f"Processed dataset size: {len(processed_dataset)}")  
-    if hasattr(processed_dataset, 'column_names'):  
-        print(f"Processed dataset columns: {processed_dataset.column_names}")  
-        
+    # if hasattr(processed_dataset, 'column_names'):  
+    #     print(f"Processed dataset columns: {processed_dataset.column_names}")  
+    # 验证处理后的数据集  
+    print("Processed dataset features:", processed_dataset.features)  
+    print("First example:", processed_dataset[0]) 
 
-    return processed_dataset, first_four_columns
+    return processed_dataset, config
 
 
 

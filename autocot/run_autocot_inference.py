@@ -5,15 +5,36 @@ Adapted from https://github.com/kojima-takeshi188/zero_shot_cot
 
 '''
 
-python run_inference.py \
---dataset multiarith \
---demo_path demos/multiarith \
---output_dir experiment/multiarith
+python run_autocot_inference.py \
+--dataset race \
+--demo_path demos/race \
+--output_dir experiment/race \
+--method auto_cot \
+--max_length_cot 2048
+
+python run_autocot_inference.py \
+--dataset sciq \
+--demo_path demos/sciq \
+--output_dir experiment/sciq \
+--method auto_cot
+
+python run_autocot_inference.py \
+--dataset dream \
+--demo_path demos/dream \
+--output_dir experiment/dream \
+--method auto_cot
+
+python run_autocot_inference.py \
+--dataset commonsense_qa \
+--demo_path demos/commonsense_qa \
+--output_dir experiment/commonsense_qa \
+--method auto_cot
 
 '''
 
 import argparse
 from autocot_utils import *
+from pathlib import Path  
 
 # 获取当前文件所在目录的父目录  
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
@@ -114,13 +135,16 @@ def main():
     decoder = Decoder()
     
     print("setup data loader ...")
-    dataloader = setup_data_loader(args)
+    dataloader, config = setup_data_loader(args)
+    
+    # 我们要从dataloader中抽取k个样本进行推理。
     
     
     if args.method == "few_shot":
         demo = create_demo_text(args, cot_flag=False)
     elif args.method == "few_shot_cot" or args.method == "auto_cot":
         demo = create_demo_text(args, cot_flag=True)
+        print("demo length = ", len(demo))
     else:
         pass
     
@@ -128,7 +152,38 @@ def main():
     total = 0 # 记录数据集中的总共问题数量
     correct_list = [] # 记录 1,0,1,0 ... 的列表
     
-    with open(args.output_dir, "a") as wp:
+    if not os.path.exists(args.output_dir):
+        try:
+            directory = os.path.dirname(args.output_dir)
+        
+            # 创建输出目录 experiment
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory)
+                print("create the directory [experiment]")
+
+            # 创建实验文件
+            # Path对象可以更方便地处理文件路径  
+            path = Path(args.output_dir)  
+            # touch() 方法会创建一个空文件，如果父目录不存在会抛出异常  
+            path.touch(exist_ok=True)  # exist_ok=False 表示如果文件存在则抛出异常  
+            print("创建实验文件{}成功！".format(args.output_dir))
+        except Exception as e:
+            raise RuntimeError(f"创建实验文件失败：{str(e)}")
+    else:
+        print("The file [{}] already exists!".format(args.output_dir))
+        threshold = 5
+        with open(args.output_dir, 'r', encoding='utf-8') as f:  
+            # readlines() 读取所有行到列表中  
+            lines = f.readlines()  
+            line_count = len(lines)  
+            if line_count>threshold:
+                raise RuntimeError("The file [{}] already has data in it (lines > 5)! \n\n Abort the inference process...".format(args.output_dir))
+            else:
+                print("The file [{}] is similar to empty (lines <= 5)! \n\n We continue to write data in ...".format(args.output_dir))
+    
+    
+    
+    with open(args.output_dir, "w", encoding='utf-8') as wp:
 
         for i, data in enumerate(dataloader):
             
@@ -139,18 +194,39 @@ def main():
                 #  跳过不需要的问题
                 continue
             
-            output_line = {} 
+            
+            # 验证data的格式和键值 
+            if not isinstance(data, dict) or not data:  
+                print(f"Warning: Invalid data format at index {i}")  
+                print(f"Data: {data}")  
+                raise RuntimeError(f"Warning: Invalid data format or empty at index {i}")  
+                
+            if config.question_key not in data or config.label_key not in data:  
+                print(f"Warning: Missing required keys at index {i}")  
+                print(f"Available keys: {data.keys()}")  
+                raise RuntimeError(f"Warning: Missing required keys at index {i}") 
+            
+            
+            
+            output_line = {} # outputline 是一个仅占一行的json对象，因此不能包括换行符
+            
             
             print('*************************')
             print("{}st data".format(i+1))
             
+            print("type(data) = ", type(data))
+            # print("data = \n",data)
             
             # Prepare question template ...
             # x, y = data
-            x = data['question']
-            y = data['answer']
-            x = "Q: " + x[0] + "\n" + "A:"
-            y = y[0].strip()            
+            x = data[config.question_key]
+            y = data[config.label_key]
+            # x = "Q: " + x[0] + "\n" + "A:"
+            x = "Q: " + x + " " + "A: "
+
+            # y = y[0].strip()            
+            y = y.strip()            
+
             
             output_line["question"] = x
             output_line["gold_ans"] = y
@@ -173,9 +249,11 @@ def main():
             # zero-shot, few-shot 输出长度都是 1
             max_length = args.max_length_cot if "cot" in args.method else args.max_length_direct
             
+            # 进行 Auto-CoT 推理
             z = decoder.decode(args, x, max_length)
             
-            output_line['rationale'] = z
+            print("rationle = \n", z)
+            
             
             # Answer extraction for zero-shot-cot ...
             if args.method == "zero_shot_cot":
@@ -185,13 +263,32 @@ def main():
                 pred = decoder.decode(args, z2, max_length) # output ["A", "B", "C", "D"], 
                 print("z2 + pred = ", z2 + pred)
             else:
-                pred = z
-                print("x + pred = ", x + pred)
+                '''
+                do nothing ...
+                '''
+                # 进行答案抽取
+                z2 = x + "\n" + z + "\n" + args.direct_answer_trigger_for_zeroshot_cot # i.e. "\nTherefore, among A through D, the answer is"
+                pred = decoder.decode(args, z2, args.max_length_direct) # output ["A", "B", "C", "D"],
+                pred = extract_answer(pred)
+                
+                # print("===================================")
+                # print("x + rationale = \n", z2)
+                # print("===================================")
             
             # Cleansing of predicted answer ...
             
+            # 推理后去除推理链中的换行符, 使得output_line只占一行
+            z = z.replace("\n\n","\n").replace("\n", '\n') # r'\n'
             
-            # pred = answer_cleansing(args, pred)
+            print(" =====================")
+            print("after replacement, the rationale  =  \n", z)
+            print("=================================")
+            
+            output_line['rationale'] = z
+            
+            # 原项目中，使用regex规则解析最终答案，减少GPT调用次数
+            # race这样的数据集用不了，它的推理链基本无规则。
+            # pred = answer_cleansing(args, z)
             
             
             output_line['pred_ans'] = pred
