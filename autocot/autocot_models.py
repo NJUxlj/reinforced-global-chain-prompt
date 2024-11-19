@@ -418,7 +418,7 @@ class HierarchicalAttentionFusion(nn.Module):
             key=sequence_output,   # (K, L, H)
             value=sequence_output,  # (K, L, H)
             key_padding_mask=padding_mask  
-        )  # shape = (1, L, H)   
+        )  # shape = (K, L, H)   
         '''
         批量矩阵乘法会在保持批次维度的同时，  
         对最后两个维度进行普通矩阵乘法  
@@ -442,17 +442,33 @@ class HierarchicalAttentionFusion(nn.Module):
         # 残差连接和层归一化  
         chain_output = self.chain_norm(  
             chain_query + self.dropout(chain_output)  
-        )  # shape = (1, L, H)
+        )  # shape = (K, L, H)
         
         # 链级别的前馈网络(如果启用)  
         if self.use_ffn:  
             chain_ff_output = self.chain_ffn(chain_output)  
             chain_output = self.ffn_norms[-1](
                 chain_output+self.dropout(chain_ff_output)  
-            )  
+            )  # shape = (K, L, H)
             
+        # chain_output: chain1 ~ chaink 分别针对chain1的表征  (K, L, H)
+        
+        # 我们和cross-attention的区别是什么
+        '''
+        cross-attention是将一个句子对 (sentence1-sentence2)之间的关系作用在sentence2上, 得到一种表征（预测）
+        
+        如果是encoder-decoder transformer, sentence1是encoder的输出，sentence2是decoder的输入，  得到一种表征 (prediction)
+        
+        decoder的输入形状也是 LxH, 但是，有部分decoder的输入是需要预测的， 因此，使用掩码，此时，decoder的输入X2先跟自己做Masked-Self-Attention, 得到的输出作为query， 然后再跟encoder的输出X1(K,V)做cross-attention，得到一种表征 (prediction)
+        
+        但我们这里，建模了 K个句子对的关系 [(chain1-chain2),..., (chain1-chaink)],  得到了 K个表征 (chain representation),   然后对这K个表征做pooling 得到最终的chain context
+        
+        '''
+        
+        # 对第0维做pooling  得到最终的chain context
+        context = chain_output.mean(dim=0)
         # (LxH)
-        return chain_output.squeeze(0), attention_info  
+        return context, attention_info  
 
 
 if __name__ == '__main__':  
