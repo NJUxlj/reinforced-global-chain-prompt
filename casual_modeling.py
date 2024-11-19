@@ -160,16 +160,17 @@ def generate_new_step(context: torch.Tensor,
             last_hidden = last_hidden / temperature  
         
         # 使用一个简单的线性层将隐藏状态映射到下一个token的logits  
-        projection = nn.Linear(last_hidden.size(-1), last_hidden.size(-1)).to(device)  
-        logits = projection(last_hidden)  
+        # projection = nn.Linear(last_hidden.size(-1), last_hidden.size(-1)).to(device)  
+        # logits = projection(last_hidden)  
         
-        # 使用softmax获取概率分布  
-        probs = F.softmax(logits, dim=-1)  
+        # # 使用softmax获取概率分布  
+        # probs = F.softmax(logits, dim=-1)  
         
         # 采样生成新的隐藏状态  
-        new_step = torch.multinomial(probs.squeeze(1), num_samples=1)  # [1, hidden_dim]  
+        # new_step = torch.multinomial(probs.squeeze(1), num_samples=1)  # [1, hidden_dim]  
     
-    return new_step.squeeze(0)  # [hidden_dim]  
+    # return new_step.squeeze(0)  # [hidden_dim]  
+    return last_hidden
 
 # 使用示例  
 if __name__ == "__main__":  
