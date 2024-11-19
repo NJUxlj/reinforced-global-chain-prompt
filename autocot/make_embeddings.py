@@ -390,8 +390,31 @@ def get_cot_context()->torch.Tensor:
     context = aggregate_cot_embeddings(embeddings, args,True)
 
     return context
-    
 
+
+def rollback_one_step_extend(target_steps:int)->torch.Tensor:
+    context:torch.Tensor = get_cot_context()
+    source_steps = len(context)
+    
+    if target_steps <= source_steps:
+        print("截断推理链context steps from {} to {}".format(source_steps, target_steps))
+        return context[:target_steps]    
+    else:
+        print("扩展推理链context steps from {} to {}".format(source_steps, target_steps))
+        context = context[:source_steps-1] # rollback 1 step
+        
+        # use multihead-attention to generate new steps using causual language modeling
+        for i in range(source_steps-1, target_steps):
+            # 生成新的推理步骤
+            new_step = generate_new_step(context)
+            context = torch.cat([context, new_step], dim=0)
+        
+        return context
+
+
+def generate_new_step(context:torch.Tensor):
+    pass
+        
 
 
 if __name__ == '__main__':

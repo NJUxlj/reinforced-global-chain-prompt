@@ -279,7 +279,7 @@ class OriginalHAN(nn.Module):
     
     
 class HierarchicalAttentionFusion(nn.Module):  
-    """基于层次化注意力的思维链融合模型"""  
+    """基于分层注意力的思维链融合模型"""  
     def __init__(  
         self,  
         hidden_size: int,  

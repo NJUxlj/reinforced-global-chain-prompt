@@ -9,6 +9,12 @@ from transformers import (
     Trainer,  
     TrainingArguments  
 )
+
+from transformers.modeling_outputs import (
+    SequenceClassifierOutput, # 是一种官方的输出格式
+    BaseModelOutputWithPoolingAndCrossAttentions,
+    MultipleChoiceModelOutput
+)
 # from transformers import PromptForSequenceClassification  
 from peft import (
     PromptTuningInit, 
@@ -28,13 +34,9 @@ from accelerate.logging import get_logger
 
 from load import *
 
-from utils import (
-    prepare_model_tokenizer, 
-    get_vocab_embeddings_from_model,
-    get_model_name_using_model,
-    get_logger,
-    get_max_length_from_model
-)
+from utils import *
+
+from autocot.make_embeddings import get_cot_context
 
 from datasets import (
     # Dataset,
@@ -52,6 +54,7 @@ from config import NUM_PROCESSES
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  
+from torch.optim import Adam
 import numpy as np
 import csv
 import evaluate
@@ -66,6 +69,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import KMeans
 from typing import List, Dict
 from collections import defaultdict
+
+from sentence_transformers import SentenceTransformer, models
+from dataclasses import dataclass
 
 
 import nltk  
@@ -83,25 +89,45 @@ device = Config['device']
 
 
 
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# logger = logging.getLogger(__name__)
+@dataclass
+class BassPromptConfig:
+    model_name: str = "bert-base-uncased"
+    model_path: str = "bert-base-uncased"  # 预训练模型名称
+    peft_method: str = "baas-tuning"
+    auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
+    dataset_name:str = "race" 
+    prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
+    suffix_length: int = 10
+    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    batch_size:int = 32
+    num_epochs:int = 2
+    dropout: float = 0.1                          # dropout率  
+    max_seq_length: int = 512                         # 最大序列长度  
+    learning_rate: float = 0.3                   # 前缀参数的学习率  
+    model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
+    
+    prefix_projection: bool = True               # 是否使用MLP投影前缀  
+    prefix_hidden_size: int = 768               # MLP中的P_theta'  即，MLP输入的隐单元维度  huggingface 默认它==encoder_hidden_size
+    encoder_hidden_size:int = 512   # 重参数化器MLP的隐藏层大小# prefix token 的维度 (P_theta')
+    
+    warmup_steps: int = 500  # 添加预热步骤  
+    weight_decay: float = 1e-5  # 添加权重衰减 
+    beta1_decay:float = 0.9   #beta1: 一阶矩估计的指数衰减率（默认0.9）用于Adam优化器
+    beta2_decay:float = 0.8   # 用于AdaFactor optimizer
+    total_training_steps = 30000  # 总的训练步数
+    early_stop_steps = 10
+    optimizer_class:type = Adam 
 
 
-
-
-
-
-
-# 3. 修改模型的输入嵌入函数，添加前缀和后缀Prompt Tokens  
-class BidirectionalPromptModel(torch.nn.Module):  
-    def __init__(self, model, prefix_embeddings, suffix_embeddings, num_prefix_tokens, num_suffix_tokens):  
-        super(BidirectionalPromptModel, self).__init__()  
+class BassPromptModel(torch.nn.Module):  
+    def __init__(self, model, prefix_embeddings, suffix_embeddings, config:BassPromptConfig):  
+        super(BassPromptModel, self).__init__()  
         self.model = model  
         self.prefix_embeddings = prefix_embeddings  
         self.suffix_embeddings = suffix_embeddings 
-        self.num_prefix_tokens = num_prefix_tokens
-        self.num_suffix_tokens = num_suffix_tokens
+        self.num_prefix_tokens = config.prefix_length
+        self.num_suffix_tokens = config.suffix_length
         self.embedding_layer = self.model.get_input_embeddings()  
     
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):  
@@ -177,53 +203,48 @@ class BidirectionalPromptModel(torch.nn.Module):
         print(f"trainable param ratio: {100 * trainable_params / all_params:.2f}%")  
 
 
-
-
-
-def initialize_suffix_prompts(ds, tokenizer, num_suffix_tokens, embedding_size):  
-    """  
-     use Auto-CoT reasoning steps as the suffix prompts
-    """  
-    # 假设我们已经有AutoCoT生成的推理步骤steps，并将其保存为文本列表  
-    steps_list: List[str] = []  
-    
-    for sample in tqdm(ds['train']):
-        # generate AutoCoT-style input  
-        text = f"Article: {sample['article']}\n\nQuestion: {sample['question']}\n\nOptions: {', '.join(sample['options'])}\n\nAnswer:" 
+    def initialize_suffix_prompts(self, ds, tokenizer, num_suffix_tokens, embedding_size):  
+        """  
+        use Auto-CoT reasoning steps as the suffix prompts
+        """  
+        # 假设我们已经有AutoCoT生成的推理步骤steps，并将其保存为文本列表  
+        steps_list: List[str] = []  
         
-        # use pretrained model to generate reasoning steps as a string
-        steps = "Generated reasoning steps for the sample."  
-    
-    
-    suffix_prompt_embeddings = torch.tensor(cluster_centers, requires_grad=True).cuda()  
-    return suffix_prompt_embeddings
+        for sample in tqdm(ds['train']):
+            # generate AutoCoT-style input  
+            text = f"Article: {sample['article']}\n\nQuestion: {sample['question']}\n\nOptions: {', '.join(sample['options'])}\n\nAnswer:" 
+            
+            # use pretrained model to generate reasoning steps as a string
+            steps = "Generated reasoning steps for the sample."  
+        
+        
+        suffix_prompt_embeddings = torch.tensor(cluster_centers, requires_grad=True).cuda()  
+        return suffix_prompt_embeddings
     
 
+    def initialize_prefix_prompts(self, dataset_path, model, tokenizer, num_prefix_tokens, embedding_size, classes_initiate_method = "cluster", K=5): 
+        """ 
+        use article classification tokens' weighted sum as prefix prompts
+        """
+        class_embeddings = None
+        if classes_initiate_method == "normal":
+            class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
+        elif classes_initiate_method == "cluster":
+            class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
+        elif classes_initiate_method == "lda":
+            class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
+        else:
+            raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
 
+        
+        prefix_embeddings = torch.zeros(num_prefix_tokens, embedding_size, device=device)
+        
+        for i in range(num_prefix_tokens):  
+            prefix_embeddings[i] = class_embeddings[i]
+        
+        prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
 
-def initialize_prefix_prompts(dataset_path, model, tokenizer, num_prefix_tokens, embedding_size, classes_initiate_method = "cluster", K=5): 
-    """ 
-    use article classification tokens' weighted sum as prefix prompts
-    """
-    class_embeddings = None
-    if classes_initiate_method == "normal":
-        class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
-    elif classes_initiate_method == "cluster":
-        class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
-    elif classes_initiate_method == "lda":
-        class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
-    else:
-        raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
-
-    
-    prefix_embeddings = torch.zeros(num_prefix_tokens, embedding_size, device=device)
-    
-    for i in range(num_prefix_tokens):  
-        prefix_embeddings[i] = class_embeddings[i]
-    
-    prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
-
-    return prefix_prompt_embeddings
+        return prefix_prompt_embeddings
 
 
 
@@ -954,7 +975,7 @@ def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, datas
     )
 
     # 4. 创建带有双向Prompt的模型实例  
-    bidirectional_prompt_model = BidirectionalPromptModel(  
+    bidirectional_prompt_model = BassPromptModel(  
         model=model,  
         prefix_embeddings=prefix_prompt_embeddings,  
         suffix_embeddings=suffix_prompt_embeddings,
@@ -1183,7 +1204,7 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name
     suffix_prompt_embeddings = torch.nn.Parameter(suffix_prompt_embeddings)  
     
     # 4. 创建带有双向Prompt的模型实例  
-    bidirectional_prompt_model = BidirectionalPromptModel(  
+    bidirectional_prompt_model = BassPromptModel(  
         model=model,  # 假设model是从外部传入的基础模型  
         prefix_embeddings=prefix_prompt_embeddings,  
         suffix_embeddings=suffix_prompt_embeddings,  
