@@ -307,9 +307,14 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
                         val_labels = val_batch['labels']
                         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
                         logits = val_outputs['logits']  # batch_size x num_labels
-                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                        preds = torch.argmax(logits, dim=1)
+                         
+                        preds = accelerator.gather_for_metrics(preds)  
+                        val_labels = accelerator.gather_for_metrics(val_labels)  
+                        
                         labels_cpu = val_labels.cpu().numpy()  
-                        all_preds.extend(preds)  
+                        preds_cpu = preds.cpu().numpy()
+                        all_preds.extend(preds_cpu)  
                         all_labels.extend(labels_cpu)  
                 # 计算评价指标  
                 accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
@@ -332,19 +337,19 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     print("model name = ", model_name)
     save_path = Config['save_model_dir'][model_name][config.peft_method][dataset_name]
     
-    # wait every GPU processes to reach here
-    torch.distributed.barrier()  
+    # # wait every GPU processes to reach here
+    # torch.distributed.barrier()  
     
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)  
-        print(f"已创建新的权重存储路径: {save_path}") 
+    # if not os.path.exists(save_path):
+    #     os.makedirs(save_path)  
+    #     print(f"已创建新的权重存储路径: {save_path}") 
     
-    # accelerator.save({  
-    #     'prefix_encoder': model.prefix_encoder.state_dict(),  
-    #     'classifier': model.classifier.state_dict()  
-    # }, save_path)  
+    # # accelerator.save({  
+    # #     'prefix_encoder': model.prefix_encoder.state_dict(),  
+    # #     'classifier': model.classifier.state_dict()  
+    # # }, save_path)  
     
-    accelerator.save(model.state_dict(), save_path)  
+    # accelerator.save(model.state_dict(), save_path)  
     
 
 
@@ -366,6 +371,8 @@ if __name__ == "__main__":
         model_name = model_name,
         model_path = model_path,
         dataset_name=dataset_name,
-        max_seq_length= max_seq_length  
+        max_seq_length= max_seq_length,
+        num_epochs=5,
+        num_labels=4,  
     )
     train_prefix_tuning(config)

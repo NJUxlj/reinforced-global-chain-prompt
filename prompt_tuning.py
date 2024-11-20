@@ -199,7 +199,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     global_step = 0
     best_accuracy = 0 
     
-    fix_seed(42)
+    # fix_seed(42)
 
     for epoch in range(num_epochs):
         model.train()
@@ -232,9 +232,12 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             #     progress_bar.update(1)  
 
             if step == len(train_dataloader)-1:  
-                # if accelerator.is_local_main_process:  
-                results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
+                # if accelerator.is_local_main_process: 
+                model.eval() 
+                results, model, accelerator = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
                 
+                model=model
+                accelerator = accelerator
 
                 # model.eval()  
                 # all_preds = []  
@@ -348,7 +351,11 @@ def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):
     """  
     评估函数  
     """  
-    model.eval()  
+    # 如果需要保持原始模型状态不变  
+    evaluation_mode = model.training  # 保存当前状态  
+    
+    # model.eval()  
+    
     all_preds = []  
     all_labels = []  
     
@@ -357,16 +364,22 @@ def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):
             outputs = model(**batch)  
             logits = outputs.logits  
             labels = batch['labels']  
+            preds = torch.argmax(logits, dim=-1)
             
-            # 使用accelerator.gather收集所有进程的预测结果  
-            gathered_logits = accelerator.gather(logits)  
-            gathered_labels = accelerator.gather(labels)  
             
-            preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
-            labels = gathered_labels.cpu().numpy()  
+            if accelerator.use_distributed:  
+                # 确保在收集之前所有进程都完成计算  
+                accelerator.wait_for_everyone()  
             
-            all_preds.extend(preds)  
-            all_labels.extend(labels)  
+                # 使用accelerator.gather收集所有进程的预测结果  
+                preds = accelerator.gather_for_metrics(preds)  
+                labels = accelerator.gather_for_metrics(labels)  
+            
+            # preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
+            # labels = gathered_labels.cpu().numpy()  
+            
+            all_preds.extend(preds.cpu().numpy())  
+            all_labels.extend(labels.cpu().numpy())  
     
     # 计算评价指标  
     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
@@ -374,12 +387,14 @@ def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):
         all_labels, all_preds, average='weighted', zero_division=0  
     )  
     
+    model.train(evaluation_mode)
+    
     return {  
         'accuracy': accuracy,  
         'precision': precision,  
         'recall': recall,  
         'f1': f1  
-    }  
+    }, model, accelerator  
 
 
 # 加载保存的prompt embedding的函数  
@@ -410,18 +425,22 @@ if __name__ == '__main__':
 
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model_name = "bert-base-uncased"
+    
+    # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
+    # model_name = 'Qwen2.5-1.5B'
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path )
 
     max_seq_length = get_max_length_from_model(model)
 
     config = PromptTuningTrainerConfig(
-        model_name = "bert-base-uncased",
+        model_name = model_name,
         model_path = model_path,
-        dataset_name="dream",
+        dataset_name="commonsense_qa",
         max_seq_length=max_seq_length,
         num_epochs=5,
-        num_labels=2,
+        num_labels=4,
     )
 
 
