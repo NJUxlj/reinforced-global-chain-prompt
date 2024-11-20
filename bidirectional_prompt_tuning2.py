@@ -28,10 +28,6 @@ from accelerate import(
 )
 from accelerate.logging import get_logger
 
-
-# logger = get_logger(__name__, log_level="INFO")
-
-
 from load import *
 
 from utils import *

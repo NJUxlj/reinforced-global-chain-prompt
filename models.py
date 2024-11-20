@@ -29,13 +29,172 @@ class InputEncoder(nn.Module):
     '''
     function:
         1. compress the length of the  real input sequence into [max_seq_length - prefix_length - suffix_length - hard_prompt_length] 
-        2. 使用SparseAttention来将MCQ的input压缩到[max_seq_length - prefix_length - suffix_length - hard_prompt_length]
+        2. 使用滑动窗口+自适应池化+注意力加权来将MCQ的input压缩到[max_seq_length - prefix_length - suffix_length - hard_prompt_length]
+        3. 保留重要信息的同时满足max_length限制。
+        
+    Args:  
+        target_length (int): 目标序列长度  
+        hidden_size (int): 隐藏层维度  
+        window_size (int): 滑动窗口大小，默认128  
+        stride (int): 滑动步长，默认64  
+        pooling_mode (str): 池化模式，可选'max'或'avg'，默认'max'  
     '''
-    def __init__(self, target_length, hidden_size):
-        pass
+    def __init__(  
+        self,   
+        target_length: int,  
+        hidden_size: int,  
+        window_size: int = 128,  
+        stride: int = 64,  
+        pooling_mode: str = 'max'  
+    ):  
+        super().__init__()
+    
+        self.target_length = target_length  
+        self.hidden_size = hidden_size  
+        self.window_size = window_size  
+        self.stride = stride  
+        self.pooling_mode = pooling_mode  
+        
+        # 注意力层用于给不同窗口分配权重  
+        self.attention = nn.Sequential(  
+            nn.Linear(hidden_size, hidden_size // 2),  
+            nn.ReLU(),  
+            nn.Linear(hidden_size // 2, 1)  
+        )  
+
+        # 用于将压缩后的序列映射到目标长度  
+        self.length_adapter = nn.AdaptiveAvgPool1d(target_length)
+    
+    def get_windows(  
+        self,   
+        sequence: torch.Tensor,  
+        attention_mask: Optional[torch.Tensor] = None  
+    ) -> Tuple[torch.Tensor, torch.Tensor]: 
+        '''  
+        使用滑动窗口切分序列  
+        
+        Args:  
+            sequence: shape (batch_size, seq_len, hidden_size)  
+            attention_mask: shape (batch_size, seq_len)  
+            
+        Returns:  
+            windows: shape (batch_size, num_windows, window_size, hidden_size)  
+            window_masks: shape (batch_size, num_windows, window_size)  
+        ''' 
+         
+        batch_size, seq_len, hidden_size = sequence.shape  
+        
+        # 计算窗口数量  
+        num_windows = max(1, (seq_len - self.window_size) // self.stride + 1)  
+        
+        windows = []  
+        window_masks = []  
+        
+        for i in range(num_windows):  
+            start_idx = i * self.stride  
+            end_idx = start_idx + self.window_size  
+            
+            # 获取当前窗口  
+            window = sequence[:, start_idx:end_idx, :]  
+            windows.append(window)  
+            
+            if attention_mask is not None:  
+                window_mask = attention_mask[:, start_idx:end_idx]  
+                window_masks.append(window_mask)  
+        
+        windows = torch.stack(windows, dim=1)  # (batch_size, num_windows, window_size, hidden_size)  
+        
+        if attention_mask is not None:  
+            window_masks = torch.stack(window_masks, dim=1)  # (batch_size, num_windows, window_size)  
+        else:  
+            window_masks = torch.ones_like(windows[..., 0])  
+            
+        return windows, window_masks  
+    
+    def pool_windows(  
+        self,   
+        windows: torch.Tensor,  
+        window_masks: torch.Tensor  
+    ) -> torch.Tensor:  
+        '''  
+        对每个窗口进行池化操作  
+        
+        Args:  
+            windows: shape (batch_size, num_windows, window_size, hidden_size)  
+            window_masks: shape (batch_size, num_windows, window_size)  
+            
+        Returns:  
+            pooled: shape (batch_size, num_windows, hidden_size)  
+        '''  
+        batch_size, num_windows, window_size, hidden_size = windows.shape  
+        
+        # 展平batch和window维度  
+        flat_windows = windows.view(-1, window_size, hidden_size)  # (batch_size * num_windows, window_size, hidden_size)  
+        flat_masks = window_masks.view(-1, window_size)  # (batch_size * num_windows, window_size)  
+        
+        # 应用mask  
+        masked_windows = flat_windows * flat_masks.unsqueeze(-1)  
+        
+        if self.pooling_mode == 'max':  
+            # 在mask之外的位置设置为负无穷  
+            masked_windows = masked_windows.masked_fill(~flat_masks.unsqueeze(-1).bool(), float('-inf'))  
+            pooled = torch.max(masked_windows, dim=1)[0]  # (batch_size * num_windows, hidden_size)  
+        else:  # avg pooling  
+            # 计算每个窗口的有效token数量  
+            valid_tokens = flat_masks.sum(dim=1, keepdim=True)  # (batch_size * num_windows, 1)  
+            pooled = masked_windows.sum(dim=1) / (valid_tokens + 1e-10)  # (batch_size * num_windows, hidden_size)  
+        
+        return pooled.view(batch_size, num_windows, hidden_size) 
+    
+    def forward(  
+        self,   
+        hidden_states: torch.Tensor,  
+        attention_mask: Optional[torch.Tensor] = None  
+    ) -> torch.Tensor:  
+        '''  
+        前向传播函数  
+        
+        Args:  
+            hidden_states: shape (batch_size, seq_len, hidden_size)  
+            attention_mask: shape (batch_size, seq_len)  
+            
+        Returns:  
+            compressed_sequence: shape (batch_size, target_length, hidden_size)  
+        '''  
+        # 1. 获取滑动窗口  
+        windows, window_masks = self.get_windows(hidden_states, attention_mask)  
+        
+        # 2. 对每个窗口进行池化  
+        pooled_windows = self.pool_windows(windows, window_masks)  # (batch_size, num_windows, hidden_size)  
+        
+        # 3. 计算注意力权重  
+        attention_scores = self.attention(pooled_windows)  # (batch_size, num_windows, 1)  
+        attention_weights = F.softmax(attention_scores, dim=1)  
+        
+        # 4. 加权求和  
+        weighted_windows = pooled_windows * attention_weights  
+        
+        # 5. 使用自适应池化调整序列长度  
+        # 转换维度以适应AdaptiveAvgPool1d  
+        sequence = weighted_windows.transpose(1, 2)  # (batch_size, hidden_size, num_windows)  
+        compressed = self.length_adapter(sequence)  # (batch_size, hidden_size, target_length)  
+        compressed = compressed.transpose(1, 2)  # (batch_size, target_length, hidden_size)  
+        
+        return compressed  
 
 
 
+
+class SentenceEncoder(nn.Module):
+    def __init__(self, hidden_size):
+        '''
+        内含 Sentence Transformer, 区别在于可以将句子编码后的hidden_size自动调整为用户输入的hidden_size
+        
+        '''
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.linear = nn.Linear(hidden_size, hidden_size)
+        self.activation = nn.GELU()
 
 
 
@@ -127,7 +286,7 @@ class SparseAttention(nn.Module):
 
 
 
-class BidirectionalAttentionalPromptEncoder(nn.Module):  
+class BaasPromptEncoder(nn.Module):  
     def __init__(  
         self,   
         hidden_size: int,  
@@ -1787,7 +1946,7 @@ if __name__ == '__main__':
     # } 
     
     # # 初始化模型  
-    # prompt_encoder = BidirectionalAttentionalPromptEncoder(**config)  
+    # prompt_encoder =BaasPromptEncoder(**config)  
     
     # # 前向传播  
     # batch_size = 4  

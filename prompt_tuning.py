@@ -32,6 +32,7 @@ from transformers import (
 from peft import (
     TaskType,
     PeftType,
+    PeftConfig,
     PromptEncoder,
     PromptEncoderConfig, 
     get_peft_model, 
@@ -163,17 +164,23 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     for name, param in model.named_parameters():  
         if 'prompt' in name:  
             param.requires_grad = True 
+        else:
+            param.requires_grad = False
+    
+    # 打印可训练参数  
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
+    print(f"Trainable parameters (self-calculated): {trainable_params}")  
 
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=config.warmup_steps,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
     accelerator = Accelerator(
-        # gradient_accumulation_steps=1,  
+        # gradient_accumulation_steps=4,  
         # mixed_precision='fp16', 
     )
     
@@ -190,61 +197,102 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     device = Config['device']
     global_step = 0
+    best_accuracy = 0 
 
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
-        for step, batch in enumerate(tqdm(train_dataloader)):
-            labels = batch["labels"]  
-            
-            outputs = model(**batch)
-            
-            # criterion = nn.CrossEntropyLoss()
-            
-            logits = outputs.logits
-            
-            # loss = criterion(logits, labels.long())
-            loss= outputs.loss
-            total_loss += loss.detach().float()
-            
-            accelerator.backward(loss)
-            
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
+        
+        progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)  
+
+        for step, batch in enumerate(train_dataloader):
+            with accelerator.accumulate(model):  # 使用梯度累积  
+                labels = batch["labels"]  
+                
+                outputs = model(**batch)
+                
+                # criterion = nn.CrossEntropyLoss()
+                
+                logits = outputs.logits
+                
+                # loss = criterion(logits, labels.long())
+                loss= outputs.loss
+                total_loss += loss.detach().float()
+                
+                accelerator.backward(loss)
+                
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+                
+            progress_bar.update(1)  
 
             if step == len(train_dataloader)-1:  
-                model.eval()  
-                all_preds = []  
-                all_labels = []  
-                with torch.no_grad():  
-                    for val_batch in eval_dataloader:  
-                        val_input_ids = val_batch['input_ids']
-                        val_attention_mask = val_batch['attention_mask']
-                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+                
+                results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
+                
+                
+                # model.eval()  
+                # all_preds = []  
+                # all_labels = []  
+                # with torch.no_grad():  
+                #     for val_batch in eval_dataloader:  
+                #         val_input_ids = val_batch['input_ids']
+                #         val_attention_mask = val_batch['attention_mask']
+                #         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
 
-                        logits = val_outputs.logits  # shape = (batch_size, num_labels)
-                        val_labels = val_batch['labels']
+                #         logits = val_outputs.logits  # shape = (batch_size, num_labels)
+                #         val_labels = val_batch['labels']
                         
-                        logits = accelerator.gather(logits)
-                        val_labels = accelerator.gather(val_labels)
+                #         logits = accelerator.gather(logits)
+                #         val_labels = accelerator.gather(val_labels)
                         
-                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
-                        labels_cpu = val_labels.cpu().numpy()  
+                #         preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                #         labels_cpu = val_labels.cpu().numpy()  
                              
-                        all_preds.extend(preds)  
-                        all_labels.extend(labels_cpu)  
-                # 计算评价指标  
-                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
-                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                #         all_preds.extend(preds)  
+                #         all_labels.extend(labels_cpu)  
+                # # 计算评价指标  
+                # accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+                # precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+                # print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
 
                 if accelerator.is_main_process:
-                    logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
+                    logger.info({
+                        'epoch': epoch, 
+                        'loss': loss.item(), 
+                        'accuracy':results["accuracy"], 
+                        "precision": results["precision"], 
+                        "recall": results["recall"], 
+                        "f1": results["f1"], 
+                    })  
                     # print()
+                    # 保存最佳模型  
+                    if results['f1'] > best_accuracy:  
+                        best_accuracy = results['f1']  
+                        accelerator.wait_for_everyone()  
+                        unwrapped_model = accelerator.unwrap_model(model)  
+                        
+                        save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
+                        
+                        if not os.path.exists(os.path.dirname(save_path)):  
+                            os.makedirs(os.path.dirname(save_path))  
+                        
+                        # 只保存prompt embedding  
+                        prompt_state_dict = {}  
+                        for name, param in unwrapped_model.named_parameters():  
+                            if 'prompt' in name:  
+                                prompt_state_dict[name] = param.data.cpu()
+                                
+                        unwrapped_model.save_pretrained(  
+                            save_path,  
+                            state_dict=prompt_state_dict,  # 只保存prompt相关的权重  
+                        )  
                     
                 model.train()  
             global_step+=1
+            
+        progress_bar.close()  
 
         avg_loss = total_loss / len(train_dataloader)   
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
@@ -252,7 +300,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
 
     # 保存权重
     print("model name = ", model_name)
-    save_path = Config['save_model_dir'][model_name][config.peft_method][dataset_name]
+    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
     
     # wait every GPU processes to reach here
     torch.distributed.barrier()  
@@ -266,26 +314,91 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     #     'classifier': model.classifier.state_dict()  
     # }, save_path) 
     
-    # 只让主进程处理文件操作  
-    if accelerator.is_main_process:  
-        # 如果目录已存在，删除整个目录及其内容  
-        if os.path.exists(save_path):  
-            try:  
-                shutil.rmtree(save_path)  
-                print(f"已删除旧的权重目录: {save_path}")  
-            except Exception as e:  
-                print(f"删除旧权重目录时出错: {e}")  
+    
+    
+    # # 只让主进程处理文件操作  
+    # if accelerator.is_main_process:  
+    #     # 如果目录已存在，删除整个目录及其内容  
+    #     if os.path.exists(save_path):  
+    #         try:  
+    #             shutil.rmtree(save_path)  
+    #             print(f"已删除旧的权重目录: {save_path}")  
+    #         except Exception as e:  
+    #             print(f"删除旧权重目录时出错: {e}")  
         
-        # 创建新的目录  
-        try:  
-            os.makedirs(save_path)  
-            print(f"已创建新的权重存储路径: {save_path}")  
-        except Exception as e:  
-            print(f"创建新目录时出错: {e}")   
+    #     # 创建新的目录  
+    #     try:  
+    #         os.makedirs(save_path)  
+    #         print(f"已创建新的权重存储路径: {save_path}")  
+    #     except Exception as e:  
+    #         print(f"创建新目录时出错: {e}")   
         
     
-    model_state_dict = get_peft_model_state_dict(model.module)
-    accelerator.save(model_state_dict, save_path)  
+    # model_state_dict = get_peft_model_state_dict(model.module)
+    # accelerator.save(model_state_dict, save_path)  
+
+
+
+
+def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):  
+    """  
+    评估函数  
+    """  
+    model.eval()  
+    all_preds = []  
+    all_labels = []  
+    
+    for batch in eval_dataloader:  
+        with torch.no_grad():  
+            outputs = model(**batch)  
+            logits = outputs.logits  
+            labels = batch['labels']  
+            
+            # 使用accelerator.gather收集所有进程的预测结果  
+            gathered_logits = accelerator.gather(logits)  
+            gathered_labels = accelerator.gather(labels)  
+            
+            preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
+            labels = gathered_labels.cpu().numpy()  
+            
+            all_preds.extend(preds)  
+            all_labels.extend(labels)  
+    
+    # 计算评价指标  
+    accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+    precision, recall, f1, _ = precision_recall_fscore_support(  
+        all_labels, all_preds, average='weighted', zero_division=0  
+    )  
+    
+    return {  
+        'accuracy': accuracy,  
+        'precision': precision,  
+        'recall': recall,  
+        'f1': f1  
+    }  
+
+
+# 加载保存的prompt embedding的函数  
+def load_trained_prompt(base_model, prompt_path):  
+    """  
+    加载训练好的prompt embedding  
+    Args:  
+        base_model: 原始基座模型  
+        prompt_path: 保存的prompt权重路径  
+    Returns:  
+        加载了训练好的prompt embedding的模型  
+    """  
+    # 加载PEFT配置  
+    config = PeftConfig.from_pretrained(prompt_path)  
+    
+    # 创建PEFT模型  
+    model = get_peft_model(base_model, config)  
+    
+    # 加载训练好的prompt权重  
+    state_dict = torch.load(os.path.join(prompt_path, 'adapter_model.bin'))  
+    model.load_state_dict(state_dict, strict=False)  
+    
+    return model  
 
 
 if __name__ == '__main__':
