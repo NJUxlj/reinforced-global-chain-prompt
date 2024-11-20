@@ -367,10 +367,14 @@ class PTuningV2ForSequenceClassification(nn.Module):
         classifier_param = 0
         for name, param in self.classifier.named_parameters():
             classifier_param += param.numel()
+            print('classifier weight:{}, trainable number is {}'.format(name, param.numel()))
             
         all_param = 0
         for name, param in self.named_parameters():
             all_param += param.numel()
+            
+        for name,param in self.prefix_encoder.named_parameters():
+            print('prefix encoder weight:{}, trainable number is {}'.format(name, param.numel())) 
             
         total_param = all_param - bert_param - classifier_param
         print('total trainable param is {}'.format(total_param)) # 9860105
@@ -476,6 +480,13 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     # encapsulate the base model into a P-Tuning V2 model
     model = PTuningV2ForSequenceClassification(model, num_labels, prefix_length, config=config)  
     model.to(device)  
+    
+    model.print_total_params()
+    
+     # 打印可训练参数  
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
+    print(f"Trainable parameters (self-calculated): {trainable_params}")  
+
 
     # 只优化Prompt Encoder和分类器的参数  
     # optimizer = optim.Adam([  
@@ -510,7 +521,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     print("type(model) = ", type(model))
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name]["p-tuning-v2"][dataset_name]
+        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
@@ -553,57 +564,93 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
             # total_loss += loss.item()
             
             if step == len(train_dataloader) - 1:  
-                model.eval()  
-                all_preds = []  
-                all_labels = []  
-                with torch.no_grad():  
-                    for val_batch in eval_dataloader:  
-                        # val_input_ids = val_batch['input_ids'].to(device)  
-                        # val_attention_mask = val_batch['attention_mask'].to(device)  
-                        # val_labels = val_batch['labels'].to(device)  
-                        val_input_ids = val_batch['input_ids']
-                        val_attention_mask = val_batch['attention_mask']
-                        val_labels = val_batch['labels']
-                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
-                        logits = val_outputs['logits']  
-                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
-                        labels_cpu = val_labels.cpu().numpy()  
-                        all_preds.extend(preds)  
-                        all_labels.extend(labels_cpu)  
-                # 计算评价指标  
-                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
-                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
-
+                results = evaluate_ptuning_v2(model, eval_dataloader, accelerator)  
+                
                 if accelerator.is_main_process:
-                    logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
-                    # print()
+                    logger.info({
+                        'epoch': epoch, 
+                        'loss': loss.item(), 
+                        'accuracy':results['accuracy'],
+                        "precision": results['precision'], 
+                        "recall": results['recall'], 
+                        "f1": results['f1'] 
+                        })  
+                    
+                    
                 model.train()  
             global_step+=1
-              
-        avg_loss = total_loss / len(train_dataloader)   
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+        
+        if accelerator.is_local_main_process:       
+            avg_loss = total_loss / len(train_dataloader)   
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
 
     # 保存模型
     
     print("model name = ", model_name)
-    save_path = Config['save_model_dir'][model_name]['p-tuning-v2'][dataset_name]
+    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
+    unwrapped_model = accelerator.unwrap_model(model)
     
     # wait every GPU processes to reach here
     torch.distributed.barrier()  
     
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)  
-        print(f"已创建新的权重存储路径: {save_path}") 
+    if not os.path.exists(os.path.dirname(save_path)):
+        os.makedirs(os.path.dirname(save_path))  
+        print(f"已创建新的权重存储路径: {os.path.dirname(save_path)}") 
+    
+    # 只保存prompt embedding  
+    # prompt_state_dict = {}  
+    # for name, param in unwrapped_model.named_parameters():  
+    #     if 'prefix_encoder' in name:  
+    #         prompt_state_dict[name] = param.data.cpu()
+    
+    # unwrapped_model.save_pretrained(  
+    #     save_path,  
+    #     state_dict=prompt_state_dict,  
+    # )  
     
     accelerator.save({  
         'prefix_encoder': model.prefix_encoder.state_dict(),  
         'classifier': model.classifier.state_dict()  
     }, save_path)  
+    
 
 
-
-
+def evaluate_ptuning_v2(model, eval_dataloader, accelerator:Accelerator):  
+    """  
+    评估函数  
+    """  
+    model.eval()  
+    all_preds = []  
+    all_labels = []  
+    
+    with torch.no_grad():  
+        for batch in eval_dataloader:  
+            outputs = model(**batch)  
+            logits = outputs.logits  
+            labels = batch['labels']  
+            
+            # 使用accelerator.gather收集所有进程的预测结果  
+            gathered_logits = accelerator.gather(logits)  
+            gathered_labels = accelerator.gather(labels)  
+            
+            preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
+            labels = gathered_labels.cpu().numpy()  
+            
+            all_preds.extend(preds)  
+            all_labels.extend(labels)  
+    
+    # 计算评价指标  
+    accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+    precision, recall, f1, _ = precision_recall_fscore_support(  
+        all_labels, all_preds, average='weighted', zero_division=0  
+    )  
+    
+    return {  
+        'accuracy': accuracy,  
+        'precision': precision,  
+        'recall': recall,  
+        'f1': f1  
+    }
 
 
 if __name__ == "__main__":

@@ -410,6 +410,7 @@ def fix_seed(seed):
     torch.manual_seed(seed) # CPU seed
     torch.cuda.manual_seed_all(seed) # GPU seed
     torch.backends.cudnn.deterministic = True 
+    torch.backends.cudnn.benchmark = False 
 
 
 

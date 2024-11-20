@@ -198,40 +198,44 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     device = Config['device']
     global_step = 0
     best_accuracy = 0 
+    
+    fix_seed(42)
 
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
         
-        progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)  
+        # if accelerator.is_main_process:  
+        #     progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)  
 
-        for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(model):  # 使用梯度累积  
-                labels = batch["labels"]  
-                
-                outputs = model(**batch)
-                
-                # criterion = nn.CrossEntropyLoss()
-                
-                logits = outputs.logits
-                
-                # loss = criterion(logits, labels.long())
-                loss= outputs.loss
-                total_loss += loss.detach().float()
-                
-                accelerator.backward(loss)
-                
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-                
-            progress_bar.update(1)  
+        for step, batch in enumerate(tqdm(train_dataloader)):
+            # with accelerator.accumulate(model):  # 使用梯度累积  
+            labels = batch["labels"]  
+            
+            outputs = model(**batch)
+            
+            # criterion = nn.CrossEntropyLoss()
+            
+            logits = outputs.logits
+            
+            # loss = criterion(logits, labels.long())
+            loss= outputs.loss
+            total_loss += loss.detach().float()
+            
+            accelerator.backward(loss)
+            
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+            
+            # if accelerator.is_main_process:  
+            #     progress_bar.update(1)  
 
             if step == len(train_dataloader)-1:  
-                
+                # if accelerator.is_local_main_process:  
                 results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
                 
-                
+
                 # model.eval()  
                 # all_preds = []  
                 # all_labels = []  
@@ -257,7 +261,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                 # precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
                 # print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
 
-                if accelerator.is_main_process:
+                if accelerator.is_main_process:             
                     logger.info({
                         'epoch': epoch, 
                         'loss': loss.item(), 
@@ -268,34 +272,34 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                     })  
                     # print()
                     # 保存最佳模型  
-                    if results['f1'] > best_accuracy:  
-                        best_accuracy = results['f1']  
-                        accelerator.wait_for_everyone()  
-                        unwrapped_model = accelerator.unwrap_model(model)  
+                    # if results['f1'] > best_accuracy:  
+                    #     best_accuracy = results['f1']  
+                    #     accelerator.wait_for_everyone()  
+                    #     unwrapped_model = accelerator.unwrap_model(model)  
                         
-                        save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
+                    #     save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
                         
-                        if not os.path.exists(os.path.dirname(save_path)):  
-                            os.makedirs(os.path.dirname(save_path))  
+                    #     if not os.path.exists(os.path.dirname(save_path)):  
+                    #         os.makedirs(os.path.dirname(save_path))  
                         
-                        # 只保存prompt embedding  
-                        prompt_state_dict = {}  
-                        for name, param in unwrapped_model.named_parameters():  
-                            if 'prompt' in name:  
-                                prompt_state_dict[name] = param.data.cpu()
+                    #     # 只保存prompt embedding  
+                    #     prompt_state_dict = {}  
+                    #     for name, param in unwrapped_model.named_parameters():  
+                    #         if 'prompt' in name:  
+                    #             prompt_state_dict[name] = param.data.cpu()
                                 
-                        unwrapped_model.save_pretrained(  
-                            save_path,  
-                            state_dict=prompt_state_dict,  # 只保存prompt相关的权重  
-                        )  
+                    #     unwrapped_model.save_pretrained(  
+                    #         save_path,  
+                    #         state_dict=prompt_state_dict,  # 只保存prompt相关的权重  
+                    #     )  
                     
                 model.train()  
             global_step+=1
             
-        progress_bar.close()  
-
-        avg_loss = total_loss / len(train_dataloader)   
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+        if accelerator.is_local_main_process: 
+            # progress_bar.close()  
+            avg_loss = total_loss / len(train_dataloader)   
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
 
 
     # 保存权重
@@ -348,8 +352,8 @@ def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):
     all_preds = []  
     all_labels = []  
     
-    for batch in eval_dataloader:  
-        with torch.no_grad():  
+    with torch.no_grad():  
+        for batch in eval_dataloader:  
             outputs = model(**batch)  
             logits = outputs.logits  
             labels = batch['labels']  
@@ -414,9 +418,10 @@ if __name__ == '__main__':
     config = PromptTuningTrainerConfig(
         model_name = "bert-base-uncased",
         model_path = model_path,
-        dataset_name="race",
+        dataset_name="dream",
         max_seq_length=max_seq_length,
         num_epochs=5,
+        num_labels=2,
     )
 
 

@@ -26,6 +26,7 @@ from config import NUM_PROCESSES, NUM_CPU_PROCESSES
 
 from typing import List, Dict, Tuple ,Union, Any, Optional
 
+from pathlib import Path
 
 
 # 初始化分词器  
@@ -870,8 +871,15 @@ class McqDatasetWrapper:
         
         for split, file_path in file_paths.items():  
             if not os.path.exists(file_path):  
-                print(f"Warning: dataset [{config.name}]'s split [{file_path}] does not exist")  
-                continue  
+                print(f"Warning: dataset [{config.name}]'s split [{split}] does not exist")  
+                if split != 'test':
+                    # 除了test以外的其他分割都必须存在
+                    raise FileNotFoundError(f"Warning: dataset [{config.name}]'s split [{split}] does not exist")
+                else:
+                    if os.path.exists(file_paths['validation']):
+                        print("test data does not exist, use validation data instead")
+                        with open(file_paths['validation'], 'r', encoding='utf-8') as f:  
+                            data = json.load(f)
                 
             with open(file_path, 'r', encoding='utf-8') as f:  
                 data = json.load(f)  
@@ -1073,39 +1081,60 @@ class McqDatasetWrapper:
             dialogue_id = dialogue_item[2]     # 对话ID  
             
             # 将对话列表合并成单个文本，每个话语用换行符分隔  
-            dialogue_text = "\n".join(dialogue_texts)  
+            dialogue_text = "\n".join(dialogue_texts).strip()  
             
             # 处理该对话场景下的所有问题  
             for qa in questions:  
-                question = qa["question"]  
-                choices = qa["choice"]  
-                answer = qa["answer"]  
+                question = qa["question"].strip()  
+                choices:List[str] = qa["choice"]  
+                answer = qa["answer"]
             
-                # 确保选项列表长度为4（DREAM默认是3个选项）  
+                # 确保选项列表长度为3（DREAM默认是3个选项）  
                 options = choices.copy()  
                 while len(options) < 3:  
                     options.append("N/A")  # 填充到3个选项  
+                
                     
                 # 获取正确答案的索引（在DREAM中答案是选项的完整文本）  
                 try:  
                     if isinstance(answer, str) and answer in options and answer.strip()!="":
                         answer_index = options.index(answer)
-                        label = chr(65+answer_index) 
                     else:
                         answer_index = random.randint(0,2)
-                        label = chr(65+answer_index) 
                         
                 except ValueError:  
                     print(f"Warning: Answer '{answer}' not found in choices for dialogue {dialogue_id}")  
                     continue  
                 
-                labeled_options = [chr(65+i)+". "+option for i, option in enumerate(options)]
+                
+                original_indices = list(range(len(options))) 
+                
+                combined = list(zip(options, original_indices)) 
+                # [(option1, 0), (option2, 1), ...]
+                
+                # 随机打乱选项顺序  
+                random.shuffle(combined)  
+                
+                shuffled_options, shuffled_indices = zip(*combined) # 将打乱后的 combined 列表解压为两个新的列表
+                # [1, 3, 2, 0]
+                #  0  1  2   3  ->  A  B  C  D
+                
+                # 添加选项标签 (A, B, C, D)  
+                labeled_options = [  
+                    f"{chr(j+65)}. {option}" for j, option in enumerate(shuffled_options)  
+                ] 
+                
+                final_answer_index = shuffled_indices.index(answer_index)
+                final_answer = chr(final_answer_index+65)
+                
+                
+                # labeled_options = [chr(65+i)+". "+option for i, option in enumerate(options)]
                     
                 # 添加到处理后的数据中  
                 processed_data[config.article_key].append(dialogue_text)  
                 processed_data[config.question_key].append(question)  
                 processed_data[config.options_key].append(labeled_options)  
-                processed_data[config.label_key].append(label)  
+                processed_data[config.label_key].append(final_answer)  
                 processed_data["dialogue_id"].append(dialogue_id)  
         
         return processed_data   
@@ -1354,15 +1383,17 @@ class McqDatasetWrapper:
         
         # 获取当前工作目录  
         current_working_directory = os.getcwd()  
-
-        # 假设父级目录是项目的根目录  /root/black-prompt/autocot/.. = /root/black-prompt
-        project_root_directory = os.path.abspath(os.path.join(current_working_directory, '..'))  
-
-        # 判断当前工作目录是否为父级目录  
-        if current_working_directory == project_root_directory:  
+        autocot_directory = os.path.abspath(os.path.join(current_working_directory, 'autocot'))
+        
+        # 转换为Path对象并解析为绝对路径 
+        path1 = Path(current_working_directory).resolve()  # resolve()方法可以处理 '.', '..', 软链接等  
+        path2 = Path(autocot_directory).resolve()  
+        
+        if path1.exists() and path2.exists():
             pass
-        else:  # 如果是在子目录下(比如autocot)执行的脚本, 需要在数据集路径前+“.”, 以加载根目录下的数据集
+        else:
             config.local_path = "."+config.local_path
+        
         
         # 根据文件格式选择加载方式  
         if config.file_format == "json":  
@@ -1652,3 +1683,4 @@ if __name__ == "__main__":
     
     
     print(ds['train'][0])
+    

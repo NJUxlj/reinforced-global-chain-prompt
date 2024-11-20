@@ -63,6 +63,12 @@ class InputEncoder(nn.Module):
         )  
 
         # 用于将压缩后的序列映射到目标长度  
+        '''
+        平均池化层
+            它的特点是：可以将任意长度的输入序列压缩或扩展到指定的目标长度。
+            这个操作是自适应的，意味着它会自动调整池化窗口的大小，以确保输出恰好是目标长度。
+        
+        '''
         self.length_adapter = nn.AdaptiveAvgPool1d(target_length)
     
     def get_windows(  
