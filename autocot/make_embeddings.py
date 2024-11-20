@@ -15,6 +15,7 @@ sys.path.insert(0, parent_directory)
 
 from config import Config
 from config import NUM_CPU_PROCESSES
+from causal_modeling import RollbackDecoderWithHead
 
 
 '''
@@ -392,7 +393,12 @@ def get_cot_context()->torch.Tensor:
     return context
 
 
-def rollback_one_step_extend(target_steps:int)->torch.Tensor:
+def rollback_one_step_extend(target_steps:int, model:RollbackDecoderWithHead=None)->torch.Tensor:
+    '''
+    :param: model 这里的模型使用 BaasPromptModel初始化时赋值的self.model 传入
+    
+    :target_steps: num_suffix_tokens
+    '''
     context:torch.Tensor = get_cot_context()
     source_steps = len(context)
     
@@ -406,20 +412,111 @@ def rollback_one_step_extend(target_steps:int)->torch.Tensor:
         # use multihead-attention to generate new steps using causual language modeling
         for i in range(source_steps-1, target_steps):
             # 生成新的推理步骤
-            new_step = generate_new_step(context)
-            context = torch.cat([context, new_step], dim=0)
+            token_id, new_step_embedding = generate_new_step(context,model)
+            new_step_embedding = new_step_embedding.unsqueeze(0) # [1, hidden_dim]
+            context = torch.cat([context, new_step_embedding], dim=0)
         
         return context
 
 
-def generate_new_step(context:torch.Tensor):
-    pass
+def generate_new_step(context: torch.Tensor,  
+                     model: RollbackDecoderWithHead = None,  
+                     temperature: float = 0.7) -> Tuple[int, torch.Tensor]:  
+    """生成下一个token并返回其embedding  
+    
+    Args:  
+        context: 形状为 [seq_len, hidden_dim] 的上下文张量  
+        model: 带有输出头的解码器模型  
+        temperature: 采样温度  
+        : 词表大小（默认使用BERT的词表大小）  
+    
+    Returns:  
+        tuple: (next_token_id, next_token_embedding)  
+            - next_token_id: 下一个token的ID  
+            - next_token_embedding: 下一个token的embedding向量 [hidden_dim]  
+    """  
+    if model is None:  
+        # 如果没有传入模型，创建一个新的解码器层  
+        d_model = context.size(-1)  # hidden_dim  
+        model = RollbackDecoderWithHead(  
+            d_model=d_model,  
+            d_ff=d_model * 4, 
+            num_heads=8,  
+            dropout=0.1  
+        )  
+    
+    device = context.device  
+    model = model.to(device)  
+    
+    # 创建因果掩码  
+    seq_len = context.size(0)  
+    causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1).bool()  
+    causal_mask = ~causal_mask.unsqueeze(0).unsqueeze(1)  # [1, 1, seq_len, seq_len]  
+    
+    '''
+    causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1).bool()：
+        创建一个上三角矩阵，其中主对角线以上的元素为 1，主对角线及以下的元素为 0。
+        torch.triu 函数用于生成上三角矩阵，diagonal=1 表示从主对角线开始的位置。bool() 函数将结果转换为布尔类型。
+
+    causal_mask = ~causal_mask.unsqueeze(0).unsqueeze(1)：
+        对因果掩码进行取反操作，即将 1 变为 0，将 0 变为 1。
+        然后，使用 unsqueeze(0) 和 unsqueeze(1) 在维度 0 和 1 上分别添加一个维度，
+        使得因果掩码的形状变为 [1, 1, seq_len, seq_len]。
+    '''
+    
+    
+    # 将context扩展为batch维度  
+    context = context.unsqueeze(0)  # [1, seq_len, hidden_dim]  
+    
+    with torch.no_grad():  
+        # 通过解码器生成新的隐藏状态  
+        next_token_logits  = model(context, causal_mask)  # shape = [1, vocab_size]
+        
+        
+        # 应用温度缩放  
+        # # temperature 影响概率分布的"锐利度", <1 使分布更尖锐，>1 使分布更平缓    
+        if temperature != 1.0:  
+            next_token_logits = next_token_logits / temperature  
+        
+        # 计算概率分布  
+        probs = F.softmax(next_token_logits, dim=-1)  
+        
+        print("probs.shape = ", probs.shape)
+        print("probs = ", probs)    
+        # 采样下一个token  
+        next_token = torch.multinomial(probs, num_samples=1)  # [1, 1] 
+        
+        
+        '''
+        # multinomial 根据概率分布进行采样  
+        # - probs: 概率分布 [1, vocab_size]  
+        # - num_samples=1: 采样一个token  
+        # - 返回的是词表中的索引（token ID）  
+
+        # 例如，对于概率分布 [0.01, 0.31, 0.42, 0.26]：  
+        # - 42% 的概率选择索引 2  
+        # - 31% 的概率选择索引 1  
+        # - 26% 的概率选择索引 3  
+        # - 1% 的概率选择索引 0  
+        
+        '''
+        
+
+        # 获取token的embedding  
+        next_token_embedding = model.embed_tokens(next_token)  # [1, 1, hidden_dim]  
+        next_token_embedding = next_token_embedding.squeeze()  # [hidden_dim]  
+        
+
+    # return new_step.squeeze(0)  # [hidden_dim]  
+    return next_token.squeeze().item(), next_token_embedding
+
         
 
 
 if __name__ == '__main__':
-    context = get_cot_context()
-    
+    # context = get_cot_context()
+    context = rollback_one_step_extend(20)
+    print("context.shape = ", context.shape)
     print("context = \n", context)
     
     
