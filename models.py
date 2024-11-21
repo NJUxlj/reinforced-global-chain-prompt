@@ -238,8 +238,12 @@ class SentenceEncoder(nn.Module):
         
         self.encoder = encoder
 
-    def forward(self, sentences:Union[List[str], str])->torch.Tensor:
+    def encode(self, sentences:Union[List[str], str])->torch.Tensor:
+        '''
+        return:
+            shape = [num_sentences, hidden_size]  or [hidden_size]
         
+        '''
         
         sentence_embeddings = self.encoder.encode(
             sentences,
@@ -250,6 +254,9 @@ class SentenceEncoder(nn.Module):
         )  # shape = [K, H]
         
         return sentence_embeddings
+    
+    def forward(self):
+        pass
 
 
 

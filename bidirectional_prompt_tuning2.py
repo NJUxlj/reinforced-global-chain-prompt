@@ -35,6 +35,10 @@ from utils import *
 
 from causal_modeling import *
 
+from .models import (
+    SentenceEncoder
+)
+
 
 from autocot.make_embeddings import (
     get_cot_context,
@@ -128,7 +132,7 @@ class BaasPromptConfig:
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
         self,   
-        config: BassPromptConfig,
+        config: BaasPromptConfig,
         num_layers: int = 2,  
         dropout: float = 0.1
     ):  
@@ -181,7 +185,7 @@ class BaasPromptEncoder(nn.Module):
             prefix_embeddings: torch.Tensor,  
             suffix_embeddings: torch.Tensor,
             batch_size:int =1 ,
-        ):  
+        )->Tuple[torch.Tensor, torch.Tensor]:  
         '''
         Args:
             prefix_embeddings, suffix_embeddings: shape = (seq_length, hidden_size)
@@ -234,26 +238,38 @@ class BaasPromptEncoder(nn.Module):
 
 
 class BassPromptModel(torch.nn.Module):  
-    def __init__(self, model, config:BaasPromptConfig):  
+    def __init__(self, model, tokenizer, config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments=None):  
         super(BassPromptModel, self).__init__()  
         self.model = model
+        self.tokenizer = tokenizer
+        self.hidden_size = config.encoder_hidden_size # bert's hidden size
+        self.prefix_hidden_size = config.prefix_hidden_size # P_theta' in MLP reparameterization
         
         self.rollback_decoder = RollbackDecoderWithHead(
             d_model=config.prefix_hidden_size,
             d_ff=config.prefix_hidden_size*4,
             num_heads=8,
         )
-        
-        self.chain_encode_args = ChainEncodingArguments(
-            dataset=config.dataset_name,
-            hidden_size=config.encoder_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
-            output_dir="experiment/race",
-            embedding_dir = "./embeddings/race",
-            context_dir = "./context/race"
-        )
-        
-        self.prefix_embeddings = self.initialize_prefix_prompts(
+        if chain_encode_args is None:
+            self.chain_encode_args = ChainEncodingArguments(
+                dataset=config.dataset_name,
+                hidden_size=config.encoder_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
+                output_dir="experiment/race",
+                embedding_dir = "./embeddings/race",
+                context_dir = "./context/race"
+            )
+        else:
+            self.chain_encode_args = chain_encode_args 
             
+        self.prefix_embeddings = self.initialize_prefix_prompts(
+            dataset_path=get_dataset_path_by_name(config.dataset_name),
+            model=self.model,
+            tokenizer=self.tokenizer,
+            hidden_size = self.hidden_size,
+            config = config,
+            classes_initiate_method = "cluster",
+            num_topics = self.num_prefix_tokens,
+            max_length = config.max_seq_length
         )
         
         self.suffix_embeddings = self.initialize_suffix_prompts() #shape =  (seq_length, hidden_size)
@@ -269,7 +285,7 @@ class BassPromptModel(torch.nn.Module):
         self.num_suffix_tokens = config.suffix_length
         self.embedding_layer = self.model.get_input_embeddings()  # 获取词嵌入层
         
-
+        self.disable_grad_calc()
     
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):  
         # 原始输入嵌入
@@ -343,6 +359,21 @@ class BassPromptModel(torch.nn.Module):
         print(f"total param number: {all_params}")  
         print(f"trainable param ratio: {100 * trainable_params / all_params:.2f}%")  
 
+    def disable_grad_calc(self):
+        """disable grad calc for base model parameters"""
+        for name, param in self.named_parameters():
+            if "prefix_embeddings" in name or "suffix_embeddings" in name:
+                param.requires_grad = True
+            elif "rollback_decoder" in name:
+                param.requires_grad = True
+            elif "prompt_encoder" in name:
+                param.requires_grad = True
+            elif "classifier" in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
+        self.print_trainable_parameters()
 
     def initialize_suffix_prompts(self)->torch.Tensor:  
         """  
@@ -365,35 +396,44 @@ class BassPromptModel(torch.nn.Module):
         return suffix_embeddings
     
 
-    def initialize_prefix_prompts(self, dataset_path, model, tokenizer, num_prefix_tokens, embedding_size, config:BaasPromptConfig ,classes_initiate_method = "cluster", K=5): 
+    def initialize_prefix_prompts(
+        self, 
+        dataset_path,
+        model,
+        tokenizer,
+        hidden_size, 
+        config:BaasPromptConfig,
+        classes_initiate_method = "cluster",
+        num_topics=5,
+        max_length=512
+        )->torch.Tensor: 
         """ 
-        use article classification tokens' weighted sum as prefix prompts
+        use the class labels to initialize the prefix tokens
+        
+        return tensor shape = (num_prefix_tokens, embedding_size)
         """
         class_embeddings = None
         if classes_initiate_method == "normal":
-            class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
+            class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "cluster":
-            class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
+            class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "lda":
-            class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = embedding_size, num_topics=num_prefix_tokens, K=5, max_length=512)
+            class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         else:
             raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
 
         
-        prefix_embeddings = torch.zeros(num_prefix_tokens, embedding_size, device=device)
+        prefix_embeddings = torch.zeros(self.num_prefix_tokens, hidden_size, device=device)
         
-        for i in range(num_prefix_tokens):  
+        for i in range(self.num_prefix_tokens):  
             prefix_embeddings[i] = class_embeddings[i]
         
-        prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
+        # requires_grad 统一到外面进行处理
+        # prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
 
-        return prefix_prompt_embeddings
+        return prefix_embeddings
 
-
-
-
-
-def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "normal"):
+def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal"):
     '''
        This function will be used when generating class labels for each sample in the dataset.
         
@@ -414,187 +454,82 @@ def reformat_input(dataset_path, tokenizer, max_length=512, reformat_type = "nor
         "cluster": "get_classes_by_cluster()"
     }
     
+    input_key = 'input'
+    
+    max_length = config.max_seq_length
+    
     print(f"reformat input using reformat_type = {reformat_dict[reformat_type]}")
-    if dataset_path == Config["datasets"]["race"]:
-        dataset_name = "race"
-        
-        if reformat_type == "normal":
-            # # corse-grained preprocessing
-            # ds, classes, tokenizer = preprocess_race(ds, tokenizer)
-            
-            # # fine-grained preprocessing
-            # processed_ds = ds.map(
-            #     lambda examples: preprocess_function_race(examples, max_length=max_length, tokenizer=tokenizer), 
-            #     batched=True,
-            #     num_proc=NUM_CPU_PROCESSES,
-            #     remove_columns=ds['train'].column_names,
-            #     load_from_cache_file=False,
-            #     desc="Running tokenizer on dataset",
-            # )     
-            
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-            
-        elif reformat_type == "lda":
-            ds = load_dataset_from_huggingface(dataset_path, "all")
-            
-            processed_ds = ds.map(
-                lambda examples: {
-                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
-                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
-                },
-                batched=True,
-                num_proc=NUM_CPU_PROCESSES,
-                remove_columns=ds['train'].column_names,
-                load_from_cache_file=False,
-                desc="Running tokenizer on dataset",
-            )
-            
-            # transfer the dataset into List[str]
-            processed_ds = [text for text in processed_ds['train']['combined_input']]  
-            
-            
-            train_ds: List[List[str]] = []
-            for text in processed_ds:
-                text = text.lower()
-                tokens = word_tokenize(text)
-                # remove stopwords and non-alphabetic characters
-                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
-                train_ds.append(tokens)
-            
-        elif reformat_type == "cluster":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-        else:
-            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
-        
-                    
-        
-    elif dataset_path == Config["datasets"]["sciq"]:
-        dataset_name = "sciq"
-        
-        if reformat_type == "normal":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-            
-        elif reformat_type == "lda":
-            ds = load_dataset_from_huggingface(dataset_path, "all")
-            
-            processed_ds = ds.map(
-                lambda examples: {
-                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
-                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
-                },
-                batched=True,
-                num_proc=NUM_CPU_PROCESSES,
-                remove_columns=ds['train'].column_names,
-                load_from_cache_file=False,
-                desc="Running tokenizer on dataset",
-            )
-            
-            # transfer the dataset into List[str]
-            processed_ds = [text for text in processed_ds['train']['combined_input']]  
-            
-            
-            train_ds: List[List[str]] = []
-            for text in processed_ds:
-                text = text.lower()
-                tokens = word_tokenize(text)
-                # remove stopwords and non-alphabetic characters
-                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
-                train_ds.append(tokens)
-            
-        elif reformat_type == "cluster":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-        else:
-            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
-        
+    wrapper = McqDatasetWrapper()
+    dataset_configs = wrapper.dataset_configs
     
-    elif dataset_path == Config["datasets"]["commonsense_qa"]:
-        dataset_name = "commonsense_qa"
-        if reformat_type == "normal":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-            
-        elif reformat_type == "lda":
-            ds = load_dataset_from_huggingface(dataset_path, "all")
-            
-            processed_ds = ds.map(
-                lambda examples: {
-                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
-                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
-                },
-                batched=True,
-                num_proc=NUM_CPU_PROCESSES,
-                remove_columns=ds['train'].column_names,
-                load_from_cache_file=False,
-                desc="Running tokenizer on dataset",
-            )
-            
-            # transfer the dataset into List[str]
-            processed_ds = [text for text in processed_ds['train']['combined_input']]  
-            
-            
-            train_ds: List[List[str]] = []
-            for text in processed_ds:
-                text = text.lower()
-                tokens = word_tokenize(text)
-                # remove stopwords and non-alphabetic characters
-                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
-                train_ds.append(tokens)
-            
-        elif reformat_type == "cluster":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-        else:
-            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
-    
-    
-    elif dataset_path == Config["datasets"]["dream"]['all']:
-        dataset_name = "dream"
-        if reformat_type == "normal":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-            
-        elif reformat_type == "lda":
-            ds = load_dataset_from_huggingface(dataset_path, "all")
-            
-            processed_ds = ds.map(
-                lambda examples: {
-                    "combined_input": [f"Artical:{examples['article'][index]}\n\nQuestion:{examples['question'][index]}\n\n \
-                                            Options:{examples['options'][index]}\n\nAnswer:" for index, x in enumerate(examples['article'])]  
-                },
-                batched=True,
-                num_proc=NUM_CPU_PROCESSES,
-                remove_columns=ds['train'].column_names,
-                load_from_cache_file=False,
-                desc="Running tokenizer on dataset",
-            )
-            
-            # transfer the dataset into List[str]
-            processed_ds = [text for text in processed_ds['train']['combined_input']]  
-            
-            
-            train_ds: List[List[str]] = []
-            for text in processed_ds:
-                text = text.lower()
-                tokens = word_tokenize(text)
-                # remove stopwords and non-alphabetic characters
-                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
-                train_ds.append(tokens)
-            
-        elif reformat_type == "cluster":
-            processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
-        else:
-            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
+    if config.dataset_name == 'race' or config.dataset_name == 'sciq' \
+        or config.dataset_name == 'dream' or config.dataset_name == 'commonsense_qa':
         
+        
+        article_key = dataset_configs[config.dataset_name].article_key
+        question_key = dataset_configs[config.dataset_name].question_key
+        options_key = dataset_configs[config.dataset_name].options_key
+        label_key = dataset_configs[config.dataset_name].label_key
+        
+        
+        
+        if reformat_type == "normal": 
+            ds = wrapper.load_mcq_dataset(config.dataset_name) 
+            # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            train_ds = processed_ds["train"]
+            
+        elif reformat_type == "lda":
+            ds = wrapper.load_mcq_dataset(config.dataset_name)
+            
+            processed_ds = ds.map(
+                lambda examples: {
+                    input_key: [f"{article_key}:{examples[article_key][index]}\n\n{question_key}:{examples[question_key][index]}\n\n \
+                                            {options_key}:{examples[options_key][index]}\n\n{label_key}:" for index, x in enumerate(examples[article_key])]  
+                },
+                batched=True,
+                num_proc=NUM_CPU_PROCESSES,
+                remove_columns=[article_key, question_key, options_key],
+                load_from_cache_file=False,
+                desc=f"Running reformat function's mapping on dataset {config.dataset_name}",
+            )
+            
+            # transfer the dataset into List[str]
+            processed_ds = [text for text in processed_ds['train']['input']]  
+            
+            
+            train_ds: List[List[str]] = []
+            for text in processed_ds:
+                text = text.lower()
+                tokens = word_tokenize(text)
+                # remove stopwords and non-alphabetic characters
+                tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
+                train_ds.append(tokens)
+            
+        elif reformat_type == "cluster":
+            # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            # train_ds = processed_ds["train"]
+            ds = wrapper.load_mcq_dataset(config.dataset_name)
+            
+            processed_ds = ds.map(
+                lambda examples: {
+                    input_key: [f"{article_key}:{examples[article_key][index]}\n\n{question_key}:{examples[question_key][index]}\n\n \
+                                            {options_key}:{examples[options_key][index]}\n\n{label_key}:{examples[question_key][index]}" for index, x in enumerate(examples[article_key])]  
+                },
+                batched=True,
+                num_proc=NUM_CPU_PROCESSES,
+                remove_columns=[article_key, question_key, options_key, label_key],
+                load_from_cache_file=False,
+                desc=f"Running reformat function's mapping on dataset {config.dataset_name}",
+            )
+            train_ds = processed_ds["train"]
+        
+        else:
+            raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
         
     else:
-        raise ValueError("dataset_path not supported, we can not reformat dataset using a wrong name, please change another in [race, sciq, commonsense_qa, dream]")
+        raise ValueError(f"dataset_name: {config.dataset_name} not supported, we can not reformat dataset using a wrong name, please change another in [race, sciq, commonsense_qa, dream]")
     
-    return train_ds
+    return train_ds, input_key
 
 
 
@@ -771,12 +706,11 @@ def get_classes_by_clustering(
     dataset_path, 
     model, 
     tokenizer, 
-    embedding_size, 
-    num_topics=5, 
-    K=5, 
+    embedding_size,  # hidden_size
+    num_topics=5,  
     max_length=512, 
     use_trained_embeddings=False,
-    cache_dir='cached_embeddings'  # 存储embeddings的目录  
+    cache_dir='./class_label_cluster_embeddings'  # 存储embeddings的目录  
     )->List[torch.Tensor]:
     '''
     Args:
@@ -787,15 +721,18 @@ def get_classes_by_clustering(
         cache_dir: 存储embeddings的目录  
         use_trained_embeddings: 是否使用已缓存的embeddings  
     
+    return 
+        class_embeddings: a list of tensor embeddings, each embedding corresponds to a label
+    
     '''
-    print(f"get class labels by Clustering ~~~~")
+    print(f"***************** Get Class Labels by Clustering ~~~~ *********************88")
     os.makedirs(cache_dir, exist_ok=True)
     
     
     # 生成唯一的缓存文件名（基于模型名称和数据集路径）  
     model_name = get_model_name_using_model(model)
     dataset_name = os.path.basename(dataset_path) 
-    cache_filename = f"embeddings_{model_name}_{dataset_name}.pt"  
+    cache_filename = f"label_embeddings_{dataset_name}.pt"  
     cache_path = os.path.join(cache_dir, cache_filename) 
   
     # 保存数据集信息，用于验证缓存是否匹配  
@@ -828,12 +765,12 @@ def get_classes_by_clustering(
     
     else:
         classes = []
-        device = Config['device']
-        # model.to(device)
         model = model.eval()
         
         
-        accelerator = Accelerator()
+        # accelerator = Accelerator()
+        
+        device = Config.device
         # model = accelerator.prepare(model)
         
         
@@ -842,53 +779,64 @@ def get_classes_by_clustering(
         vocab_size = tokenizer.vocab_size
 
         
-        train_ds: Dict[str,torch.Tensor[List]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
+        train_ds, input_key = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
+        train_ds: Dict[str,List[str]]
         
-        print(f"The training data is reformated, now we get each example's embedding using the model~~~")
-        train_data_loader = DataLoader(train_ds, 
-                                    batch_size=Config['batch_size'], 
-                                    collate_fn=default_data_collator, 
-                                    num_workers=NUM_CPU_PROCESSES, # use as your need
-                                    pin_memory=True,
-                                    shuffle=False)
+        sentences = train_ds[input_key]
         
-        model, train_data_loader = accelerator.prepare(model, train_data_loader)
+        print(f"The training data is reformated to only one column {input_key}, now we get each example's embedding using the SentenceTransformer~~~")
+        # train_data_loader = DataLoader(train_ds, 
+        #                             batch_size=config.batch_size, 
+        #                             collate_fn=default_data_collator, 
+        #                             num_workers=NUM_CPU_PROCESSES, # use as your need
+        #                             pin_memory=True,
+        #                             shuffle=False)
         
-        all_batch_embeddings = []
-        with torch.no_grad():
-            for index, batch in enumerate(tqdm(train_data_loader)):
-                # batch = {k: v.to(device) for k, v in batch.items()}
+        # model, train_data_loader = accelerator.prepare(model, train_data_loader)
+        
+        # all_batch_embeddings = []
+        # with torch.no_grad():
+        #     for index, batch in enumerate(tqdm(train_data_loader)):
+        #         batch = {k: v.to(device) for k, v in batch.items()}
                 
-                # if 'labels' exists in batch，delete it，because inference does not need labels  
-                if 'labels' in batch:
-                    del batch['labels']
+        #         # if 'labels' exists in batch，delete it，because inference does not need labels  
+        #         if 'labels' in batch:
+        #             del batch['labels']
                 
-                outputs = model(**batch)
-                if hasattr(outputs, "last_hidden_state"): # AutoModel
-                    last_hidden_state = outputs.last_hidden_state # shape = (batch_size, seq_len, hidden_size)
-                elif hasattr(outputs, "hidden_states"): # AutoModelForSequenceClassification
-                    last_hidden_state = outputs.hidden_states[-1] # shape = (batch_size, seq_len, hidden_size)
-                else:
-                    raise ValueError("Can not extract the \"last_hidden_state\" from the model output")
-                
-                
-                # average pooling 
-                batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
-                
-                # print("batch_embeddings.shape = ", batch_embeddings.shape)
-                # for embedding in batch_embeddings:
-                all_batch_embeddings.append(batch_embeddings) # shape = (1, hidden_size) # 避免循环 
-                
-                # 定期清理缓存  
-                if torch.cuda.is_available():  
-                    torch.cuda.empty_cache()  
+        #         outputs = model(**batch)
+        #         if hasattr(outputs, "last_hidden_state"): # AutoModel
+        #             last_hidden_state = outputs.last_hidden_state # shape = (batch_size, seq_len, hidden_size)
+        #         elif hasattr(outputs, "hidden_states"): # AutoModelForSequenceClassification
+        #             last_hidden_state = outputs.hidden_states[-1] # shape = (batch_size, seq_len, hidden_size)
+        #         else:
+        #             raise ValueError("Can not extract the \"last_hidden_state\" from the model output")
                 
                 
-        embeddings = torch.cat(all_batch_embeddings, dim=0)
+        #         # average pooling 
+        #         batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
+                
+        #         # print("batch_embeddings.shape = ", batch_embeddings.shape)
+        #         # for embedding in batch_embeddings:
+        #         all_batch_embeddings.append(batch_embeddings) # shape = (1, hidden_size) # 避免循环 
+                
+        #         # 定期清理缓存  
+        #         if torch.cuda.is_available():  
+        #             torch.cuda.empty_cache()  
+        
+        encoder = SentenceEncoder(
+            hidden_size=embedding_size
+        )
+        
+        embeddings = encoder.encode(
+            sentences=sentences
+        ) # shape = (dataset_size, hidden_size)
+                
+        # embeddings = torch.cat(all_batch_embeddings, dim=0)
+        
         print("all_embeddings.shape = ", embeddings.shape)
         
         # 在分布式环境中收集所有进程的嵌入向量  
-        embeddings = accelerator.gather(embeddings)  
+        # embeddings = accelerator.gather(embeddings)  
         
         
         # 保存embeddings到缓存  
@@ -903,7 +851,7 @@ def get_classes_by_clustering(
     embeddings = embeddings.cpu().numpy() 
              
     # clustering
-    print(f"doing K-Means clustering, cluster number = {num_topics}, each topic contains {K} words")
+    print(f"doing K-Means clustering, cluster number = {num_topics}")
     
     kmeans = KMeans(n_clusters=num_topics, random_state=42)
     kmeans.fit(embeddings)
@@ -934,13 +882,13 @@ def get_classes_by_clustering(
     candidate_token_ids = torch.tensor(candidate_token_ids, dtype=torch.long).to(device).unsqueeze(1) # shape = (num_tokens, 1) == (batch_size, seq_len)
     
     # extract the base model from the accelerator, so that we can get embeddings
-    model_unwrapped = accelerator.unwrap_model(model)
-    model_unwrapped.eval() # save resources
+    # model_unwrapped = accelerator.unwrap_model(model)
+    # model_unwrapped.eval() # save resources
     
     
     # 加入判断逻辑
     # candidate_token_embeddings = model_unwrapped.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size) == (num_tokens, 1, hidden_size)
-    candidate_token_embeddings = get_vocab_embeddings_from_model(model_unwrapped, candidate_token_ids)
+    candidate_token_embeddings = get_vocab_embeddings_from_model(model, candidate_token_ids)
     candidate_token_embeddings =  candidate_token_embeddings.squeeze(1)
     
     print("candidate token embeddings shape: ", candidate_token_embeddings.shape)
@@ -1058,14 +1006,6 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 
 
 
-def get_label_collection_for_class(dataset_path, classes:List[str]):
-    '''
-    将原问题分类标签列表中的每个标签扩展成一个标签集合
-    1. 训练一个线性层，将经过MLM的mask token分类到原有的标签
-    
-    return dict["class1" : set(label1, label2, ...)]
-    '''
-
 def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
 
     
@@ -1076,7 +1016,7 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
     batch_size = config.batch_size
     
     model,tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, num_labels=num_labels)
-    K=5
+
     # 定义双向Prompt Tuning的参数       
     num_prefix_tokens = config.prefix_length   # 前缀Prompt Tokens的数量  
     num_suffix_tokens = config.suffix_length   # 后缀Prompt Tokens的数量  
@@ -1091,8 +1031,9 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
 
     
     
-    bidirectional_prompt_model = BassPromptModel(  
+    baas_model = BassPromptModel(  
         model=model,
+        tokenizer=tokenizer,
         config=config  
     )
 
@@ -1143,15 +1084,15 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
 
     
     # make sure to frozen the base model parameters
-    for param in bidirectional_prompt_model.model.parameters():  
+    for param in baas_model.model.parameters():  
         param.requires_grad = False  
         
     # make sure that the prefix and suffix tokens is trainable
-    bidirectional_prompt_model.prefix_embeddings.requires_grad = True  
-    bidirectional_prompt_model.suffix_embeddings.requires_grad = True 
+    baas_model.prefix_embeddings.requires_grad = True  
+    baas_model.suffix_embeddings.requires_grad = True 
     
     
-    bidirectional_prompt_model.print_trainable_parameters()
+    baas_model.print_trainable_parameters()
     
     # for name, param in bidirectional_prompt_model.named_parameters():  
     #   print(f"{name}: requires_grad = {param.requires_grad}") 
@@ -1162,7 +1103,7 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
     # make sure that the fine-tuning will only update virual tokens
     # optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     optimizer = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, bidirectional_prompt_model.parameters()), 
+        filter(lambda p: p.requires_grad, baas_model.parameters()), 
         lr=lr
     )
     
@@ -1172,7 +1113,7 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
-    model = bidirectional_prompt_model 
+    model = baas_model 
     
     
     accelerator = Accelerator(
