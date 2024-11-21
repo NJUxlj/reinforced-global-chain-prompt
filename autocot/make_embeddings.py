@@ -1,3 +1,14 @@
+
+# 获取当前文件所在目录的父目录  
+import os, sys
+parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
+
+# 将父目录添加到sys.path  
+sys.path.insert(0, parent_directory) 
+
+sub_directory = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, sub_directory) 
+
 import argparse
 from autocot_utils import *
 from autocot_models import *
@@ -7,11 +18,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-# 获取当前文件所在目录的父目录  
-parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
 
-# 将父目录添加到sys.path  
-sys.path.insert(0, parent_directory) 
 
 from config import Config
 from config import NUM_CPU_PROCESSES

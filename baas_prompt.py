@@ -35,10 +35,15 @@ from utils import *
 
 from causal_modeling import *
 
-from .models import (
+from components import (
     SentenceEncoder
 )
 
+
+import sys  
+import os  
+# 添加项目根目录到 Python 路径  
+sys.path.append(os.path.dirname(os.path.abspath(__file__))) 
 
 from autocot.make_embeddings import (
     get_cot_context,
@@ -244,6 +249,8 @@ class BassPromptModel(torch.nn.Module):
         self.tokenizer = tokenizer
         self.hidden_size = config.encoder_hidden_size # bert's hidden size
         self.prefix_hidden_size = config.prefix_hidden_size # P_theta' in MLP reparameterization
+        self.num_prefix_tokens = config.prefix_length
+        self.num_suffix_tokens = config.suffix_length
         
         self.rollback_decoder = RollbackDecoderWithHead(
             d_model=config.prefix_hidden_size,
@@ -281,8 +288,7 @@ class BassPromptModel(torch.nn.Module):
             suffix_embeddings = self.suffix_embeddings,
             )  # shape = (batch_size, seq_length, hidden_size)
         
-        self.num_prefix_tokens = config.prefix_length
-        self.num_suffix_tokens = config.suffix_length
+
         self.embedding_layer = self.model.get_input_embeddings()  # 获取词嵌入层
         
         self.disable_grad_calc()
@@ -416,7 +422,7 @@ class BassPromptModel(torch.nn.Module):
         if classes_initiate_method == "normal":
             class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "cluster":
-            class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
+            class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, config=config ,embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "lda":
             class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         else:
@@ -474,12 +480,12 @@ def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal")
         
         
         if reformat_type == "normal": 
-            ds = wrapper.load_mcq_dataset(config.dataset_name) 
+            ds,_ = wrapper.load_mcq_dataset(config.dataset_name) 
             # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = processed_ds["train"]
+            train_ds = ds["train"]
             
         elif reformat_type == "lda":
-            ds = wrapper.load_mcq_dataset(config.dataset_name)
+            ds,_ = wrapper.load_mcq_dataset(config.dataset_name)
             
             processed_ds = ds.map(
                 lambda examples: {
@@ -508,20 +514,30 @@ def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal")
         elif reformat_type == "cluster":
             # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
             # train_ds = processed_ds["train"]
-            ds = wrapper.load_mcq_dataset(config.dataset_name)
+            ds,_ = wrapper.load_mcq_dataset(config.dataset_name)
             
-            processed_ds = ds.map(
+            # print("load_mcq_dataset ds[0]", ds[0])
+            print("type(ds) = ",type(ds))
+            train_ds = ds["train"]
+            
+            train_ds = train_ds.map(
                 lambda examples: {
                     input_key: [f"{article_key}:{examples[article_key][index]}\n\n{question_key}:{examples[question_key][index]}\n\n \
-                                            {options_key}:{examples[options_key][index]}\n\n{label_key}:{examples[question_key][index]}" for index, x in enumerate(examples[article_key])]  
+                                            {options_key}:{examples[options_key][index]}\n\n{label_key}:" for index, x in enumerate(examples[article_key])]  
                 },
                 batched=True,
                 num_proc=NUM_CPU_PROCESSES,
-                remove_columns=[article_key, question_key, options_key, label_key],
+                remove_columns=[article_key, question_key, options_key],
                 load_from_cache_file=False,
                 desc=f"Running reformat function's mapping on dataset {config.dataset_name}",
             )
-            train_ds = processed_ds["train"]
+            
+            if input_key not in train_ds.column_names:  
+                raise KeyError(  
+                    f"Failed to create 'input' column. "  
+                    f"Current columns: {train_ds.column_names}"  
+                )  
+            # train_ds = processed_ds["train"]
         
         else:
             raise ValueError("Invalid reformat_type, please choose from 'normal', 'lda', 'cluster")
@@ -706,6 +722,7 @@ def get_classes_by_clustering(
     dataset_path, 
     model, 
     tokenizer, 
+    config:BaasPromptConfig,
     embedding_size,  # hidden_size
     num_topics=5,  
     max_length=512, 
@@ -779,8 +796,17 @@ def get_classes_by_clustering(
         vocab_size = tokenizer.vocab_size
 
         
-        train_ds, input_key = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'normal')
+        train_ds, input_key = reformat_input(config, tokenizer, reformat_type = 'cluster')
         train_ds: Dict[str,List[str]]
+        
+        # 验证列名是否存在  
+        if input_key not in train_ds.column_names:  
+            available_columns = train_ds.column_names  
+            raise KeyError(  
+                f"Column '{input_key}' not found in dataset. "  
+                f"Available columns are: {available_columns}. "  
+                f"Please check your dataset structure or specify the correct input_key."  
+            )  
         
         sentences = train_ds[input_key]
         

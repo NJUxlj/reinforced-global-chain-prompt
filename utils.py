@@ -53,6 +53,8 @@ def get_dataset_path_by_name(dataset_name='race'):
         dataset_path = Config["datasets"][dataset_name]
     else:
         raise ValueError("dataset name not supported")
+    
+    return dataset_path
 
 def get_model_name_using_model(model):
     '''
