@@ -17,6 +17,11 @@ from config import Config
 from config import NUM_CPU_PROCESSES
 from causal_modeling import RollbackDecoderWithHead
 
+from dataclasses import dataclass
+
+
+
+
 
 '''
 python make_embeddings.py \
@@ -38,6 +43,31 @@ models = [
     'bert-base-nli-mean-tokens'  # 应该是768  
 ]  
 '''
+
+@dataclass
+class ChainEncodingArguments:
+    """
+    解析参数的类
+    """
+    random_seed:int = 42
+    dataset:str = 'race'
+    # encoder:str = "all-MiniLM-L6-v2"
+    encoder:str = Config['models']['bert-base-uncased']['model_path']
+    hidden_size:int = 768   # 根据模型传进来
+    method:str = "auto_cot"
+    output_dir:str = "experiment/race"
+    max_ra_len:int = 20
+    max_length_cot:int = 2048
+    max_length_direct:int = 32
+    limit_dataset_size:int = 0
+    api_time_interval:float = 1.0
+    temperature:float = 0
+    embedding_dir:str = "./embeddings/race"
+    context_dir:str = "./context/race"
+    direct_answer_trigger = "\nTherefore, the answer is"
+    direct_answer_trigger_for_zeroshot_cot = direct_answer_trigger
+    cot_trigger = "Let's think step by step."
+    
 
 
 def parse_arguments():
@@ -117,7 +147,7 @@ def parse_arguments():
 # 从experment/race提取rationale
 
 
-def extract_k_reasoning_chains():
+def extract_k_reasoning_chains(args:ChainEncodingArguments):
     """  
     将K条推理链编码成向量表示  
     
@@ -131,7 +161,7 @@ def extract_k_reasoning_chains():
             - 768: 编码向量的维度  
         args: 解析参数
     """  
-    args =parse_arguments()
+    # args =parse_arguments()
     
     rationales = [] # stores the reasoning chains of the K chosen questions
     with open(args.output_dir, 'r', encoding='utf-8') as f:
@@ -379,8 +409,11 @@ def aggregate_cot_embeddings(
 
 
 
-def get_cot_context()->torch.Tensor:
-    reasoning_chains, args =extract_k_reasoning_chains()
+def get_cot_context(args:ChainEncodingArguments)->torch.Tensor:
+    '''
+    return context, shape=(min_ra_len, hidden_size)
+    '''
+    reasoning_chains, args =extract_k_reasoning_chains(args)
 
     embeddings,args = encode_k_reasoning_chains(reasoning_chains, args)
     
@@ -393,13 +426,15 @@ def get_cot_context()->torch.Tensor:
     return context
 
 
-def rollback_one_step_extend(target_steps:int, model:RollbackDecoderWithHead=None)->torch.Tensor:
+def rollback_one_step_extend(target_steps:int, args:ChainEncodingArguments, model:RollbackDecoderWithHead=None)->torch.Tensor:
     '''
     :param: model 这里的模型使用 BaasPromptModel初始化时赋值的self.model 传入
     
     :target_steps: num_suffix_tokens
+    
+    return context, shape=(target_steps, hidden_size)
     '''
-    context:torch.Tensor = get_cot_context()
+    context:torch.Tensor = get_cot_context(args)
     source_steps = len(context)
     
     if target_steps <= source_steps:
@@ -515,7 +550,10 @@ def generate_new_step(context: torch.Tensor,
 
 if __name__ == '__main__':
     # context = get_cot_context()
-    context = rollback_one_step_extend(20)
+    args = ChainEncodingArguments(
+        hidden_size=768
+    )
+    context = rollback_one_step_extend(20,args)
     print("context.shape = ", context.shape)
     print("context = \n", context)
     

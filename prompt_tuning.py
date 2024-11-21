@@ -6,6 +6,7 @@ import os
 import shutil  
 from config import Config
 from dataclasses import dataclass
+from collections import Counter
 
 from load import *
 from utils import *
@@ -51,6 +52,16 @@ from accelerate import Accelerator
 
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support 
+from sklearn.metrics import (   
+    accuracy_score,  
+    precision_score,  
+    recall_score,  
+    f1_score,  
+    classification_report  
+)  
+
+import evaluate
+clf_metrics = evaluate.combine(["accuracy", "f1", "precision", "recall"])
 
 
 @dataclass  
@@ -62,17 +73,17 @@ class PromptTuningTrainerConfig:
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
     prefix_length: int = 100                        # 前缀长度  
-    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
     batch_size:int = 32
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                     # 最大序列长度  
-    learning_rate: float = 0.3                   # 前缀参数的学习率  
+    learning_rate: float = 1e-5   # 0.3                   # 前缀参数的学习率  
     model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
     
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
-    prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
-    encoder_hidden_size:int = prefix_hidden_size  # 编码器的隐藏层大小
+    prefix_hidden_size: int = 768                 # MLP中的P_theta'  即，MLP输入的隐单元维度  huggingface 默认它==encoder_hidden_size
+    encoder_hidden_size:int = prefix_hidden_size  # 编码器(bert)的隐藏层大小
     
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减  
@@ -130,8 +141,6 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             pin_memory=True
         )
     
-    # 初始化模型  
-    device = Config['device'] 
     
     # Prompt-tuning
     peft_config = PromptTuningConfig(
@@ -158,21 +167,34 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
     
-    for param in model.base_model.parameters():  
-        param.requires_grad = False
+    # for param in model.base_model.parameters():  
+    #     param.requires_grad = False
     
+    
+    print("===================== Weight Summary =========================")
     for name, param in model.named_parameters():  
-        if 'prompt' in name:  
-            param.requires_grad = True 
+        if 'prompt_encoder' in name or 'classifier' in name:  
+            # param.requires_grad = True 
+            print("weight name = {}, shape = {}, requires_grad = {}".format(name, param.shape, param.requires_grad))
         else:
-            param.requires_grad = False
+            # param.requires_grad = False
+            pass
+        
+        
+    print("=============================================================")
+        
+        
     
     # 打印可训练参数  
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
     print(f"Trainable parameters (self-calculated): {trainable_params}")  
 
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=lr
+    )
+    
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=config.warmup_steps,
@@ -195,7 +217,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
     
     
-    device = Config['device']
+    device = accelerator.device
     global_step = 0
     best_accuracy = 0 
     
@@ -210,6 +232,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
 
         for step, batch in enumerate(tqdm(train_dataloader)):
             # with accelerator.accumulate(model):  # 使用梯度累积  
+            batch = {k: v.to(device) for k, v in batch.items()}  
             labels = batch["labels"]  
             
             outputs = model(**batch)
@@ -230,49 +253,68 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             
             # if accelerator.is_main_process:  
             #     progress_bar.update(1)  
+            
+            if step % 100 ==0 and step !=0:
+                if accelerator.is_local_main_process: 
+                     # 检查模型参数变化  
+                    for name, param in model.named_parameters():  
+                        if param.requires_grad:  
+                            print(f"{name}: mean={param.data.mean().item():.4f}, "  
+                                f"std={param.data.std().item():.4f}, "  
+                                f"grad_mean={param.grad.mean().item() if param.grad is not None else 'None'}") 
+                    
 
-            if step == len(train_dataloader)-1:  
-                # if accelerator.is_local_main_process: 
-                model.eval() 
-                results, model, accelerator = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
+            # if step == len(train_dataloader)-1:  
+            #     model.eval() 
+            #     # results, model, accelerator = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
                 
-                model=model
-                accelerator = accelerator
+            #     # model=model
+            #     # accelerator = accelerator
 
-                # model.eval()  
-                # all_preds = []  
-                # all_labels = []  
-                # with torch.no_grad():  
-                #     for val_batch in eval_dataloader:  
-                #         val_input_ids = val_batch['input_ids']
-                #         val_attention_mask = val_batch['attention_mask']
-                #         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+            #     all_preds = []  
+            #     all_labels = []  
+            #     with torch.no_grad():  
+            #         for val_batch in eval_dataloader:  
+            #             val_input_ids = val_batch['input_ids']
+            #             val_attention_mask = val_batch['attention_mask']
+            #             val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
 
-                #         logits = val_outputs.logits  # shape = (batch_size, num_labels)
-                #         val_labels = val_batch['labels']
+            #             logits = val_outputs.logits  # shape = (batch_size, num_labels)
+            #             val_labels = val_batch['labels']
                         
-                #         logits = accelerator.gather(logits)
-                #         val_labels = accelerator.gather(val_labels)
+            #             if accelerator.use_distributed:  
+            #                 accelerator.wait_for_everyone()
+            #                 logits = accelerator.gather_for_metrics(logits)
+            #                 val_labels = accelerator.gather_for_metrics(val_labels)
                         
-                #         preds = torch.argmax(logits, dim=1).cpu().numpy()  
-                #         labels_cpu = val_labels.cpu().numpy()  
+            #             preds = torch.argmax(logits, dim=1).cpu().numpy()  
+            #             labels_cpu = val_labels.cpu().numpy()  
                              
-                #         all_preds.extend(preds)  
-                #         all_labels.extend(labels_cpu)  
-                # # 计算评价指标  
-                # accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                # precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
-                # print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+            #             all_preds.extend(preds)  
+            #             all_labels.extend(labels_cpu)  
+            #     # 计算评价指标  
+            #     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+            #     precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+            #     # print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
 
-                if accelerator.is_main_process:             
-                    logger.info({
-                        'epoch': epoch, 
-                        'loss': loss.item(), 
-                        'accuracy':results["accuracy"], 
-                        "precision": results["precision"], 
-                        "recall": results["recall"], 
-                        "f1": results["f1"], 
-                    })  
+                # if accelerator.is_main_process:             
+                    # logger.info({
+                    #     'epoch': epoch, 
+                    #     'loss': loss.item(), 
+                    #     'accuracy':results["accuracy"], 
+                    #     "precision": results["precision"], 
+                    #     "recall": results["recall"], 
+                    #     "f1": results["f1"], 
+                    # }) 
+                    
+                    # logger.info({
+                    #     'epoch': epoch, 
+                    #     'loss': loss.item(), 
+                    #     'accuracy':accuracy, 
+                    #     "precision": precision, 
+                    #     "recall": recall, 
+                    #     "f1": f1, 
+                    # })  
                     # print()
                     # 保存最佳模型  
                     # if results['f1'] > best_accuracy:  
@@ -296,13 +338,22 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                     #         state_dict=prompt_state_dict,  # 只保存prompt相关的权重  
                     #     )  
                     
-                model.train()  
-            global_step+=1
+                # accelerator.wait_for_everyone() 
+                # model.train()  
             
         if accelerator.is_local_main_process: 
             # progress_bar.close()  
             avg_loss = total_loss / len(train_dataloader)   
             print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+            
+    results, model, accelerator = evaluate_prompt_tuning(model, eval_dataloader, accelerator)
+    if accelerator.is_main_process:
+        logger.info({
+                    'accuracy':results["accuracy"], 
+                    "precision": results["precision"], 
+                    "recall": results["recall"], 
+                    "f1": results["f1"], 
+                }) 
 
 
     # 保存权重
@@ -352,9 +403,9 @@ def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):
     评估函数  
     """  
     # 如果需要保持原始模型状态不变  
-    evaluation_mode = model.training  # 保存当前状态  
+    # evaluation_mode = model.training  # 保存当前状态  
     
-    # model.eval()  
+    model.eval()  
     
     all_preds = []  
     all_labels = []  
@@ -377,24 +428,81 @@ def evaluate_prompt_tuning(model, eval_dataloader, accelerator:Accelerator):
             
             # preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
             # labels = gathered_labels.cpu().numpy()  
+            preds= preds.cpu().numpy()
+            labels = labels.cpu().numpy()
             
-            all_preds.extend(preds.cpu().numpy())  
-            all_labels.extend(labels.cpu().numpy())  
+            all_preds.extend(preds)  
+            all_labels.extend(labels)  
+            
+            # 只添加当前批次的结果  
+            clf_metrics.add_batch(  
+                predictions=preds,  
+                references=labels  
+            )  
+            
+    # results = clf_metrics.compute(all_preds, all_labels)
+    results = clf_metrics.compute()
+
     
-    # 计算评价指标  
-    accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-    precision, recall, f1, _ = precision_recall_fscore_support(  
-        all_labels, all_preds, average='weighted', zero_division=0  
-    )  
     
-    model.train(evaluation_mode)
+    # accelerator.wait_for_everyone()
     
-    return {  
-        'accuracy': accuracy,  
-        'precision': precision,  
-        'recall': recall,  
-        'f1': f1  
-    }, model, accelerator  
+    # # 确保只在主进程上计算指标  
+    # if accelerator.is_main_process: 
+    #     # 计算评价指标  
+    #     accuracy = accuracy_score(all_labels, all_preds)  
+    #     precision = precision_score(all_labels, all_preds, average='macro')  
+    #     recall = recall_score(all_labels, all_preds, average='macro')  
+    #     f1 = f1_score(all_labels, all_preds, average='macro')  
+        
+    #     # accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+    #     # precision, recall, f1, _ = precision_recall_fscore_support(  
+    #     #     all_labels, all_preds, average='weighted', zero_division=0  
+    #     # )  
+        
+    #     label_distribution = Counter(all_labels)  
+    #     pred_distribution = Counter(all_preds) 
+        
+    #     results = {  
+    #         'accuracy': accuracy,  
+    #         'precision': precision,  
+    #         'recall': recall,  
+    #         'f1': f1  
+    #     }  
+        
+    #     # debug info
+    #     print("\nEvaluation Results:")  
+    #     print(f"Total samples evaluated: {len(all_labels)}")  
+    #     print(f"Label distribution: {dict(label_distribution)}")  
+    #     print(f"Prediction distribution: {dict(pred_distribution)}")  
+    #     print("\nClassification Report:")  
+    #     print(classification_report(all_labels, all_preds))  
+        
+    # else:
+    #     results = {  
+    #         'accuracy': 0.0,  
+    #         'precision': 0.0,  
+    #         'recall': 0.0,  
+    #         'f1': 0.0  
+    #     }  
+    
+    # # 广播结果给所有进程  
+    # # if accelerator.use_distributed:  
+    # #     results = accelerator.broadcast(results) 
+    
+    #  # 使用 all_gather_object 在所有进程间同步结果  
+    # if accelerator.use_distributed:  
+    #     all_results = [None] * accelerator.num_processes  
+    #     torch.distributed.all_gather_object(all_results, results if accelerator.is_main_process else None)  
+    #     # 使用主进程（rank 0）的结果  
+    #     results = all_results[0]  
+    
+    # 将结果转换回 Python 标量  
+    # results = {k: v.item() for k, v in results.items()}
+    
+    # model.train(evaluation_mode)
+    
+    return results, model, accelerator  
 
 
 # 加载保存的prompt embedding的函数  
@@ -430,17 +538,17 @@ if __name__ == '__main__':
     # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
     # model_name = 'Qwen2.5-1.5B'
 
-    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path )
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
 
     max_seq_length = get_max_length_from_model(model)
 
     config = PromptTuningTrainerConfig(
         model_name = model_name,
         model_path = model_path,
-        dataset_name="commonsense_qa",
+        dataset_name="sciq",
         max_seq_length=max_seq_length,
         num_epochs=5,
-        num_labels=4,
+        num_labels=2,
     )
 
 

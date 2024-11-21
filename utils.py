@@ -269,7 +269,7 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     '''
      return model, tokenizer
     '''
-    config = AutoConfig.from_pretrained(model_path, output_hidden_states=True, num_labels=4)
+    config = AutoConfig.from_pretrained(model_path, output_hidden_states=True, num_labels=num_labels)
     
     model = auto_model_class.from_pretrained(model_path, config=config)
     

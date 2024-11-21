@@ -844,85 +844,90 @@ print("NUM_CPU_PROCESSES = ", NUM_CPU_PROCESSES)
 
 
 
-class BaasPromptConfig(ABC):
-    """Abstract class for a BaasPrompt configuration that can be saved to and loaded from a json file."""
-    def __repr__(self):
-        return repr(self.__dict__)
+# class BaasPromptConfig(ABC):
+#     """Abstract class for a BaasPrompt configuration that can be saved to and loaded from a json file."""
+#     def __repr__(self):
+#         return repr(self.__dict__)
 
-    def save(self, path: str):
-        """Save this config to a file."""
-        with open(path, 'w', encoding='utf8') as fh:
-            json.dump(self.__dict__, fh)
-
-
-class TrainConfig(BaasPromptConfig):
-    """Configuration for training a model."""
-
-    def __init__(self,
-                 device: str = None,
-                 per_gpu_train_batch_size: int = 8,
-                 n_gpu: int = 1,
-                 num_train_epochs: int = 3,
-                 max_steps: int = -1,
-                 gradient_accumulation_steps: int = 1,
-                 weight_decay: float = 0.0,
-                 learning_rate: float = 5e-5,
-                 adam_epsilon: float = 1e-8,
-                 warmup_steps: int = 0,
-                 max_grad_norm: float = 1,
-                 alpha: float = 0.9999):
-        """
-        Create a new training config.
-
-        :param device: the device to use ('cpu' or 'gpu')
-        :param per_gpu_train_batch_size: the number of labeled training examples per batch and gpu
-        :param n_gpu: the number of gpus to use
-        :param num_train_epochs: the number of epochs to train for
-        :param max_steps: the maximum number of steps to train for (overrides ``num_train_epochs``)
-        :param gradient_accumulation_steps: the number of steps to accumulate gradients for before performing an update
-        :param weight_decay: the weight decay to use
-        :param learning_rate: the maximum learning rate to use
-        :param adam_epsilon: the epsilon value for Adam
-        :param warmup_steps: the number of warmup steps to perform before reaching the maximum learning rate
-        :param max_grad_norm: the maximum norm for the gradient
-        :param alpha: the alpha parameter for auxiliary language modeling
-        """
-        self.device = device
-        self.per_gpu_train_batch_size = per_gpu_train_batch_size
-        self.n_gpu = n_gpu
-        self.num_train_epochs = num_train_epochs
-        self.max_steps = max_steps
-        self.gradient_accumulation_steps = gradient_accumulation_steps
-        self.weight_decay = weight_decay
-        self.learning_rate = learning_rate
-        self.adam_epsilon = adam_epsilon
-        self.warmup_steps = warmup_steps
-        self.max_grad_norm = max_grad_norm
-        self.alpha = alpha
+#     def save(self, path: str):
+#         """Save this config to a file."""
+#         with open(path, 'w', encoding='utf8') as fh:
+#             json.dump(self.__dict__, fh)
 
 
+# class TrainConfig(BaasPromptConfig):
+#     """Configuration for training a model."""
+
+#     def __init__(self,
+#                  device: str = None,
+#                  per_gpu_train_batch_size: int = 8,
+#                  n_gpu: int = 1,
+#                  num_train_epochs: int = 3,
+#                  max_steps: int = -1,
+#                  gradient_accumulation_steps: int = 1,
+#                  weight_decay: float = 0.0,
+#                  learning_rate: float = 5e-5,
+#                  adam_epsilon: float = 1e-8,
+#                  warmup_steps: int = 0,
+#                  max_grad_norm: float = 1,
+#                  alpha: float = 0.9999):
+#         """
+#         Create a new training config.
+
+#         :param device: the device to use ('cpu' or 'gpu')
+#         :param per_gpu_train_batch_size: the number of labeled training examples per batch and gpu
+#         :param n_gpu: the number of gpus to use
+#         :param num_train_epochs: the number of epochs to train for
+#         :param max_steps: the maximum number of steps to train for (overrides ``num_train_epochs``)
+#         :param gradient_accumulation_steps: the number of steps to accumulate gradients for before performing an update
+#         :param weight_decay: the weight decay to use
+#         :param learning_rate: the maximum learning rate to use
+#         :param adam_epsilon: the epsilon value for Adam
+#         :param warmup_steps: the number of warmup steps to perform before reaching the maximum learning rate
+#         :param max_grad_norm: the maximum norm for the gradient
+#         :param alpha: the alpha parameter for auxiliary language modeling
+#         """
+#         self.device = device
+#         self.per_gpu_train_batch_size = per_gpu_train_batch_size
+#         self.n_gpu = n_gpu
+#         self.num_train_epochs = num_train_epochs
+#         self.max_steps = max_steps
+#         self.gradient_accumulation_steps = gradient_accumulation_steps
+#         self.weight_decay = weight_decay
+#         self.learning_rate = learning_rate
+#         self.adam_epsilon = adam_epsilon
+#         self.warmup_steps = warmup_steps
+#         self.max_grad_norm = max_grad_norm
+#         self.alpha = alpha
 
 
-class EvalConfig(BaasPromptConfig):
-    """Configuration for evaluating a model."""
 
-    def __init__(self,
-                 device: str = None,
-                 n_gpu: int = 1,
-                 per_gpu_eval_batch_size: int = 8,
-                 metrics: List[str] = ['accuracy']):
-        """
-        Create a new evaluation config.
 
-        :param device: the device to use ('cpu' or 'gpu')
-        :param n_gpu: the number of gpus to use
-        :param per_gpu_eval_batch_size: the number of evaluation examples per batch and gpu
-        :param metrics: the evaluation metrics to use (default: accuracy only)
-        """
-        self.device = device
-        self.n_gpu = n_gpu
-        self.per_gpu_eval_batch_size = per_gpu_eval_batch_size
-        self.metrics = metrics
+# class EvalConfig(BaasPromptConfig):
+#     """Configuration for evaluating a model."""
+
+#     def __init__(self,
+#                  device: str = None,
+#                  n_gpu: int = 1,
+#                  per_gpu_eval_batch_size: int = 8,
+#                  metrics: List[str] = ['accuracy']):
+#         """
+#         Create a new evaluation config.
+
+#         :param device: the device to use ('cpu' or 'gpu')
+#         :param n_gpu: the number of gpus to use
+#         :param per_gpu_eval_batch_size: the number of evaluation examples per batch and gpu
+#         :param metrics: the evaluation metrics to use (default: accuracy only)
+#         """
+#         self.device = device
+#         self.n_gpu = n_gpu
+#         self.per_gpu_eval_batch_size = per_gpu_eval_batch_size
+#         self.metrics = metrics
+
+
+
+
+
 
 
 

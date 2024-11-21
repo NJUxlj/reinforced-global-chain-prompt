@@ -28,14 +28,21 @@ from accelerate import(
 )
 from accelerate.logging import get_logger
 
+
 from load import *
 
 from utils import *
 
-from autocot.make_embeddings import get_cot_context
+from causal_modeling import *
+
+
+from autocot.make_embeddings import (
+    get_cot_context,
+    rollback_one_step_extend,
+    ChainEncodingArguments
+)
 
 from datasets import (
-    # Dataset,
     load_dataset,
 )
 from torch.utils.data import (
@@ -44,8 +51,7 @@ from torch.utils.data import (
 )
 from torch.utils.data.distributed import DistributedSampler
 
-from config import Config
-from config import NUM_PROCESSES
+from config import *
 
 import torch
 import torch.nn as nn
@@ -87,7 +93,7 @@ device = Config['device']
 
 
 @dataclass
-class BassPromptConfig:
+class BaasPromptConfig:
     model_name: str = "bert-base-uncased"
     model_path: str = "bert-base-uncased"  # 预训练模型名称
     peft_method: str = "baas-tuning"
@@ -95,7 +101,7 @@ class BassPromptConfig:
     dataset_name:str = "race" 
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
     suffix_length: int = 10
-    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
     batch_size:int = 32
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
@@ -114,17 +120,156 @@ class BassPromptConfig:
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
     optimizer_class:type = Adam 
+    
+    all_layers:bool = False  # 是否在所有层插入prefix, suffix
+    
+
+    
+class BaasPromptEncoder(nn.Module):  
+    def __init__(  
+        self,   
+        config: BassPromptConfig,
+        num_layers: int = 2,  
+        dropout: float = 0.1
+    ):  
+        super().__init__()  
+        self.hidden_size = config.prefix_hidden_size  
+        
+        # self.prefix_embeddings = prefix_embeddings # shape = (prefix_length, hidden_size)
+        # self.suffix_embeddings = suffix_embeddings  # shape = (suffix_length, hidden_size)
+        
+        # 2. 双向LSTM编码器  
+        self.forward_lstm = nn.LSTM(  
+            self.hidden_size,  
+            self.hidden_size // 2,  
+            num_layers=num_layers,  
+            bidirectional=True,  
+            batch_first=True  
+        )  
+        self.backward_lstm = nn.LSTM(  
+            self.hidden_size,  
+            self.hidden_size // 2,  
+            num_layers=num_layers,  
+            bidirectional=True,  
+            batch_first=True  
+        )  
+        
+        self.prefix_to_suffix_attention = MultiHeadAttention(  
+            self.hidden_size, num_heads=8  
+        )  
+        self.suffix_to_prefix_attention = MultiHeadAttention(  
+            self.hidden_size, num_heads=8  
+        )  
+        
+        # 4. 自适应门控融合  
+        self.prefix_gate = AdaptiveGate(self.hidden_size)  
+        self.suffix_gate = AdaptiveGate(self.hidden_size)  
+        
+        # 5. 位置编码  
+        self.prefix_pos_embedding = SinusoidalPositionalEmbedding(self.hidden_size)  
+        self.suffix_pos_embedding = SinusoidalPositionalEmbedding(self.hidden_size)  
+        
+        # 6. 输出转换层  
+        self.prefix_output_layer = OutputTransformation(self.hidden_size)  
+        self.suffix_output_layer = OutputTransformation(self.hidden_size)  
+        
+        self.dropout = nn.Dropout(dropout)  
+        self.layer_norm = nn.LayerNorm(self.hidden_size)  
+
+    def forward(
+            self,
+            prefix_embeddings: torch.Tensor,  
+            suffix_embeddings: torch.Tensor,
+            batch_size:int =1 ,
+        ):  
+        '''
+        Args:
+            prefix_embeddings, suffix_embeddings: shape = (seq_length, hidden_size)
+            
+        return  
+            prefix_output, suffix_output   shape = (batch_size, seq_length, hidden_size)
+        
+        '''
+        # 1. 扩展batch维度  
+        prefix_embeds = prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        suffix_embeds = suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        
+        # 2. 添加位置编码  
+        prefix_embeds = self.prefix_pos_embedding(prefix_embeds)  
+        suffix_embeds = self.suffix_pos_embedding(suffix_embeds)  
+        
+        # 3. 双向LSTM编码  
+        # 前向处理  
+        prefix_forward, _ = self.forward_lstm(prefix_embeds)  
+        suffix_forward, _ = self.forward_lstm(suffix_embeds)  
+        
+        # 反向处理  
+        prefix_backward, _ = self.backward_lstm(torch.flip(prefix_embeds, [1]))  
+        suffix_backward, _ = self.backward_lstm(torch.flip(suffix_embeds, [1]))  
+        prefix_backward = torch.flip(prefix_backward, [1])  
+        suffix_backward = torch.flip(suffix_backward, [1])  
+        
+        # 融合双向表示  
+        prefix_bidirectional = self.prefix_gate(prefix_forward, prefix_backward)  
+        suffix_bidirectional = self.suffix_gate(suffix_forward, suffix_backward)  
+        
+        # 4. 交互注意力  
+        prefix_attended = self.prefix_to_suffix_attention(  
+            prefix_bidirectional, suffix_bidirectional, suffix_bidirectional  
+        )  
+        suffix_attended = self.suffix_to_prefix_attention(  
+            suffix_bidirectional, prefix_bidirectional, prefix_bidirectional  
+        )  
+        
+        # 5. 残差连接和归一化  
+        prefix_output = self.layer_norm(prefix_bidirectional + prefix_attended)  
+        suffix_output = self.layer_norm(suffix_bidirectional + suffix_attended)  
+        
+        # 6. 最终转换  
+        prefix_output = self.prefix_output_layer(prefix_output)  
+        suffix_output = self.suffix_output_layer(suffix_output)  
+        
+        return prefix_output, suffix_output 
+    
 
 
 class BassPromptModel(torch.nn.Module):  
-    def __init__(self, model, prefix_embeddings, suffix_embeddings, config:BassPromptConfig):  
+    def __init__(self, model, config:BaasPromptConfig):  
         super(BassPromptModel, self).__init__()  
-        self.model = model  
-        self.prefix_embeddings = prefix_embeddings  
-        self.suffix_embeddings = suffix_embeddings 
+        self.model = model
+        
+        self.rollback_decoder = RollbackDecoderWithHead(
+            d_model=config.prefix_hidden_size,
+            d_ff=config.prefix_hidden_size*4,
+            num_heads=8,
+        )
+        
+        self.chain_encode_args = ChainEncodingArguments(
+            dataset=config.dataset_name,
+            hidden_size=config.encoder_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
+            output_dir="experiment/race",
+            embedding_dir = "./embeddings/race",
+            context_dir = "./context/race"
+        )
+        
+        self.prefix_embeddings = self.initialize_prefix_prompts(
+            
+        )
+        
+        self.suffix_embeddings = self.initialize_suffix_prompts() #shape =  (seq_length, hidden_size)
+        
+        self.prompt_encoder = BaasPromptEncoder(config)
+          
+        self.prefix_embeddings, self.suffix_embeddings = self.prompt_encoder.forward(
+            prefix_embeddings = self.prefix_embeddings,
+            suffix_embeddings = self.suffix_embeddings,
+            )  # shape = (batch_size, seq_length, hidden_size)
+        
         self.num_prefix_tokens = config.prefix_length
         self.num_suffix_tokens = config.suffix_length
-        self.embedding_layer = self.model.get_input_embeddings()  
+        self.embedding_layer = self.model.get_input_embeddings()  # 获取词嵌入层
+        
+
     
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):  
         # 原始输入嵌入
@@ -135,15 +280,15 @@ class BassPromptModel(torch.nn.Module):
         batch_size = inputs_embeds.size(0)  
         
         # 将前缀和后缀Prompt Embeddings扩展到batch维度  
-        prefix_embeds = self.prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
-        suffix_embeds = self.suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
+        prefix_embeds = self.prefix_embeddings.expand(batch_size, -1, -1)  
+        suffix_embeds = self.suffix_embeddings.expand(batch_size, -1, -1)  
         
         # print(f"prefix.shape = {prefix_embeds.shape}")
         # print(f"suffix.shape = {suffix_embeds.shape}")
         # print(f"inputs_embeds.shape = {inputs_embeds.shape}")
 
         # 拼接前缀、原始输入和后缀嵌入  
-        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 522, 768)
+        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
         
         # 调整attention_mask  
         if attention_mask is not None:  
@@ -199,26 +344,28 @@ class BassPromptModel(torch.nn.Module):
         print(f"trainable param ratio: {100 * trainable_params / all_params:.2f}%")  
 
 
-    def initialize_suffix_prompts(self, ds, tokenizer, num_suffix_tokens, embedding_size):  
+    def initialize_suffix_prompts(self)->torch.Tensor:  
         """  
         use Auto-CoT reasoning steps as the suffix prompts
+        
+        return 
+        
+            shape = (num_suffix_tokens, embedding_size)
         """  
-        # 假设我们已经有AutoCoT生成的推理步骤steps，并将其保存为文本列表  
-        steps_list: List[str] = []  
+        # 假设我们已经有AutoCoT生成的推理步骤steps，并将其保存为文本列表
+        context = rollback_one_step_extend(
+            self.num_suffix_tokens,
+            args = self.chain_encode_args,
+            model = self.rollback_decoder
+            )
         
-        for sample in tqdm(ds['train']):
-            # generate AutoCoT-style input  
-            text = f"Article: {sample['article']}\n\nQuestion: {sample['question']}\n\nOptions: {', '.join(sample['options'])}\n\nAnswer:" 
-            
-            # use pretrained model to generate reasoning steps as a string
-            steps = "Generated reasoning steps for the sample."  
+        suffix_embeddings = context
         
         
-        suffix_prompt_embeddings = torch.tensor(cluster_centers, requires_grad=True).cuda()  
-        return suffix_prompt_embeddings
+        return suffix_embeddings
     
 
-    def initialize_prefix_prompts(self, dataset_path, model, tokenizer, num_prefix_tokens, embedding_size, classes_initiate_method = "cluster", K=5): 
+    def initialize_prefix_prompts(self, dataset_path, model, tokenizer, num_prefix_tokens, embedding_size, config:BaasPromptConfig ,classes_initiate_method = "cluster", K=5): 
         """ 
         use article classification tokens' weighted sum as prefix prompts
         """
@@ -919,65 +1066,35 @@ def get_label_collection_for_class(dataset_path, classes:List[str]):
     return dict["class1" : set(label1, label2, ...)]
     '''
 
-def train_bidirectional_prompt_tuning(model, tokenizer, model_name = None, dataset_name = 'race'):
-    device = Config['device']
+def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
 
+    
+    model_name = config.model_name
+    dataset_name = config.dataset_name
+    model_path = config.model_path
+    num_labels = config.num_labels
+    batch_size = config.batch_size
+    
+    model,tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, num_labels=num_labels)
     K=5
     # 定义双向Prompt Tuning的参数       
-    num_prefix_tokens = 5   # 前缀Prompt Tokens的数量  
-    num_suffix_tokens = 5   # 后缀Prompt Tokens的数量  
-    embedding_size = model.get_input_embeddings().embedding_dim
+    num_prefix_tokens = config.prefix_length   # 前缀Prompt Tokens的数量  
+    num_suffix_tokens = config.suffix_length   # 后缀Prompt Tokens的数量  
 
-    batch_size = Config['batch_size']
-    lr = 3e-2
-    num_epochs = Config['num_epochs']
+    lr = config.learning_rate
+    num_epochs = config.num_epochs
     
     max_length = get_max_length_from_model(model)
     print(f"before inserting prompt tokens, {model_name}'s max length = {max_length}")
     max_length = max_length - num_prefix_tokens - num_suffix_tokens
     print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
 
-
-    # 1. initialize the trainable prefix prompt embeddings
-    # prefix_prompt_embeddings = torch.nn.Parameter(
-    #     torch.rand(num_prefix_tokens, embedding_size,requires_grad=True, device= device),   # (num_prefix_tokens, embedding_size)
-    # )
-    
-    # 加载数据集
-    wrapper = McqDatasetWrapper()
-    dataset_path = Config["datasets"][dataset_name]
-    
-    if dataset_name == "race":
-        dataset_path = Config["datasets"][dataset_name]
-    elif dataset_name == 'dream':
-        dataset_path = Config["datasets"][dataset_name]['all']
-    elif dataset_name == 'sciq':
-        dataset_path = Config["datasets"][dataset_name]
-    elif dataset_name == 'commonsense_qa':
-        dataset_path = Config["datasets"][dataset_name]
-    else:
-        raise ValueError("dataset name not supported")
-    # ds = wrapper.load_mcq_dataset(dataset_name, split=None)
-    # ds = load_dataset_from_huggingface(dataset_path,"all")
     
     
-    prefix_prompt_embeddings = initialize_prefix_prompts(dataset_path, model, tokenizer, 
-                                                         num_prefix_tokens=num_prefix_tokens, 
-                                                         embedding_size=embedding_size, classes_initiate_method="cluster", K=5)
-
-    # 2. initialize the trainable suffix prompt embeddings
-    suffix_prompt_embeddings  = torch.nn.Parameter(  
-        torch.rand(num_suffix_tokens, embedding_size,requires_grad=True, device= device),   # (num_suffix_tokens, embedding_size)
-    )
-
-    # 4. 创建带有双向Prompt的模型实例  
     bidirectional_prompt_model = BassPromptModel(  
-        model=model,  
-        prefix_embeddings=prefix_prompt_embeddings,  
-        suffix_embeddings=suffix_prompt_embeddings,
-        num_prefix_tokens=num_prefix_tokens, 
-        num_suffix_tokens=num_suffix_tokens,
-    ) # .to(device)  
+        model=model,
+        config=config  
+    )
 
 
     
@@ -1290,7 +1407,7 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name
 
 
 if __name__ == "__main__":
-    
+    model_name = "bert-large-uncased"
     model_path = Config["models"]["bert-large-uncased"]["model_path"]
 
     
@@ -1299,10 +1416,18 @@ if __name__ == "__main__":
 
     dataset_path = Config["datasets"][dataset_name]
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification)
-    tokenizer = BertTokenizerFast.from_pretrained(model_path)
     
+    max_seq_length = get_max_length_from_model(model)
 
-    train_bidirectional_prompt_tuning(model, tokenizer, "bert-large-uncased", 'race')
+    config = BaasPromptConfig(
+        model_name = model_name,
+        model_path = model_path,
+        dataset_name="race",
+        max_seq_length=max_seq_length,
+        num_epochs=5,
+        num_labels=2,
+    )
+    train_bidirectional_prompt_tuning(config)
     
     
     

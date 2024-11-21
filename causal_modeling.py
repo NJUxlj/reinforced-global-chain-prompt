@@ -9,6 +9,107 @@ from transformers import (
 
 from config import Config
 
+
+
+class AdaptiveGate(nn.Module):  
+    def __init__(self, hidden_size):  
+        '''
+        本质是：
+            nn.Linear(hidden_size * 2, hidden_size), 
+            nn.Linear(hidden_size, hidden_size * 2),  
+            nn.Sigmoid()
+            
+        return [batch_size, seq_len, hidden_size]
+        '''
+        super().__init__()  
+        self.gate_network = nn.Sequential(  
+            nn.Linear(hidden_size * 2, hidden_size),  
+            nn.LayerNorm(hidden_size),  
+            nn.GELU(),  
+            nn.Linear(hidden_size, hidden_size * 2),  
+            nn.Sigmoid()  
+        )  
+        
+    def forward(self, forward_features, backward_features):  
+        # 计算门控权重  
+        combined = torch.cat([forward_features, backward_features], dim=-1)  
+        gates = self.gate_network(combined)  
+        forward_gate, backward_gate = gates.chunk(2, dim=-1)  
+        
+        # 门控融合  
+        output = forward_gate * forward_features + backward_gate * backward_features  
+        return output  
+    
+
+
+class SinusoidalPositionalEmbedding(nn.Module):  
+    def __init__(self, hidden_size):  
+        '''
+        正弦位置编码
+        '''
+        super().__init__()  
+        self.hidden_size = hidden_size  
+        
+    def forward(self, x):  
+        # x.shape = [batch_size, seq_len, hidden_size]
+        positions = torch.arange(x.size(1), device=x.device).unsqueeze(-1)  # shape = [seq_len, 1]
+        # 例如，对于序列长度为5：positions = [[0], [1], [2], [3], [4]] 
+        
+        # 生成0到hidden_size-1之间的偶数序列 [0, 2, 4,..., hidden_size-2]
+        dim_pos = torch.arange(0, self.hidden_size, 2, device=x.device)  # shape = [hidden_size // 2]
+        # 这实现了论文中的 1/(10000^(2i/d_model))
+        div_term = torch.exp(-math.log(10000.0) * dim_pos / self.hidden_size)  # shape = [hidden_size // 2]
+        
+        pos_embedding = torch.zeros(x.size(1), self.hidden_size, device=x.device)  # shape = [seq_len, hidden_size]
+        # 使用sin函数计算偶数位置的编码 
+        '''
+        第二个维度 0::2
+            这是一个步长切片，格式为 start:end:step
+            0 是起始索引
+            空缺的中间值表示直到末尾
+            2 是步长（step），表示每隔2个元素取一个
+        '''  
+        # 取所有行，列索引从0开始，步长为2  
+        '''
+        positions: [seq_len, 1] 例如：[100, 1]
+        div_term: [hidden_size//2] 例如：[256]
+        
+        广播
+        # positions: [100, 1] -> [100, 256]  # 横向复制256次  
+        # div_term: [256] -> [100, 256]      # 纵向复制100次 
+        
+          sin                 cos
+        | 1*div_term[0] | 1*div_term[1] | 1*div_term[2] |  1... | 1... | 
+        | 2
+        | 3
+        | 4
+        | 5
+        '''
+        pos_embedding[:, 0::2] = torch.sin(positions * div_term)  
+        pos_embedding[:, 1::2] = torch.cos(positions * div_term)  
+        
+        return x + pos_embedding.unsqueeze(0) # [batch_size, seq_len, hidden_size]
+
+
+
+
+class OutputTransformation(nn.Module):  
+    def __init__(self, hidden_size):  
+        super().__init__()  
+        self.transform = nn.Sequential(  
+            nn.Linear(hidden_size, hidden_size * 2),  
+            nn.LayerNorm(hidden_size * 2),  
+            nn.GELU(),  
+            nn.Linear(hidden_size * 2, hidden_size),  
+            nn.LayerNorm(hidden_size)  
+        )  
+        
+    def forward(self, x):  
+        return self.transform(x) 
+    
+    
+    
+
 class MultiHeadAttention(nn.Module):  
     """多头注意力机制"""  
     def __init__(self, d_model, num_heads):  
@@ -113,6 +214,8 @@ class DecoderLayer(nn.Module):
         print("feedforward_output.shape = ", x.shape)
         
         return x  
+    
+
 
 class RollbackDecoderWithHead(nn.Module):
     def __init__(
@@ -155,96 +258,96 @@ class RollbackDecoderWithHead(nn.Module):
         
         
         
-def generate_new_step(context: torch.Tensor,  
-                     model: RollbackDecoderWithHead = None,  
-                     temperature: float = 0.7) -> torch.Tensor:  
-    """生成下一个token并返回其embedding  
+# def generate_new_step(context: torch.Tensor,  
+#                      model: RollbackDecoderWithHead = None,  
+#                      temperature: float = 0.7) -> torch.Tensor:  
+#     """生成下一个token并返回其embedding  
     
-    Args:  
-        context: 形状为 [seq_len, hidden_dim] 的上下文张量  
-        model: 带有输出头的解码器模型  
-        temperature: 采样温度  
-        vocab_size: 词表大小（默认使用BERT的词表大小）  
+#     Args:  
+#         context: 形状为 [seq_len, hidden_dim] 的上下文张量  
+#         model: 带有输出头的解码器模型  
+#         temperature: 采样温度  
+#         vocab_size: 词表大小（默认使用BERT的词表大小）  
     
-    Returns:  
-        tuple: (next_token_id, next_token_embedding)  
-            - next_token_id: 下一个token的ID  
-            - next_token_embedding: 下一个token的embedding向量 [hidden_dim]  
-    """  
-    if model is None:  
-        # 如果没有传入模型，创建一个新的解码器层  
-        d_model = context.size(-1)  # hidden_dim  
-        model = RollbackDecoderWithHead(  
-            d_model=d_model,  
-            d_ff=d_model * 4, 
-            num_heads=8,  
-            dropout=0.1  
-        )  
+#     Returns:  
+#         tuple: (next_token_id, next_token_embedding)  
+#             - next_token_id: 下一个token的ID  
+#             - next_token_embedding: 下一个token的embedding向量 [hidden_dim]  
+#     """  
+#     if model is None:  
+#         # 如果没有传入模型，创建一个新的解码器层  
+#         d_model = context.size(-1)  # hidden_dim  
+#         model = RollbackDecoderWithHead(  
+#             d_model=d_model,  
+#             d_ff=d_model * 4, 
+#             num_heads=8,  
+#             dropout=0.1  
+#         )  
     
-    device = context.device  
-    model = model.to(device)  
+#     device = context.device  
+#     model = model.to(device)  
     
-    # 创建因果掩码  
-    seq_len = context.size(0)  
-    causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1).bool()  
-    causal_mask = ~causal_mask.unsqueeze(0).unsqueeze(1)  # [1, 1, seq_len, seq_len]  
+#     # 创建因果掩码  
+#     seq_len = context.size(0)  
+#     causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1).bool()  
+#     causal_mask = ~causal_mask.unsqueeze(0).unsqueeze(1)  # [1, 1, seq_len, seq_len]  
     
-    '''
-    causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1).bool()：
-        创建一个上三角矩阵，其中主对角线以上的元素为 1，主对角线及以下的元素为 0。
-        torch.triu 函数用于生成上三角矩阵，diagonal=1 表示从主对角线开始的位置。bool() 函数将结果转换为布尔类型。
+#     '''
+#     causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1).bool()：
+#         创建一个上三角矩阵，其中主对角线以上的元素为 1，主对角线及以下的元素为 0。
+#         torch.triu 函数用于生成上三角矩阵，diagonal=1 表示从主对角线开始的位置。bool() 函数将结果转换为布尔类型。
 
-    causal_mask = ~causal_mask.unsqueeze(0).unsqueeze(1)：
-        对因果掩码进行取反操作，即将 1 变为 0，将 0 变为 1。
-        然后，使用 unsqueeze(0) 和 unsqueeze(1) 在维度 0 和 1 上分别添加一个维度，
-        使得因果掩码的形状变为 [1, 1, seq_len, seq_len]。
-    '''
+#     causal_mask = ~causal_mask.unsqueeze(0).unsqueeze(1)：
+#         对因果掩码进行取反操作，即将 1 变为 0，将 0 变为 1。
+#         然后，使用 unsqueeze(0) 和 unsqueeze(1) 在维度 0 和 1 上分别添加一个维度，
+#         使得因果掩码的形状变为 [1, 1, seq_len, seq_len]。
+#     '''
     
     
-    # 将context扩展为batch维度  
-    context = context.unsqueeze(0)  # [1, seq_len, hidden_dim]  
+#     # 将context扩展为batch维度  
+#     context = context.unsqueeze(0)  # [1, seq_len, hidden_dim]  
     
-    with torch.no_grad():  
-        # 通过解码器生成新的隐藏状态  
-        next_token_logits  = model(context, causal_mask)  # shape = [1, vocab_size]
+#     with torch.no_grad():  
+#         # 通过解码器生成新的隐藏状态  
+#         next_token_logits  = model(context, causal_mask)  # shape = [1, vocab_size]
         
         
-        # 应用温度缩放  
-        # # temperature 影响概率分布的"锐利度", <1 使分布更尖锐，>1 使分布更平缓    
-        if temperature != 1.0:  
-            next_token_logits = next_token_logits / temperature  
+#         # 应用温度缩放  
+#         # # temperature 影响概率分布的"锐利度", <1 使分布更尖锐，>1 使分布更平缓    
+#         if temperature != 1.0:  
+#             next_token_logits = next_token_logits / temperature  
         
-        # 计算概率分布  
-        probs = F.softmax(next_token_logits, dim=-1)  
+#         # 计算概率分布  
+#         probs = F.softmax(next_token_logits, dim=-1)  
         
-        print("probs.shape = ", probs.shape)
-        print("probs = ", probs)    
-        # 采样下一个token  
-        next_token = torch.multinomial(probs, num_samples=1)  # [1, 1] 
+#         print("probs.shape = ", probs.shape)
+#         print("probs = ", probs)    
+#         # 采样下一个token  
+#         next_token = torch.multinomial(probs, num_samples=1)  # [1, 1] 
         
         
-        '''
-        # multinomial 根据概率分布进行采样  
-        # - probs: 概率分布 [1, vocab_size]  
-        # - num_samples=1: 采样一个token  
-        # - 返回的是词表中的索引（token ID）  
+#         '''
+#         # multinomial 根据概率分布进行采样  
+#         # - probs: 概率分布 [1, vocab_size]  
+#         # - num_samples=1: 采样一个token  
+#         # - 返回的是词表中的索引（token ID）  
 
-        # 例如，对于概率分布 [0.01, 0.31, 0.42, 0.26]：  
-        # - 42% 的概率选择索引 2  
-        # - 31% 的概率选择索引 1  
-        # - 26% 的概率选择索引 3  
-        # - 1% 的概率选择索引 0  
+#         # 例如，对于概率分布 [0.01, 0.31, 0.42, 0.26]：  
+#         # - 42% 的概率选择索引 2  
+#         # - 31% 的概率选择索引 1  
+#         # - 26% 的概率选择索引 3  
+#         # - 1% 的概率选择索引 0  
         
-        '''
-        
-
-        # 获取token的embedding  
-        next_token_embedding = model.embed_tokens(next_token)  # [1, 1, hidden_dim]  
-        next_token_embedding = next_token_embedding.squeeze()  # [hidden_dim]  
+#         '''
         
 
-    # return new_step.squeeze(0)  # [hidden_dim]  
-    return next_token.squeeze().item(), next_token_embedding
+#         # 获取token的embedding  
+#         next_token_embedding = model.embed_tokens(next_token)  # [1, 1, hidden_dim]  
+#         next_token_embedding = next_token_embedding.squeeze()  # [hidden_dim]  
+        
+
+#     # return new_step.squeeze(0)  # [hidden_dim]  
+#     return next_token.squeeze().item(), next_token_embedding
 
 # 使用示例  
 if __name__ == "__main__":  
@@ -261,10 +364,10 @@ if __name__ == "__main__":
     # )  
     
     # 生成新步骤  
-    _,next_token_embedding = generate_new_step(  
-        context=context,  
-        model=None,  
-        temperature=0.7  
-    )  
+    # _,next_token_embedding = generate_new_step(  
+    #     context=context,  
+    #     model=None,  
+    #     temperature=0.7  
+    # )  
     
-    print(f"生成的新步骤形状: {next_token_embedding.shape}")  # 应该是 [hidden_dim]
+    # print(f"生成的新步骤形状: {next_token_embedding.shape}")  # 应该是 [hidden_dim]

@@ -400,6 +400,8 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
             if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
             # 标签：正确选项为1，其他为0  
             results['labels'].append(1 if i == label else 0) 
+            # results['labels'].append(label) 
+            
             
     return results
 

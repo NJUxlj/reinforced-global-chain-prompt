@@ -308,7 +308,8 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
                         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
                         logits = val_outputs['logits']  # batch_size x num_labels
                         preds = torch.argmax(logits, dim=1)
-                         
+                        
+                        accelerator.wait_for_everyone()
                         preds = accelerator.gather_for_metrics(preds)  
                         val_labels = accelerator.gather_for_metrics(val_labels)  
                         
@@ -360,7 +361,7 @@ if __name__ == "__main__":
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
 
-    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path)
+    model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
     
     model_name = get_model_name_using_model(model)
     dataset_name = 'race'
@@ -373,6 +374,6 @@ if __name__ == "__main__":
         dataset_name=dataset_name,
         max_seq_length= max_seq_length,
         num_epochs=5,
-        num_labels=4,  
+        num_labels=2,  
     )
     train_prefix_tuning(config)

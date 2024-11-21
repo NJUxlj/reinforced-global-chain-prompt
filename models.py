@@ -9,6 +9,8 @@ from typing import List, Tuple, Dict, Optional, Any, Union
 import math
 
 
+from sentence_transformers import SentenceTransformer, models
+
 from wrapper import *
 from config import *
 from utils import (
@@ -91,7 +93,7 @@ class InputEncoder(nn.Module):
         batch_size, seq_len, hidden_size = sequence.shape  
         
         # 计算窗口数量  
-        num_windows = max(1, (seq_len - self.window_size) // self.stride + 1)  
+        num_windows = max(1, (seq_len - self.window_size) // self.stride + 1)  # 如果最后一个窗口超出max_length边界，直接舍弃
         
         windows = []  
         window_masks = []  
@@ -101,7 +103,7 @@ class InputEncoder(nn.Module):
             end_idx = start_idx + self.window_size  
             
             # 获取当前窗口  
-            window = sequence[:, start_idx:end_idx, :]  
+            window = sequence[:, start_idx:end_idx, :]  # shape = (batch_size, window_size, hidden_size)
             windows.append(window)  
             
             if attention_mask is not None:  
@@ -113,7 +115,7 @@ class InputEncoder(nn.Module):
         if attention_mask is not None:  
             window_masks = torch.stack(window_masks, dim=1)  # (batch_size, num_windows, window_size)  
         else:  
-            window_masks = torch.ones_like(windows[..., 0])  
+            window_masks = torch.ones_like(windows[..., 0])   #  # windows[..., 0] 取最后一维的第一个元素，保持前面的维度不变
             
         return windows, window_masks  
     
@@ -128,6 +130,7 @@ class InputEncoder(nn.Module):
         Args:  
             windows: shape (batch_size, num_windows, window_size, hidden_size)  
             window_masks: shape (batch_size, num_windows, window_size)  
+                    mask矩阵，1表示有效token，0表示padding
             
         Returns:  
             pooled: shape (batch_size, num_windows, hidden_size)  
@@ -138,13 +141,24 @@ class InputEncoder(nn.Module):
         flat_windows = windows.view(-1, window_size, hidden_size)  # (batch_size * num_windows, window_size, hidden_size)  
         flat_masks = window_masks.view(-1, window_size)  # (batch_size * num_windows, window_size)  
         
-        # 应用mask  
-        masked_windows = flat_windows * flat_masks.unsqueeze(-1)  
+        # 应用mask, 将无效token（mask=0）的特征置为0  
+        # flat_masks.unsqueeze(-1).shape = (batch_size * num_windows, window_size, 1)
+        masked_windows = flat_windows * flat_masks.unsqueeze(-1)   # shape = (batch_size * num_windows, window_size, hidden_size)
         
-        if self.pooling_mode == 'max':  
-            # 在mask之外的位置设置为负无穷  
-            masked_windows = masked_windows.masked_fill(~flat_masks.unsqueeze(-1).bool(), float('-inf'))  
-            pooled = torch.max(masked_windows, dim=1)[0]  # (batch_size * num_windows, hidden_size)  
+        if self.pooling_mode == 'max':  # 最大池化的情况 
+            # masked_fill 将mask为1的位置（原始mask为0的位置）填充为负无穷  
+            masked_windows = masked_windows.masked_fill(
+                    ~flat_masks.unsqueeze(-1).bool(), 
+                    float('-inf')
+                ) # ~flat_masks 进行取反操作：0变1，1变0  
+            
+            pooled = torch.max(masked_windows, dim=1)[0]  # shape = (batch_size * num_windows, hidden_size)
+            
+            '''
+            torch.max(input, dim) 会返回一个元组 (tuple)，包含两个元素：
+                [0]: 最大值 (values)
+                [1]: 最大值的索引位置 (indices)
+            '''
         else:  # avg pooling  
             # 计算每个窗口的有效token数量  
             valid_tokens = flat_masks.sum(dim=1, keepdim=True)  # (batch_size * num_windows, 1)  
@@ -173,12 +187,12 @@ class InputEncoder(nn.Module):
         # 2. 对每个窗口进行池化  
         pooled_windows = self.pool_windows(windows, window_masks)  # (batch_size, num_windows, hidden_size)  
         
-        # 3. 计算注意力权重  
+        # 3. 计算注意力权重  [每个窗口分配一个注意力分数]
         attention_scores = self.attention(pooled_windows)  # (batch_size, num_windows, 1)  
         attention_weights = F.softmax(attention_scores, dim=1)  
         
         # 4. 加权求和  
-        weighted_windows = pooled_windows * attention_weights  
+        weighted_windows = pooled_windows * attention_weights  # (batch_size, num_windows, hidden_size)
         
         # 5. 使用自适应池化调整序列长度  
         # 转换维度以适应AdaptiveAvgPool1d  
@@ -201,74 +215,41 @@ class SentenceEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.linear = nn.Linear(hidden_size, hidden_size)
         self.activation = nn.GELU()
-
-
-
-
-
-
-
-class GatedMultiHeadCrossAttention(nn.Module):  
-    def __init__(self, hidden_size, num_heads=8, dropout=0.1):  
-        super().__init__()  
-        self.hidden_size = hidden_size  
-        self.num_heads = num_heads  
-        self.head_dim = hidden_size // num_heads  
-
+        self.encoder_name = "all-MiniLM-L6-v2"
         
-        # Multi-head projections  
-        self.q_proj = nn.Linear(hidden_size, hidden_size)  # W^Q 
-        self.k_proj = nn.Linear(hidden_size, hidden_size)  # W^K
-        self.v_proj = nn.Linear(hidden_size, hidden_size)  # W^V
-        self.o_proj = nn.Linear(hidden_size, hidden_size)  
-        
-        # Gating mechanism  
-        self.gate = nn.Sequential(  
-            nn.Linear(hidden_size * 2, hidden_size),  
-            nn.Sigmoid()  
-        )  
-       
-       # Layer normalization  
-        self.norm1 = nn.LayerNorm(hidden_size)  
-        self.norm2 = nn.LayerNorm(hidden_size)  
-        
-        # Dropout  
-        self.dropout = nn.Dropout(dropout) 
-
+        encoder = SentenceTransformer(self.encoder_name)
+        sentence_embedding_dimension = encoder.get_sentence_embedding_dimension()
     
-    def forward(self, reasoning_matrices):
-        # matrices: [K, K_suffix, H]  
-        batch_size = reasoning_matrices.size(0)  
+        if sentence_embedding_dimension != self.hidden_size and self.hidden_size != 0: # 0 means no dimension adaption
+            print(f"the hidden_size of your requirement {self.hidden_size} does not match the hidden_size of the sentence transformer {sentence_embedding_dimension}")
+            print("========= adding dimension adaption layer .......")
+            
+            word_embedding_model = models.Transformer(self.encoder_name)
+            
+            # 2. 添加池化层  
+            pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension())
+            
+            # 3. 添加降维层（例如将768维降至256维）  
+            dense_model = models.Dense(in_features=pooling_model.get_sentence_embedding_dimension(),   
+                                    out_features=self.hidden_size,   
+                                    activation_function=torch.nn.Tanh())  
+            
+            encoder = SentenceTransformer(modules=[word_embedding_model, pooling_model, dense_model])
+        
+        self.encoder = encoder
 
-
-        # Learnable query  
-        query = self.q_proj(reasoning_matrices)  # [K, K_suffix, H]  
-        key = self.k_proj(reasoning_matrices)    # [K, K_suffix, H]  
-        value = self.v_proj(reasoning_matrices)  # [K, K_suffix, H]  
-
-
-        # Reshape for multi-head attention 
-
-
-        # Scaled dot-product attention
+    def forward(self, sentences:Union[List[str], str])->torch.Tensor:
         
         
+        sentence_embeddings = self.encoder.encode(
+            sentences,
+            convert_to_tensor=True,
+            show_progress_bar=True,
+            batch_size=128,
+            normalize_embeddings=True
+        )  # shape = [K, H]
         
-        # Apply attention to values
-
-        
-        # Output projection
-        
-        
-        
-        # Gating mechanism 
-        
-        
-        
-        # Residual connection and layer norm 
-
-
-
+        return sentence_embeddings
 
 
 
@@ -280,6 +261,43 @@ class SparseAttention(nn.Module):
     def __init__(self, hidden_size, num_heads=8, local_window=3, sparsity_threshold=0.1): 
         pass
     
+
+    
+
+
+
+# class MultiHeadCrossAttention(nn.Module):  
+#     def __init__(self, hidden_size, num_heads=8):  
+#         super().__init__()  
+#         self.num_heads = num_heads  
+#         self.head_dim = hidden_size // num_heads  
+        
+#         self.q_proj = nn.Linear(hidden_size, hidden_size)  
+#         self.k_proj = nn.Linear(hidden_size, hidden_size)  
+#         self.v_proj = nn.Linear(hidden_size, hidden_size)  
+#         self.o_proj = nn.Linear(hidden_size, hidden_size)  
+        
+#         self.attention_weights = None  # 存储注意力权重用于可视化  
+        
+#     def forward(self, query, key, value):  
+#         B, N, C = query.shape  
+        
+#         # 多头投影  
+#         q = self.q_proj(query).reshape(B, N, self.num_heads, self.head_dim)  
+#         k = self.k_proj(key).reshape(B, -1, self.num_heads, self.head_dim)  
+#         v = self.v_proj(value).reshape(B, -1, self.num_heads, self.head_dim)  
+        
+#         # 注意力计算  
+#         attn = torch.einsum('bnhd,bmhd->bnmh', q, k) / math.sqrt(self.head_dim)  
+#         attn = F.softmax(attn, dim=2)  
+#         self.attention_weights = attn  # 保存注意力权重  
+        
+#         # 输出  
+#         out = torch.einsum('bnmh,bmhd->bnhd', attn, v)  
+#         out = out.reshape(B, N, -1)  
+#         out = self.o_proj(out)  
+        
+#         return out  
     
     
     
@@ -288,223 +306,7 @@ class SparseAttention(nn.Module):
 
 
 
-
-
-
-
-class BaasPromptEncoder(nn.Module):  
-    def __init__(  
-        self,   
-        hidden_size: int,  
-        prefix_length: int,  
-        suffix_length: int,  
-        num_layers: int = 2,  
-        dropout: float = 0.1  
-    ):  
-        super().__init__()  
-        self.hidden_size = hidden_size  
-        self.prefix_length = prefix_length  
-        self.suffix_length = suffix_length  
-        
-        # 1. 可学习的原始嵌入  
-        self.prefix_embeddings = nn.Parameter(  
-            torch.randn(prefix_length, hidden_size)  
-        )  
-        self.suffix_embeddings = nn.Parameter(  
-            torch.randn(suffix_length, hidden_size)  
-        )  
-        
-        # 2. 双向LSTM编码器  
-        self.forward_lstm = nn.LSTM(  
-            hidden_size,  
-            hidden_size // 2,  
-            num_layers=num_layers,  
-            bidirectional=True,  
-            batch_first=True  
-        )  
-        self.backward_lstm = nn.LSTM(  
-            hidden_size,  
-            hidden_size // 2,  
-            num_layers=num_layers,  
-            bidirectional=True,  
-            batch_first=True  
-        )  
-        
-        # 3. 交互注意力层  
-        self.prefix_to_suffix_attention = MultiHeadCrossAttention(  
-            hidden_size, num_heads=8  
-        )  
-        self.suffix_to_prefix_attention = MultiHeadCrossAttention(  
-            hidden_size, num_heads=8  
-        )  
-        
-        # 4. 自适应门控融合  
-        self.prefix_gate = AdaptiveGate(hidden_size)  
-        self.suffix_gate = AdaptiveGate(hidden_size)  
-        
-        # 5. 位置编码  
-        self.prefix_pos_embedding = SinusoidalPositionalEmbedding(hidden_size)  
-        self.suffix_pos_embedding = SinusoidalPositionalEmbedding(hidden_size)  
-        
-        # 6. 输出转换层  
-        self.prefix_output_layer = OutputTransformation(hidden_size)  
-        self.suffix_output_layer = OutputTransformation(hidden_size)  
-        
-        self.dropout = nn.Dropout(dropout)  
-        self.layer_norm = nn.LayerNorm(hidden_size)  
-
-    def forward(self, batch_size: int = 1):  
-        # 1. 扩展batch维度  
-        prefix_embeds = self.prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
-        suffix_embeds = self.suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)  
-        
-        # 2. 添加位置编码  
-        prefix_embeds = self.prefix_pos_embedding(prefix_embeds)  
-        suffix_embeds = self.suffix_pos_embedding(suffix_embeds)  
-        
-        # 3. 双向LSTM编码  
-        # 前向处理  
-        prefix_forward, _ = self.forward_lstm(prefix_embeds)  
-        suffix_forward, _ = self.forward_lstm(suffix_embeds)  
-        
-        # 反向处理  
-        prefix_backward, _ = self.backward_lstm(torch.flip(prefix_embeds, [1]))  
-        suffix_backward, _ = self.backward_lstm(torch.flip(suffix_embeds, [1]))  
-        prefix_backward = torch.flip(prefix_backward, [1])  
-        suffix_backward = torch.flip(suffix_backward, [1])  
-        
-        # 融合双向表示  
-        prefix_bidirectional = self.prefix_gate(prefix_forward, prefix_backward)  
-        suffix_bidirectional = self.suffix_gate(suffix_forward, suffix_backward)  
-        
-        # 4. 交互注意力  
-        prefix_attended = self.prefix_to_suffix_attention(  
-            prefix_bidirectional, suffix_bidirectional, suffix_bidirectional  
-        )  
-        suffix_attended = self.suffix_to_prefix_attention(  
-            suffix_bidirectional, prefix_bidirectional, prefix_bidirectional  
-        )  
-        
-        # 5. 残差连接和归一化  
-        prefix_output = self.layer_norm(prefix_bidirectional + prefix_attended)  
-        suffix_output = self.layer_norm(suffix_bidirectional + suffix_attended)  
-        
-        # 6. 最终转换  
-        prefix_output = self.prefix_output_layer(prefix_output)  
-        suffix_output = self.suffix_output_layer(suffix_output)  
-        
-        return prefix_output, suffix_output  
-    
-
-
-
-class MultiHeadCrossAttention(nn.Module):  
-    def __init__(self, hidden_size, num_heads=8):  
-        super().__init__()  
-        self.num_heads = num_heads  
-        self.head_dim = hidden_size // num_heads  
-        
-        self.q_proj = nn.Linear(hidden_size, hidden_size)  
-        self.k_proj = nn.Linear(hidden_size, hidden_size)  
-        self.v_proj = nn.Linear(hidden_size, hidden_size)  
-        self.o_proj = nn.Linear(hidden_size, hidden_size)  
-        
-        self.attention_weights = None  # 存储注意力权重用于可视化  
-        
-    def forward(self, query, key, value):  
-        B, N, C = query.shape  
-        
-        # 多头投影  
-        q = self.q_proj(query).reshape(B, N, self.num_heads, self.head_dim)  
-        k = self.k_proj(key).reshape(B, -1, self.num_heads, self.head_dim)  
-        v = self.v_proj(value).reshape(B, -1, self.num_heads, self.head_dim)  
-        
-        # 注意力计算  
-        attn = torch.einsum('bnhd,bmhd->bnmh', q, k) / math.sqrt(self.head_dim)  
-        attn = F.softmax(attn, dim=2)  
-        self.attention_weights = attn  # 保存注意力权重  
-        
-        # 输出  
-        out = torch.einsum('bnmh,bmhd->bnhd', attn, v)  
-        out = out.reshape(B, N, -1)  
-        out = self.o_proj(out)  
-        
-        return out  
-    
-    
-    
-
-
-
-class AdaptiveGate(nn.Module):  
-    def __init__(self, hidden_size):  
-        super().__init__()  
-        self.gate_network = nn.Sequential(  
-            nn.Linear(hidden_size * 2, hidden_size),  
-            nn.LayerNorm(hidden_size),  
-            nn.GELU(),  
-            nn.Linear(hidden_size, hidden_size * 2),  
-            nn.Sigmoid()  
-        )  
-        
-    def forward(self, forward_features, backward_features):  
-        # 计算门控权重  
-        combined = torch.cat([forward_features, backward_features], dim=-1)  
-        gates = self.gate_network(combined)  
-        forward_gate, backward_gate = gates.chunk(2, dim=-1)  
-        
-        # 门控融合  
-        output = forward_gate * forward_features + backward_gate * backward_features  
-        return output  
-    
-
-
-
-
-class SinusoidalPositionalEmbedding(nn.Module):  
-    def __init__(self, hidden_size):  
-        super().__init__()  
-        self.hidden_size = hidden_size  
-        
-    def forward(self, x):  
-        positions = torch.arange(x.size(1), device=x.device).unsqueeze(-1)  
-        dim_pos = torch.arange(0, self.hidden_size, 2, device=x.device)  
-        div_term = torch.exp(-math.log(10000.0) * dim_pos / self.hidden_size)  
-        
-        pos_embedding = torch.zeros(x.size(1), self.hidden_size, device=x.device)  
-        pos_embedding[:, 0::2] = torch.sin(positions * div_term)  
-        pos_embedding[:, 1::2] = torch.cos(positions * div_term)  
-        
-        return x + pos_embedding.unsqueeze(0)
-
-
-
-
-
-class OutputTransformation(nn.Module):  
-    def __init__(self, hidden_size):  
-        super().__init__()  
-        self.transform = nn.Sequential(  
-            nn.Linear(hidden_size, hidden_size * 2),  
-            nn.LayerNorm(hidden_size * 2),  
-            nn.GELU(),  
-            nn.Linear(hidden_size * 2, hidden_size),  
-            nn.LayerNorm(hidden_size)  
-        )  
-        
-    def forward(self, x):  
-        return self.transform(x) 
-
-
-
-
-
-
-
-
-
-# 3. 修改模型的输入嵌入函数，添加前缀和后缀Prompt Tokens  
-class BaasPrompt(torch.nn.Module):  
+class BaasPromptV2(torch.nn.Module):  
     def __init__(self, 
                  model, 
                  prefix_embeddings, 
@@ -514,8 +316,12 @@ class BaasPrompt(torch.nn.Module):
                  min_step=3,
                  max_step=8,
                  num_labels=4):  
-        super(BaasPrompt, self).__init__() 
+        super(BaasPromptV2, self).__init__() 
         '''
+        使用SVD动态调整每一层推理链长度的BaasPrompt
+        
+        
+        
         :param: model: 
             AutoModelForSequenceClassification
             BertForSequenceClassification
@@ -816,7 +622,7 @@ class BaasAttention(nn.Module):
 # 使用示例  
 def main():  
     # 初始化模型  
-    model = BaasPrompt(  
+    model = BaasPromptV2(  
         model_name='bert-large-uncased',  
         num_prefix_tokens=4,  
         min_step=3,  
