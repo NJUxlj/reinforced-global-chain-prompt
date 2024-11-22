@@ -215,7 +215,7 @@ class SentenceEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.linear = nn.Linear(hidden_size, hidden_size)
         self.activation = nn.GELU()
-        self.encoder_name = "all-MiniLM-L6-v2"
+        self.encoder_name = Config['models']['bert-base-uncased']['model_path']
         
         encoder = SentenceTransformer(self.encoder_name)
         sentence_embedding_dimension = encoder.get_sentence_embedding_dimension()

@@ -120,7 +120,7 @@ class BaasPromptConfig:
     
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768               # MLP中的P_theta'  即，MLP输入的隐单元维度  huggingface 默认它==encoder_hidden_size
-    encoder_hidden_size:int = 512   # 重参数化器MLP的隐藏层大小# prefix token 的维度 (P_theta')
+    encoder_hidden_size:int = prefix_hidden_size   # bert的隐藏层维度
     
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减 
