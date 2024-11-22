@@ -9,7 +9,7 @@ from transformers import (
 
 from config import Config
 
-
+from typing import List, Tuple, Dict, Optional
 
 class AdaptiveGate(nn.Module):  
     def __init__(self, hidden_size):  
@@ -145,7 +145,7 @@ class MultiHeadAttention(nn.Module):
         output = torch.matmul(attention_weights, V)  
         return output, attention_weights  
     
-    def forward(self, Q, K, V, mask=None):  
+    def forward(self, Q, K, V, mask=None)->Tuple[torch.Tensor, torch.Tensor]:  
         '''
         Q: [B, L, H]
         K: [B, L, H]

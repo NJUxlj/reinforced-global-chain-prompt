@@ -1563,16 +1563,17 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
 
 def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
     """  
-    处理整个数据集  [dataset必须同时包含train和valid] [针对PEFT任务]
-                    # train and valid will be put to dataloader for training and evaluation
+    处理整个数据集  [dataset必须同时包含train, test, validation(dev)] [针对PEFT任务]
+                    # train and validation will be put to dataloader for training and evaluation
     Args:  
         dataset: 原始的训练集 (split = None)  
         dataset_name: 数据集名称，用于选择预处理函数
     Returns:  
         
-        preprocessed_dataset: 处理后的数据集，包含train和valid两个部分 
+        preprocessed_dataset: 处理后的数据集，包含train, test, validation(dev) 3个部分 
     """ 
     wrapper = McqDatasetWrapper()
+    dataset_configs = wrapper.dataset_configs
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
     processed_dataset:DatasetDict = dataset.map(
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length),

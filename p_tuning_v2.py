@@ -268,8 +268,8 @@ class PTuningV2ForSequenceClassification(nn.Module):
         position_ids: Optional[torch.Tensor]=None,
         head_mask=None,
         inputs_embeds=None,
-        output_attentions:bool=None,
-        output_hidden_states:bool=None,
+        output_attentions:bool=True,
+        output_hidden_states:bool=True,
         return_dict:bool=True, # 返回 SequenceClassifierOutput 对像
         ):  
         
@@ -297,9 +297,9 @@ class PTuningV2ForSequenceClassification(nn.Module):
             position_ids=position_ids if self.model_type == "bert" else None,
             # labels=labels,  
             head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            inputs_embeds=inputs_embeds, # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是重新计算
+            output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+            output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
             return_dict=return_dict,
             past_key_values=past_key_values, # shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
         )   # last_hidden_state, pooled_output = model(input_ids)
@@ -542,11 +542,11 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
             # print("outputs = \n", outputs)
             # print("type(outputs) = ", type(outputs))
             
-            criterion = nn.CrossEntropyLoss()
+            # criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
-            
-            loss = criterion(logits, labels.long())
+            loss = outputs.loss
+            # loss = criterion(logits, labels.long())
             total_loss += loss.detach().float()
             
             accelerator.backward(loss)

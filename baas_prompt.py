@@ -104,7 +104,7 @@ stop_words = set(stopwords.words('english'))
 
 
 
-device = Config['device']
+# device = Config['device']
 
 
 
@@ -146,11 +146,18 @@ class BaasPromptEncoder(nn.Module):
     def __init__(  
         self,   
         config: BaasPromptConfig,
-        num_layers: int = 2,  
-        dropout: float = 0.1
+        model_config:AutoConfig,
+        dropout: float = 0.1,
+        device = Config.device
     ):  
         super().__init__()  
-        self.hidden_size = config.prefix_hidden_size  
+        self.hidden_size = config.prefix_hidden_size
+        if self.hidden_size != model_config.hidden_size:
+            raise ValueError(f"The hidden size of the model: {model_config.hidden_size} and the prefix projection layer: {config.prefix_hidden_size} must be the same.")
+        self.num_layers = model_config.num_hidden_layers  
+        self.n_head = model_config.num_attention_heads  
+        self.prefix_projection = config.prefix_projection
+        self.device = device  
         
         # self.prefix_embeddings = prefix_embeddings # shape = (prefix_length, hidden_size)
         # self.suffix_embeddings = suffix_embeddings  # shape = (suffix_length, hidden_size)
@@ -159,39 +166,40 @@ class BaasPromptEncoder(nn.Module):
         self.forward_lstm = nn.LSTM(  
             self.hidden_size,  
             self.hidden_size // 2,  
-            num_layers=num_layers,  
+            num_layers=self.num_layers,  
             bidirectional=True,  
             batch_first=True  
-        )  
+        ).to(self.device)  
         self.backward_lstm = nn.LSTM(  
             self.hidden_size,  
             self.hidden_size // 2,  
-            num_layers=num_layers,  
+            num_layers=self.num_layers, 
             bidirectional=True,  
             batch_first=True  
-        )  
+        ).to(self.device)  
         
         self.prefix_to_suffix_attention = MultiHeadAttention(  
             self.hidden_size, num_heads=8  
-        )  
+        ).to(self.device)  
+        
         self.suffix_to_prefix_attention = MultiHeadAttention(  
             self.hidden_size, num_heads=8  
-        )  
+        ).to(self.device)  
         
         # 4. 自适应门控融合  
-        self.prefix_gate = AdaptiveGate(self.hidden_size)  
-        self.suffix_gate = AdaptiveGate(self.hidden_size)  
+        self.prefix_gate = AdaptiveGate(self.hidden_size).to(self.device)  
+        self.suffix_gate = AdaptiveGate(self.hidden_size).to(self.device)  
         
         # 5. 位置编码  
-        self.prefix_pos_embedding = SinusoidalPositionalEmbedding(self.hidden_size)  
-        self.suffix_pos_embedding = SinusoidalPositionalEmbedding(self.hidden_size)  
+        self.prefix_pos_embedding = SinusoidalPositionalEmbedding(self.hidden_size).to(self.device)  
+        self.suffix_pos_embedding = SinusoidalPositionalEmbedding(self.hidden_size).to(self.device)  
         
         # 6. 输出转换层  
-        self.prefix_output_layer = OutputTransformation(self.hidden_size)  
-        self.suffix_output_layer = OutputTransformation(self.hidden_size)  
+        self.prefix_output_layer = OutputTransformation(self.hidden_size).to(self.device)  
+        self.suffix_output_layer = OutputTransformation(self.hidden_size).to(self.device)  
         
-        self.dropout = nn.Dropout(dropout)  
-        self.layer_norm = nn.LayerNorm(self.hidden_size)  
+        self.dropout = nn.Dropout(dropout).to(self.device)  
+        self.layer_norm = nn.LayerNorm(self.hidden_size).to(self.device)  
 
     def forward(
             self,
@@ -208,8 +216,15 @@ class BaasPromptEncoder(nn.Module):
         
         '''
         # 1. 扩展batch维度  
-        prefix_embeds = prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-        suffix_embeds = suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        if prefix_embeds.dim()==2:
+            prefix_embeds = prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
+        if suffix_embeds.dim()==2:
+            suffix_embeds = suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
+        
+        # 不需要过prompt_encoder的情况
+        if not self.prefix_projection:
+            return prefix_embeds, suffix_embeds
+        
         
         # 2. 添加位置编码  
         prefix_embeds = self.prefix_pos_embedding(prefix_embeds)  
@@ -231,10 +246,10 @@ class BaasPromptEncoder(nn.Module):
         suffix_bidirectional = self.suffix_gate(suffix_forward, suffix_backward)  
         
         # 4. 交互注意力  
-        prefix_attended = self.prefix_to_suffix_attention(  
+        prefix_attended,_ = self.prefix_to_suffix_attention(  
             prefix_bidirectional, suffix_bidirectional, suffix_bidirectional  
         )  
-        suffix_attended = self.suffix_to_prefix_attention(  
+        suffix_attended,_ = self.suffix_to_prefix_attention(  
             suffix_bidirectional, prefix_bidirectional, prefix_bidirectional  
         )  
         
@@ -251,9 +266,10 @@ class BaasPromptEncoder(nn.Module):
 
 
 class BassPromptModel(torch.nn.Module):  
-    def __init__(self, model, tokenizer, config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments=None):  
+    def __init__(self, model, tokenizer, config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments=None, device = Config.device):  
         super(BassPromptModel, self).__init__()  
         self.model = model
+        self.config:BaasPromptConfig = config
         self.base_model = get_base_model_using_model(self.model)
         self.model_config = self.model.config
         self.model_type = self.model_config.model_type 
@@ -265,6 +281,8 @@ class BassPromptModel(torch.nn.Module):
         self.num_suffix_tokens = config.suffix_length
         
         self.all_layers = config.all_layers # 是否插入所有层
+        self.num_layers = self.model_config.num_hidden_layers
+        self.device = device
         
         self.rollback_decoder = RollbackDecoderWithHead(
             d_model=config.prefix_hidden_size,
@@ -275,9 +293,9 @@ class BassPromptModel(torch.nn.Module):
             self.chain_encode_args = ChainEncodingArguments(
                 dataset=config.dataset_name,
                 hidden_size=config.encoder_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
-                output_dir="experiment/race",
-                embedding_dir = "./embeddings/race",
-                context_dir = "./context/race"
+                output_dir="./autocot/experiment/race",
+                embedding_dir = "./autocot/embeddings/race",
+                context_dir = "./autocot/context/race"
             )
         else:
             self.chain_encode_args = chain_encode_args 
@@ -294,7 +312,7 @@ class BassPromptModel(torch.nn.Module):
         
         self.suffix_embeddings = self.initialize_suffix_prompts() #shape =  (seq_length, hidden_size)
         
-        self.prompt_encoder = BaasPromptEncoder(config)
+        self.prompt_encoder = BaasPromptEncoder(self.config, self.model_config, device = self.device)
           
         self.prefix_embeddings, self.suffix_embeddings = self.prompt_encoder.forward(
             prefix_embeddings = self.prefix_embeddings,
@@ -309,14 +327,43 @@ class BassPromptModel(torch.nn.Module):
         
         self.disable_grad_calc() # 禁用梯度计算
         
-    def get_past_key_values(self, batch_size=1):
-        pass
+    def get_past_key_values(
+        self, 
+        prefix_embeddings:torch.Tensor,
+        input_embeddings:torch.Tensor,
+        suffix_embeddings:torch.Tensor,
+        batch_size=1,
+        ):
+        '''
+        作用：
+            把prefix_embeddings 和 suffix_embeddings转换bert每一层中的K,V矩阵能用的格式
+        '''
+        past_embeddings = torch.concat([prefix_embeddings, input_embeddings, suffix_embeddings], dim=1) # shape = (batch_size, max_length, hidden_size)
+
+
+        past_embeddings = past_embeddings.unsqueeze(-1).expand(batch_size, self.config.max_seq_length, self.hidden_size, self.num_layers*2)
+
+        return past_embeddings
+        
     
-    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):  
+    def forward(
+        self, 
+        input_ids=None, 
+        attention_mask=None, 
+        token_type_ids=None,
+        position_ids: Optional[torch.Tensor]=None, 
+        labels:Optional[torch.Tensor] = None,
+        head_mask=None,
+        # inputs_embeds=None,
+        output_attentions:bool=True,
+        output_hidden_states:bool=True,
+        return_dict:bool=True, # 返回 SequenceClassifierOutput 对像
+        ):  
         # 原始输入嵌入
-        # print(f"input_ids.shape = {input_ids.shape}")
-        input_ids = input_ids.squeeze(1) 
-        inputs_embeds = self.embedding_layer(input_ids)  
+        print(f"input_ids.shape = {input_ids.shape}")  # List[List[int]]
+        # input_ids = input_ids.squeeze(1) 
+        
+        inputs_embeds:torch.Tensor = self.embedding_layer(input_ids)  
         
         batch_size = inputs_embeds.size(0)  
         
@@ -324,17 +371,28 @@ class BassPromptModel(torch.nn.Module):
         prefix_embeds = self.prefix_embeddings.expand(batch_size, -1, -1)  
         suffix_embeds = self.suffix_embeddings.expand(batch_size, -1, -1)  
         
-        # print(f"prefix.shape = {prefix_embeds.shape}")
-        # print(f"suffix.shape = {suffix_embeds.shape}")
-        # print(f"inputs_embeds.shape = {inputs_embeds.shape}")
+        # shape = (batch_size, seq_length, hidden_size)
+        prefix_embeds, suffix_embeds = self.prompt_encoder.forward(prefix_embeds, suffix_embeds, batch_size)
+    
+        past_key_values = self.get_past_key_values(
+            prefix_embeds,
+            inputs_embeds,
+            suffix_embeds,
+            batch_size) if config.all_layers else None
+        
+        print("************* 前缀， 中缀， 后缀 拼接前：*************")
+        print(f"prefix.shape = {prefix_embeds.shape}")
+        print(f"suffix.shape = {suffix_embeds.shape}")
+        print(f"inputs_embeds.shape = {inputs_embeds.shape}")
 
         # 拼接前缀、原始输入和后缀嵌入  
+        
         inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
         
         # 调整attention_mask  
         if attention_mask is not None:  
-            prefix_mask = torch.ones(batch_size, self.num_prefix_tokens, device=device)  
-            suffix_mask = torch.ones(batch_size, self.num_suffix_tokens, device=device)  
+            prefix_mask = torch.ones(batch_size, self.num_prefix_tokens, device=self.device)  
+            suffix_mask = torch.ones(batch_size, self.num_suffix_tokens, device=self.device)  
 
             # print(f"attention_mask.shape = {attention_mask.shape}")
             # print(f"prefix_mask.shape = {prefix_mask.shape}")
@@ -346,8 +404,8 @@ class BassPromptModel(torch.nn.Module):
             # print(f"attention_mask.shape after concat = {attention_mask.shape}") 
         
         if token_type_ids is not None:  
-            prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=device)
-            suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=device)
+            prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
+            suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=self.device)
             
             # print(f"token_type_ids.shape = {token_type_ids.shape}")
             # print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
@@ -362,24 +420,64 @@ class BassPromptModel(torch.nn.Module):
 
         
         # 调用原始模型的forward方法  
-        outputs = self.model(  
-            inputs_embeds=inputs_embeds,  
+        outputs = self.base_model(  
+            # input_ids=input_ids,                 
+            inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
             attention_mask=attention_mask,  
-            token_type_ids=token_type_ids,
-            labels=labels  
+            token_type_ids=token_type_ids if self.model_type == "bert" else None,  
+            position_ids=position_ids if self.model_type == "bert" else None,
+            # labels=labels,
+            head_mask=head_mask,
+            output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+            output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+            return_dict=return_dict,
+            # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+            past_key_values=past_key_values if config.all_layers else None, 
         )  
         
-        return outputs  
+        pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+        
+        logits:torch.Tensor = self.classifier(pooled_output) # shape = (batch_size, num_labels)
+        
+        
+        # return outputs 
+        
+        loss = None
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+            
+        if not return_dict: # 输出嵌套元组
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+        
+        return MultipleChoiceModelOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        ) 
 
     def print_trainable_parameters(self):  
-        """print trainable parameters' number and ratio"""  
+        """
+        print trainable parameters' number and ratio
+        
+        only prefix, suffix, base model parameters are calculated
+        
+        """  
         trainable_params = 0  
         all_params = 0  
+        
+        for name, param in self.base_model.named_parameters():
+            num_params = param.numel()
+            all_params+=num_params
+            
         for name, param in self.named_parameters():  
             num_params = param.numel()  
-            all_params += num_params  
-            if param.requires_grad:  
-                trainable_params += num_params  
+            if param.requires_grad and ("prefix_embeddings" in name or "suffix_embeddings" in name or "classifier" in name):  
+                trainable_params += num_params
+                all_params += num_params  
+                  
         print(f"trainable param number: {trainable_params}")  
         print(f"total param number: {all_params}")  
         print(f"trainable param ratio: {100 * trainable_params / all_params:.2f}%")  
@@ -442,14 +540,14 @@ class BassPromptModel(torch.nn.Module):
         if classes_initiate_method == "normal":
             class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "cluster":
-            class_embeddings = get_classes_by_clustering(dataset_path, model, tokenizer, config=config ,embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
+            class_embeddings:torch.Tensor = get_classes_by_clustering(dataset_path, model, tokenizer, config=config ,embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "lda":
             class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         else:
             raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
 
         
-        prefix_embeddings = torch.zeros(self.num_prefix_tokens, hidden_size, device=device)
+        prefix_embeddings = torch.zeros(self.num_prefix_tokens, hidden_size, device=self.device)
         
         for i in range(self.num_prefix_tokens):  
             prefix_embeddings[i] = class_embeddings[i]
@@ -782,13 +880,42 @@ def get_classes_by_clustering(
     
     # 直接加载最终结果，有的话直接返回
     final_label_embeddings_filename = f"final_label_embeddings_{dataset_name}.pt"
-    final_label_embeddings_path = os.path.join(cache_dir, final_label_embeddings_filename)
+    final_label_metadata_filename = f"final_label_metadata_{dataset_name}.pt"
+    final_label_embeddings_path = os.path.join(cache_dir, 'final_embeddings',final_label_embeddings_filename)
+    final_label_metadata_path = os.path.join(cache_dir, 'final_embeddings', final_label_metadata_filename)
     
-    if os.path.exists(final_label_embeddings_path):
-        print(f"Loading final label embeddings from {final_label_embeddings_path}")
-        cluster_label_embeddings = torch.load(final_label_embeddings_path)  
-        print(f"Loaded final label embeddings shape: {cluster_label_embeddings.shape}")
-        return cluster_label_embeddings
+    
+    final_metadata = {
+        'dataset_path': dataset_path,  
+        'model_name': model_name,  
+        'embedding_size': embedding_size  
+    }
+    
+    if os.path.exists(final_label_embeddings_path) and os.path.exists(final_label_metadata_path):
+
+        # 验证metadata
+        with open(final_label_metadata_path, 'r') as f:  
+                cached_final_metadata = json.load(f)  
+                
+        if all(cached_final_metadata[k] == final_metadata[k] for k in final_metadata.keys() if k != 'max_length'):  
+            print(f"Loading final label embeddings from {final_label_embeddings_path}")
+            cluster_label_embeddings = torch.load(final_label_embeddings_path)  
+            print(f"Loaded final label embeddings shape: {cluster_label_embeddings.shape}")
+            return cluster_label_embeddings
+        else:  
+            print("============= cached final meta data ========================")
+            print(cached_final_metadata)
+            print()
+            print("============== final meta data ================================")
+            print(final_metadata)
+            print()
+            print("Sentence embedding's cache final metadata mismatch, recomputing final label embeddings for clustering...") 
+            print()
+
+    # print(f"Loading final label embeddings from {final_label_embeddings_path}")
+    # cluster_label_embeddings = torch.load(final_label_embeddings_path)  
+    # print(f"Loaded final label embeddings shape: {cluster_label_embeddings.shape}")
+    # return cluster_label_embeddings
     
     
   
@@ -942,8 +1069,16 @@ def get_classes_by_clustering(
         classes.append(candidate_tokens[best_token_id])
         
     cluster_label_embeddings = torch.concat(cluster_label_embeddings, dim=0) # shape = (num_topics, hidden_size)
+
+    if not os.path.exists(os.path.dirname(final_label_embeddings_path)):
+        os.makedirs(os.path.dirname(final_label_embeddings_path))
+        
     print(f"Saving final label embeddings to {final_label_embeddings_path}")  
-    torch.save(cluster_label_embeddings, final_label_embeddings_path)  
+    torch.save(cluster_label_embeddings, final_label_embeddings_path) 
+    
+    # 保存元信息 
+    with open(final_label_metadata_path, 'w') as f:  
+            json.dump(final_metadata, f) 
         
     return cluster_label_embeddings
         
@@ -1058,10 +1193,18 @@ def train_baas_prompt(config:BaasPromptConfig):
 
     
     
+    accelerator = Accelerator(
+        # gradient_accumulation_steps=1,  
+        # mixed_precision='fp16', 
+    )
+    
+    
     baas_model = BassPromptModel(  
         model=model,
         tokenizer=tokenizer,
-        config=config  
+        config=config,
+        chain_encode_args=None,
+        device = accelerator.device
     )
 
 
@@ -1095,7 +1238,7 @@ def train_baas_prompt(config:BaasPromptConfig):
             train_ds, 
             # shuffle=True, # shuffle is not necessary when using DistributedSampler
             collate_fn=default_data_collator, 
-            batch_size=Config['batch_size'],
+            batch_size=batch_size,
             pin_memory=True,
             sampler=train_sampler
         )
@@ -1103,50 +1246,36 @@ def train_baas_prompt(config:BaasPromptConfig):
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
-            batch_size=Config['batch_size'],
+            batch_size=batch_size,
             pin_memory=True,
             sampler=eval_sampler
         )
 
 
-    
-    # make sure to frozen the base model parameters
-    for param in baas_model.model.parameters():  
-        param.requires_grad = False  
+    # grad 已经在 BaasModel内部进行了处理
+    # # make sure to frozen the base model parameters
+    # for param in baas_model.base_model.parameters():  
+    #     param.requires_grad = False  
         
-    # make sure that the prefix and suffix tokens is trainable
-    baas_model.prefix_embeddings.requires_grad = True  
-    baas_model.suffix_embeddings.requires_grad = True 
+    # # make sure that the prefix and suffix tokens is trainable
+    # baas_model.prefix_embeddings.requires_grad = True  
+    # baas_model.suffix_embeddings.requires_grad = True 
     
     
-    baas_model.print_trainable_parameters()
-    
-    # for name, param in bidirectional_prompt_model.named_parameters():  
-    #   print(f"{name}: requires_grad = {param.requires_grad}") 
-    # print("============================")
-    # for param in bidirectional_prompt_model.parameters():  
-    #   print(f"param = {param}: requires_grad = {param.requires_grad}")
-
-    # make sure that the fine-tuning will only update virual tokens
-    # optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    optimizer = torch.optim.AdamW(
+    optimizer = config.optimizer_class(
         filter(lambda p: p.requires_grad, baas_model.parameters()), 
         lr=lr
     )
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=config.warmup_steps,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
     model = baas_model 
     
-    
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=1,  
-        # mixed_precision='fp16', 
-    )
+
     
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
@@ -1243,7 +1372,7 @@ def train_baas_prompt(config:BaasPromptConfig):
     print("model name = ", model_name)
 
     # 保存权重
-    save_path = Config['save_model_dir'][model_name]['bidirectional-prompt-tuning'][dataset_name]
+    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
     # torch.save(model.state_dict(), save_path) 
 
     # wait every GPU processes to reach here
@@ -1252,9 +1381,9 @@ def train_baas_prompt(config:BaasPromptConfig):
     # only the master process can save model
     # if torch.distributed.get_rank() == 0:  
     #     model.module.save_pretrained(save_path) 
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)  
-        print(f"已创建新的权重存储路径: {save_path}") 
+    # if not os.path.exists(save_path):
+    #     os.makedirs(save_path)  
+    #     print(f"已创建新的权重存储路径: {save_path}") 
         
     # accelerator.save(model.state_dict(), save_path)   
 
@@ -1346,6 +1475,8 @@ if __name__ == "__main__":
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification)
     
     max_seq_length = get_max_length_from_model(model)
+    
+    hidden_size = get_hidden_size_by_model_name(model_name)
 
     config = BaasPromptConfig(
         model_name = model_name,
@@ -1354,6 +1485,9 @@ if __name__ == "__main__":
         max_seq_length=max_seq_length,
         num_epochs=5,
         num_labels=2,
+        all_layers=False,
+        prefix_projection=True,
+        prefix_hidden_size=hidden_size
     )
     train_baas_prompt(config)
     
