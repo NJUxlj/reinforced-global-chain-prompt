@@ -18,10 +18,15 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+from transformers import (
+    AutoModelForSequenceClassification
+)
+
 
 
 from config import Config
 from config import NUM_CPU_PROCESSES
+from config import SENTENCE_TRANSFORMER_PATH
 from causal_modeling import RollbackDecoderWithHead
 
 from dataclasses import dataclass
@@ -59,7 +64,7 @@ class ChainEncodingArguments:
     random_seed:int = 42
     dataset:str = 'race'
     # encoder:str = "all-MiniLM-L6-v2"
-    encoder:str = Config['models']['bert-base-uncased']['model_path']
+    encoder:str = SENTENCE_TRANSFORMER_PATH
     hidden_size:int = 768   # 根据模型传进来
     method:str = "auto_cot"
     output_dir:str = "experiment/race"
@@ -220,7 +225,7 @@ def extract_k_reasoning_chains(args:ChainEncodingArguments):
 
 def encode_k_reasoning_chains(
     reduced_reasoning_steps:List[List[str]],
-    args
+    args:ChainEncodingArguments
     )->torch.Tensor:
     # args = parse_arguments()
     encoder = SentenceTransformer(args.encoder)
@@ -260,10 +265,12 @@ def encode_k_reasoning_chains(
     # shape: (K, min_ra_len, 768)  
     embeddings = torch.stack(all_embeddings) 
     
-    
+    print("********** Encode K reasoning chains ********************8")
     print("type(embeddings) = ", type(embeddings))
 
     print("embeddings.shape = ", embeddings.shape)
+    print("*****************************************************")
+    print()
         
     # shape = (K, min_ra_len, 768)
     return embeddings, args
@@ -429,11 +436,22 @@ def get_cot_context(args:ChainEncodingArguments)->torch.Tensor:
     print(save_info)
     
     context = aggregate_cot_embeddings(embeddings, args,True)
+    
+    print("******************** Get CoT Context Embedding ************************")
+    print("type(context) = ", type(context))
+    print("context.shape = ", context.shape)
+    print("context = ", context)
+    print("******************************************************************\n")
 
     return context
 
 
-def rollback_one_step_extend(target_steps:int, args:ChainEncodingArguments, model:RollbackDecoderWithHead=None)->torch.Tensor:
+def rollback_one_step_extend(
+        target_steps:int, 
+        args:ChainEncodingArguments, 
+        model:AutoModelForSequenceClassification,
+        decoder:RollbackDecoderWithHead=None
+    )->torch.Tensor:
     '''
     :param: model 这里的模型使用 BaasPromptModel初始化时赋值的self.model 传入
     
@@ -454,15 +472,16 @@ def rollback_one_step_extend(target_steps:int, args:ChainEncodingArguments, mode
         # use multihead-attention to generate new steps using causual language modeling
         for i in range(source_steps-1, target_steps):
             # 生成新的推理步骤
-            token_id, new_step_embedding = generate_new_step(context,model)
+            token_id, new_step_embedding = generate_new_step(context,model,decoder)
             new_step_embedding = new_step_embedding.unsqueeze(0) # [1, hidden_dim]
             context = torch.cat([context, new_step_embedding], dim=0)
         
         return context
 
 
-def generate_new_step(context: torch.Tensor,  
-                     model: RollbackDecoderWithHead = None,  
+def generate_new_step(context: torch.Tensor,
+                      model:AutoModelForSequenceClassification,  
+                     decoder: RollbackDecoderWithHead = None,  
                      temperature: float = 0.7) -> Tuple[int, torch.Tensor]:  
     """生成下一个token并返回其embedding  
     
@@ -477,10 +496,11 @@ def generate_new_step(context: torch.Tensor,
             - next_token_id: 下一个token的ID  
             - next_token_embedding: 下一个token的embedding向量 [hidden_dim]  
     """  
-    if model is None:  
+    if decoder is None:  
         # 如果没有传入模型，创建一个新的解码器层  
         d_model = context.size(-1)  # hidden_dim  
-        model = RollbackDecoderWithHead(  
+        decoder = RollbackDecoderWithHead(  
+            model = model,
             d_model=d_model,  
             d_ff=d_model * 4, 
             num_heads=8,  
@@ -488,7 +508,7 @@ def generate_new_step(context: torch.Tensor,
         )  
     
     device = context.device  
-    model = model.to(device)  
+    decoder = decoder.to(device)  
     
     # 创建因果掩码  
     seq_len = context.size(0)  
@@ -512,8 +532,10 @@ def generate_new_step(context: torch.Tensor,
     
     with torch.no_grad():  
         # 通过解码器生成新的隐藏状态  
-        next_token_logits  = model(context, causal_mask)  # shape = [1, vocab_size]
+        next_token_logits  = decoder.forward(context, causal_mask)  # shape = [1, vocab_size]
         
+        print("next_token_logits.shape = ", next_token_logits.shape)
+        print("next_token_logits = ", next_token_logits)
         
         # 应用温度缩放  
         # # temperature 影响概率分布的"锐利度", <1 使分布更尖锐，>1 使分布更平缓    
@@ -545,9 +567,11 @@ def generate_new_step(context: torch.Tensor,
         
 
         # 获取token的embedding  
-        next_token_embedding = model.embed_tokens(next_token)  # [1, 1, hidden_dim]  
+        next_token_embedding = decoder.embed_tokens(next_token)  # [1, 1, hidden_dim]  
         next_token_embedding = next_token_embedding.squeeze()  # [hidden_dim]  
         
+        print("next_token_embedding.shape = ", next_token_embedding.shape)
+        print("next_token_embedding = ", next_token_embedding)
 
     # return new_step.squeeze(0)  # [hidden_dim]  
     return next_token.squeeze().item(), next_token_embedding

@@ -4,12 +4,15 @@ import torch.nn.functional as F
 import math  
 
 from transformers import (
-    BertModel
+    BertModel,
+    AutoModelForSequenceClassification
 )
 
 from config import Config
 
 from typing import List, Tuple, Dict, Optional
+
+from utils import *
 
 class AdaptiveGate(nn.Module):  
     def __init__(self, hidden_size):  
@@ -203,6 +206,12 @@ class DecoderLayer(nn.Module):
         '''
         x.shape = [B, L, H]  # L: 序列长度, H: 隐藏层维度
         '''
+        print(" ******************* Inside Decoder Layer **********************8")
+        print("x.shape = ", x.shape)
+        print("x 的正确形状是 [B, L, H]")
+        print("x = ",x)
+        print("***************************************************************\n")
+        
         # 自注意力  
         attn_output, _ = self.self_attn(x, x, x, mask)  # [B, L, H]
         x = self.norm1(x + self.dropout(attn_output))  # [B, L, H]
@@ -220,6 +229,7 @@ class DecoderLayer(nn.Module):
 class RollbackDecoderWithHead(nn.Module):
     def __init__(
         self, 
+        model: AutoModelForSequenceClassification,
         d_model, 
         d_ff, 
         num_heads = 8, 
@@ -229,22 +239,28 @@ class RollbackDecoderWithHead(nn.Module):
         super().__init__()
         self.decoder_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
         self.head = nn.Linear(d_model, d_model)
-        self.bert_model = BertModel.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"] )
-
-        self.token_embedding = self.bert_model.embeddings.word_embeddings  # shape = [vocab_size, d_model] 
+        # self.bert_model = BertModel.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"] )
+        self.model=model
+        # self.token_embedding = self.bert_model.embeddings.word_embeddings  # shape = [vocab_size, d_model] 
+        self.token_embedding = get_word_embeddings_from_model(self.model)
         self.num_layers = num_layers
         self.decoders = nn.ModuleList([
             self.decoder_layer
             for _ in range(self.num_layers)
         ])
         
-        self.vocab_size = self.bert_model.config.vocab_size
+        self.vocab_size = self.model.config.vocab_size
         # 输出投影到词表大小  
         self.classifier = nn.Linear(d_model, self.vocab_size)  
         
         
     def forward(self, x, mask=None):  
         decoder_output = x
+        print("*********** decoder input ***************")
+        print("decoder_input.shape = ", decoder_output.shape)
+        print("decoder_input = ", decoder_output)
+        print("**********************************\n")
+        
         for i in range(self.num_layers):
             decoder_output =self.decoders[i](decoder_output) # [B, L, H]
         

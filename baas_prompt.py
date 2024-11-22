@@ -128,7 +128,7 @@ class BaasPromptConfig:
     
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768               # MLP中的P_theta'  即，MLP输入的隐单元维度  huggingface 默认它==encoder_hidden_size
-    encoder_hidden_size:int = prefix_hidden_size   # bert的隐藏层维度
+    encoder_hidden_size:int = 768   # bert的隐藏层维度
     
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减 
@@ -216,9 +216,9 @@ class BaasPromptEncoder(nn.Module):
         
         '''
         # 1. 扩展batch维度  
-        if prefix_embeds.dim()==2:
+        if prefix_embeddings.dim()==2:
             prefix_embeds = prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
-        if suffix_embeds.dim()==2:
+        if suffix_embeddings.dim()==2:
             suffix_embeds = suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
         
         # 不需要过prompt_encoder的情况
@@ -275,7 +275,7 @@ class BassPromptModel(torch.nn.Module):
         self.model_type = self.model_config.model_type 
         
         self.tokenizer = tokenizer
-        self.hidden_size = config.encoder_hidden_size # bert's hidden size
+        self.hidden_size = config.prefix_hidden_size # bert's hidden size
         self.prefix_hidden_size = config.prefix_hidden_size # P_theta' in MLP reparameterization
         self.num_prefix_tokens = config.prefix_length
         self.num_suffix_tokens = config.suffix_length
@@ -284,15 +284,17 @@ class BassPromptModel(torch.nn.Module):
         self.num_layers = self.model_config.num_hidden_layers
         self.device = device
         
+        d_ff = self.hidden_size*4
         self.rollback_decoder = RollbackDecoderWithHead(
-            d_model=config.prefix_hidden_size,
-            d_ff=config.prefix_hidden_size*4,
+            model = self.model,
+            d_model=self.hidden_size,
+            d_ff=d_ff,
             num_heads=8,
         )
         if chain_encode_args is None:
             self.chain_encode_args = ChainEncodingArguments(
                 dataset=config.dataset_name,
-                hidden_size=config.encoder_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
+                hidden_size=config.prefix_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
                 output_dir="./autocot/experiment/race",
                 embedding_dir = "./autocot/embeddings/race",
                 context_dir = "./autocot/context/race"
@@ -303,6 +305,7 @@ class BassPromptModel(torch.nn.Module):
         self.prefix_embeddings = self.initialize_prefix_prompts(
             dataset_path=get_dataset_path_by_name(config.dataset_name),
             tokenizer=self.tokenizer,
+            model=self.model,
             hidden_size = self.hidden_size,
             config = config,
             classes_initiate_method = "cluster",
@@ -384,7 +387,8 @@ class BassPromptModel(torch.nn.Module):
         print(f"prefix.shape = {prefix_embeds.shape}")
         print(f"suffix.shape = {suffix_embeds.shape}")
         print(f"inputs_embeds.shape = {inputs_embeds.shape}")
-
+        print("**************************************************")
+        print()
         # 拼接前缀、原始输入和后缀嵌入  
         
         inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
@@ -510,7 +514,8 @@ class BassPromptModel(torch.nn.Module):
         context = rollback_one_step_extend(
             self.num_suffix_tokens,
             args = self.chain_encode_args,
-            model = self.rollback_decoder
+            model = self.model,
+            decoder = self.rollback_decoder
             )
         
         suffix_embeddings = context
@@ -522,6 +527,7 @@ class BassPromptModel(torch.nn.Module):
     def initialize_prefix_prompts(
         self, 
         dataset_path,
+        model,
         tokenizer,
         hidden_size, 
         config:BaasPromptConfig,
@@ -534,7 +540,7 @@ class BassPromptModel(torch.nn.Module):
         
         return tensor shape = (num_prefix_tokens, embedding_size)
         """
-        model = AutoModelForSequenceClassification.from_pretrained(BERT_PATH)
+        # model = AutoModelForSequenceClassification.from_pretrained(BERT_PATH)
         
         class_embeddings = None
         if classes_initiate_method == "normal":
@@ -841,7 +847,7 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
 
 def get_classes_by_clustering(
     dataset_path, 
-    model, 
+    model: AutoModelForSequenceClassification, 
     tokenizer, 
     config:BaasPromptConfig,
     embedding_size,  # hidden_size
@@ -873,14 +879,14 @@ def get_classes_by_clustering(
     # 生成唯一的缓存文件名（基于模型名称和数据集路径）  
     model_name = get_model_name_using_model(model)
     dataset_name = os.path.basename(dataset_path) 
-    cache_filename = f"label_embeddings_{dataset_name}.pt"  
+    cache_filename = f"label_embeddings_{dataset_name}_{embedding_size}.pt"  
     cache_path = os.path.join(cache_dir, cache_filename) 
     
     
     
     # 直接加载最终结果，有的话直接返回
-    final_label_embeddings_filename = f"final_label_embeddings_{dataset_name}.pt"
-    final_label_metadata_filename = f"final_label_metadata_{dataset_name}.pt"
+    final_label_embeddings_filename = f"final_label_embeddings_{dataset_name}_{embedding_size}.pt"
+    final_label_metadata_filename = f"final_label_metadata_{dataset_name}_{embedding_size}.pt"
     final_label_embeddings_path = os.path.join(cache_dir, 'final_embeddings',final_label_embeddings_filename)
     final_label_metadata_path = os.path.join(cache_dir, 'final_embeddings', final_label_metadata_filename)
     
@@ -925,7 +931,7 @@ def get_classes_by_clustering(
         'model_name': model_name,  
         'embedding_size': embedding_size  
     }  
-    metadata_path = os.path.join(cache_dir, f"{cache_filename}_metadata.json")  
+    metadata_path = os.path.join(cache_dir, f"{cache_filename}_metadata_{embedding_size}.json")  
     
     embeddings = None
 
@@ -1476,7 +1482,7 @@ if __name__ == "__main__":
     
     max_seq_length = get_max_length_from_model(model)
     
-    hidden_size = get_hidden_size_by_model_name(model_name)
+    hidden_size = get_hidden_size_using_model(model)
 
     config = BaasPromptConfig(
         model_name = model_name,
@@ -1487,7 +1493,9 @@ if __name__ == "__main__":
         num_labels=2,
         all_layers=False,
         prefix_projection=True,
-        prefix_hidden_size=hidden_size
+        prefix_hidden_size=hidden_size,
+        encoder_hidden_size=hidden_size,
+        
     )
     train_baas_prompt(config)
     

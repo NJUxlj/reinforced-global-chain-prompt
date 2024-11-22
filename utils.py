@@ -157,12 +157,15 @@ def get_hidden_size_using_model(model):
     
         # 获取模型类型  
     model_type = type(model)
+    
+    model_name = get_model_name_using_model(model)
 
     if hasattr(model, "config"):
         config = model.config
     else:
         raise RuntimeError("This model object does not have a config file, check again~~~")
-
+    
+    print(f"model:{model_name}'s hidden_size = {config.hidden_size}")
     return config.hidden_size
 
 def get_classifier_from_model(model)-> nn.Module:  
@@ -254,6 +257,11 @@ def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
      
      return a tensor of shape (num_tokens, 1, hidden_size)
     '''
+    
+    if hasattr(model, "module"):  
+        print("This model is wrapped by Accelerator(DDP), we use model.module")  
+        model = model.module  
+        
     if hasattr(model, 'embeddings'):  
         return model.embeddings(token_ids)  
     elif hasattr(model, 'bert') and hasattr(model.bert, 'embeddings'):  
@@ -268,6 +276,28 @@ def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
         raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.") 
 
 
+def get_word_embeddings_from_model(model):
+    
+    if hasattr(model, "module"):  
+        print("This model is wrapped by Accelerator(DDP), we use model.module")  
+        model = model.module  
+        
+    try:
+        if hasattr(model, 'embeddings'):  
+            return model.embeddings.word_embeddings
+        elif hasattr(model, 'bert') and hasattr(model.bert, 'embeddings'):  
+            return model.bert.embeddings.word_embeddings
+        elif hasattr(model, 'roberta') and hasattr(model.roberta, 'embeddings'):  
+            return model.roberta.embeddings.word_embeddings 
+        elif hasattr(model, 'distilbert') and hasattr(model.distilbert, 'embeddings'):  
+            return model.distilbert.embeddings.word_embeddings 
+        elif hasattr(model, 'base_model') and hasattr(model.base_model, 'embeddings'):  
+            return model.base_model.embeddings.word_embeddings
+        else:  
+            raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.") 
+
+    except Exception as e:
+        raise AttributeError(f"Can not find the word_embeddings in the model. Please check the model type {type(model).__name__}.")
 
 
 def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_path = None, num_labels = 4):
