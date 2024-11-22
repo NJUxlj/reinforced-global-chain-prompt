@@ -75,6 +75,13 @@ import nltk
 import logging
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import (   
+    accuracy_score,  
+    precision_score,  
+    recall_score,  
+    f1_score,  
+    classification_report  
+)  
 from sklearn.metrics.pairwise import cosine_similarity  
 
 from sklearn.cluster import KMeans
@@ -83,6 +90,7 @@ from collections import defaultdict
 
 from sentence_transformers import SentenceTransformer, models
 from dataclasses import dataclass
+from collections import Counter
 
 
 import nltk  
@@ -105,7 +113,7 @@ device = Config['device']
 class BaasPromptConfig:
     model_name: str = "bert-base-uncased"
     model_path: str = "bert-base-uncased"  # 预训练模型名称
-    peft_method: str = "baas-tuning"
+    peft_method: str = "baas-prompt"
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
@@ -1032,7 +1040,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 
 
 
-def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
+def train_baas_prompt(config:BaasPromptConfig):
 
     
     model_name = config.model_name
@@ -1151,7 +1159,7 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name]["bidirectional-prompt-tuning"][dataset_name]
+        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
@@ -1211,9 +1219,6 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
                 all_labels = []  
                 with torch.no_grad():  
                     for val_batch in eval_dataloader:  
-                        # val_input_ids = val_batch['input_ids'].to(device)  
-                        # val_attention_mask = val_batch['attention_mask'].to(device)  
-                        # val_labels = val_batch['labels'].to(device)  
                         val_input_ids = val_batch['input_ids']
                         val_attention_mask = val_batch['attention_mask'] 
                         val_labels = val_batch['labels']
@@ -1265,40 +1270,8 @@ def train_bidirectional_prompt_tuning(config:BaasPromptConfig):
 
 
 
-def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name = "race", eval_dataloader:DataLoader=None):
-    # 初始化accelerator  
-    accelerator = Accelerator()  
-    
-    # 获取logger  
-    logger = accelerator.logging.get_logger(__name__)  
-    
-    # 1. 加载保存的模型权重  
-    checkpoint = torch.load(trained_model_path)  
-    
-    # 2. 获取保存的prompt embeddings  
-    prefix_prompt_embeddings = checkpoint['prefix_embeddings']  
-    suffix_prompt_embeddings = checkpoint['suffix_embeddings']  
-    
-    # 3. 确保embeddings是Parameter类型  
-    prefix_prompt_embeddings = torch.nn.Parameter(prefix_prompt_embeddings)  
-    suffix_prompt_embeddings = torch.nn.Parameter(suffix_prompt_embeddings)  
-    
-    # 4. 创建带有双向Prompt的模型实例  
-    bidirectional_prompt_model = BassPromptModel(  
-        model=model,  # 假设model是从外部传入的基础模型  
-        prefix_embeddings=prefix_prompt_embeddings,  
-        suffix_embeddings=suffix_prompt_embeddings,  
-        num_prefix_tokens=prefix_prompt_embeddings.shape[0],   
-        num_suffix_tokens=suffix_prompt_embeddings.shape[0],  
-    )  
-    
-    # 5. 使用accelerator准备模型和数据加载器  
-    bidirectional_prompt_model, eval_dataloader = accelerator.prepare(  
-        bidirectional_prompt_model, eval_dataloader  
-    )  
-    
-    # 6. 设置为评估模式  
-    bidirectional_prompt_model.eval()  
+def evaluate_bidirectional_prompt_tuning(model, accelerator:Accelerator, eval_dataloader:DataLoader=None):
+    model.eval()  
     
     all_preds = []  
     all_labels = []  
@@ -1315,7 +1288,7 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name
             token_type_ids = batch.get('token_type_ids', None)  
             
             # 前向传播  
-            outputs = bidirectional_prompt_model(  
+            outputs = model(  
                 input_ids=input_ids,  
                 attention_mask=attention_mask,  
                 token_type_ids=token_type_ids,  
@@ -1325,7 +1298,6 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name
             # 获取预测结果  
             logits = outputs.logits  
             
-            # 使用accelerator.gather收集所有进程的结果  
             gathered_logits = accelerator.gather(logits)  
             gathered_labels = accelerator.gather(labels)  
             
@@ -1336,7 +1308,6 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name
             all_preds.extend(preds)  
             all_labels.extend(labels_cpu)  
     
-    # 8. 确保只在主进程上计算和打印指标  
     if accelerator.is_main_process:  
         # 计算评价指标  
         accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
@@ -1344,29 +1315,26 @@ def evaluate_bidirectional_prompt_tuning(trained_model_path, model, dataset_name
             all_labels, all_preds, average='weighted'  
         )  
         
-        # 记录日志  
-        logger.info(  
-            f"Validation Metrics:\n"  
-            f"Accuracy: {accuracy:.4f}\n"  
-            f"Precision: {precision:.4f}\n"  
-            f"Recall: {recall:.4f}\n"  
-            f"F1: {f1:.4f}"  
-        )  
+        label_distribution = Counter(all_labels)  
+        pred_distribution = Counter(all_preds) 
         
-        # 使用accelerator记录指标  
-        accelerator.log({  
-            'eval/accuracy': accuracy,  
-            "eval/precision": precision,  
-            "eval/recall": recall,  
-            "eval/f1": f1  
-        })  
-        
-        return {  
+        results = {  
             'accuracy': accuracy,  
             'precision': precision,  
             'recall': recall,  
             'f1': f1  
         }  
+        
+        # debug info
+        print("\nEvaluation Results:")  
+        print(f"Total samples evaluated: {len(all_labels)}")  
+        print(f"Label distribution: {dict(label_distribution)}")  
+        print(f"Prediction distribution: {dict(pred_distribution)}")  
+        print("\nClassification Report:")  
+        print(classification_report(all_labels, all_preds))         
+         
+        
+        return results 
     
     # 非主进程返回None  
     return None
@@ -1394,7 +1362,7 @@ if __name__ == "__main__":
         num_epochs=5,
         num_labels=2,
     )
-    train_bidirectional_prompt_tuning(config)
+    train_baas_prompt(config)
     
     
     
