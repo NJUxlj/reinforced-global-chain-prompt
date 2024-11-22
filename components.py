@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  
 
+from torch.utils.data import Dataset, DataLoader
+
 from transformers import AutoModel, AutoTokenizer,TrainingArguments, Trainer
+from accelerate import Accelerator
 from config import Config, BudgetSchedulerConfig   
 
 from typing import List, Tuple, Dict, Optional, Any, Union
@@ -203,7 +206,28 @@ class InputEncoder(nn.Module):
         return compressed  
 
 
+class TextDataset(Dataset):  
+    """
+    用于将文本转换为Dataset格式，便于并行处理
+    
+    用于处理SentenceEncoder编码的文本列表，先将其转为TextDataset, 再转为DataLoader, 最后放入Accelerator
+    """  
+    def __init__(self, texts):  
+        if isinstance(texts, str):  
+            self.texts = [texts]  
+        else:  
+            self.texts = texts  
 
+    def __len__(self):  
+        return len(self.texts)  
+
+    def __getitem__(self, idx):  
+        if isinstance(idx, int):
+            return self.texts[idx]  
+        elif isinstance(idx, list):
+            return [self.texts[id] for id in idx]
+        else:
+            raise TypeError(f"Index must be an integer, got {type(idx)}") 
 
 class SentenceEncoder(nn.Module):
     def __init__(self, hidden_size):
@@ -215,7 +239,7 @@ class SentenceEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.linear = nn.Linear(hidden_size, hidden_size)
         self.activation = nn.GELU()
-        self.encoder_name = Config['models']['bert-base-uncased']['model_path']
+        self.encoder_name = SENTENCE_TRANSFORMER_PATH
         
         encoder = SentenceTransformer(self.encoder_name)
         sentence_embedding_dimension = encoder.get_sentence_embedding_dimension()
@@ -244,7 +268,7 @@ class SentenceEncoder(nn.Module):
             shape = [num_sentences, hidden_size]  or [hidden_size]
         
         '''
-        
+    
         sentence_embeddings = self.encoder.encode(
             sentences,
             convert_to_tensor=True,
@@ -252,6 +276,12 @@ class SentenceEncoder(nn.Module):
             batch_size=128,
             normalize_embeddings=True
         )  # shape = [K, H]
+        
+        # # 如果输入是单个句子，则去掉批次维度  
+        # if isinstance(sentences, str):  
+        #     sentence_embeddings = sentence_embeddings.squeeze(0) 
+        
+
         
         return sentence_embeddings
     

@@ -119,25 +119,28 @@ def get_base_model_using_model(model):
     else:
         raise RuntimeError("This model object does not have a config file, check again~~~")
 
-    if isinstance(model, AutoModel):
-        model = model
-    elif isinstance(model, PeftModel):  
-        print("Info: Model is a PeftModel, getting the base model")  
-        model = model.get_base_model() 
-    elif isinstance(model, AutoModelForSequenceClassification):
-        model = model.base_model
-    elif isinstance(model, BertForSequenceClassification):
-        model = model.bert
-    elif isinstance(model, RobertaForSequenceClassification):
-        model = model.roberta
-    elif isinstance(model, Qwen2ForSequenceClassification):
-        model = model.qwen
-    
-    else:
-        raise ValueError(f"the passed model object is not either SequenceClassification model or AutoModel \
-            The current model type = {model_type}")
+    try:
+        if isinstance(model, AutoModel):
+            model = model
+        elif isinstance(model, PeftModel):  
+            print("Info: Model is a PeftModel, getting the base model")  
+            model = model.get_base_model() 
+        elif isinstance(model, AutoModelForSequenceClassification):
+            model = model.base_model
+        elif isinstance(model, BertForSequenceClassification):
+            model = model.bert
+        elif isinstance(model, RobertaForSequenceClassification):
+            model = model.roberta
+        elif isinstance(model, Qwen2ForSequenceClassification):
+            model = model.qwen
+         
+        else:
+            raise ValueError(f"the passed model object is not either SequenceClassification model or AutoModel \
+                The current model type = {model_type}")
 
-    
+    except:
+        raise ValueError(f"Extracting base model failed, your current model type is {model_type}")
+
     return model
 
 def get_hidden_size_using_config():

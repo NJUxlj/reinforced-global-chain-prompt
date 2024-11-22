@@ -254,11 +254,17 @@ class BassPromptModel(torch.nn.Module):
     def __init__(self, model, tokenizer, config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments=None):  
         super(BassPromptModel, self).__init__()  
         self.model = model
+        self.base_model = get_base_model_using_model(self.model)
+        self.model_config = self.model.config
+        self.model_type = self.model_config.model_type 
+        
         self.tokenizer = tokenizer
         self.hidden_size = config.encoder_hidden_size # bert's hidden size
         self.prefix_hidden_size = config.prefix_hidden_size # P_theta' in MLP reparameterization
         self.num_prefix_tokens = config.prefix_length
         self.num_suffix_tokens = config.suffix_length
+        
+        self.all_layers = config.all_layers # 是否插入所有层
         
         self.rollback_decoder = RollbackDecoderWithHead(
             d_model=config.prefix_hidden_size,
@@ -278,7 +284,6 @@ class BassPromptModel(torch.nn.Module):
             
         self.prefix_embeddings = self.initialize_prefix_prompts(
             dataset_path=get_dataset_path_by_name(config.dataset_name),
-            model=self.model,
             tokenizer=self.tokenizer,
             hidden_size = self.hidden_size,
             config = config,
@@ -294,12 +299,18 @@ class BassPromptModel(torch.nn.Module):
         self.prefix_embeddings, self.suffix_embeddings = self.prompt_encoder.forward(
             prefix_embeddings = self.prefix_embeddings,
             suffix_embeddings = self.suffix_embeddings,
-            )  # shape = (batch_size, seq_length, hidden_size)
+            batch_size= 1,
+            )  # shape = (batch_size, seq_length, hidden_size), 等下会在forward函数中把他扩展成真实的batch_size
         
 
         self.embedding_layer = self.model.get_input_embeddings()  # 获取词嵌入层
         
-        self.disable_grad_calc()
+        self.classifier = get_classifier_from_model(self.model)
+        
+        self.disable_grad_calc() # 禁用梯度计算
+        
+    def get_past_key_values(self, batch_size=1):
+        pass
     
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):  
         # 原始输入嵌入
@@ -413,7 +424,6 @@ class BassPromptModel(torch.nn.Module):
     def initialize_prefix_prompts(
         self, 
         dataset_path,
-        model,
         tokenizer,
         hidden_size, 
         config:BaasPromptConfig,
@@ -426,6 +436,8 @@ class BassPromptModel(torch.nn.Module):
         
         return tensor shape = (num_prefix_tokens, embedding_size)
         """
+        model = AutoModelForSequenceClassification.from_pretrained(BERT_PATH)
+        
         class_embeddings = None
         if classes_initiate_method == "normal":
             class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
@@ -446,6 +458,9 @@ class BassPromptModel(torch.nn.Module):
         # prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
 
         return prefix_embeddings
+    
+    def add_to_all_layers(self):
+        pass
 
 def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal"):
     '''
@@ -734,7 +749,7 @@ def get_classes_by_clustering(
     embedding_size,  # hidden_size
     num_topics=5,  
     max_length=512, 
-    use_trained_embeddings=False,
+    use_trained_embeddings=True,
     cache_dir='./class_label_cluster_embeddings'  # 存储embeddings的目录  
     )->List[torch.Tensor]:
     '''
@@ -752,6 +767,9 @@ def get_classes_by_clustering(
     '''
     print(f"***************** Get Class Labels by Clustering ~~~~ *********************88")
     os.makedirs(cache_dir, exist_ok=True)
+    device = Config.device
+    classes = []
+    model = model.to(device)
     
     
     # 生成唯一的缓存文件名（基于模型名称和数据集路径）  
@@ -759,15 +777,30 @@ def get_classes_by_clustering(
     dataset_name = os.path.basename(dataset_path) 
     cache_filename = f"label_embeddings_{dataset_name}.pt"  
     cache_path = os.path.join(cache_dir, cache_filename) 
+    
+    
+    
+    # 直接加载最终结果，有的话直接返回
+    final_label_embeddings_filename = f"final_label_embeddings_{dataset_name}.pt"
+    final_label_embeddings_path = os.path.join(cache_dir, final_label_embeddings_filename)
+    
+    if os.path.exists(final_label_embeddings_path):
+        print(f"Loading final label embeddings from {final_label_embeddings_path}")
+        cluster_label_embeddings = torch.load(final_label_embeddings_path)  
+        print(f"Loaded final label embeddings shape: {cluster_label_embeddings.shape}")
+        return cluster_label_embeddings
+    
+    
   
-    # 保存数据集信息，用于验证缓存是否匹配  
+    # 保存数据集信息，用于验证sentence embedding的缓存是否匹配  
     metadata = {  
         'dataset_path': dataset_path,  
         'model_name': model_name,  
-        'max_length': max_length,  
         'embedding_size': embedding_size  
     }  
     metadata_path = os.path.join(cache_dir, f"{cache_filename}_metadata.json")  
+    
+    embeddings = None
 
     # 如果启用缓存且缓存文件存在，尝试加载缓存的embeddings  
     if use_trained_embeddings and os.path.exists(cache_path) and os.path.exists(metadata_path):  
@@ -776,7 +809,7 @@ def get_classes_by_clustering(
             with open(metadata_path, 'r') as f:  
                 cached_metadata = json.load(f)  
                 
-            if all(cached_metadata[k] == metadata[k] for k in metadata.keys()):  
+            if all(cached_metadata[k] == metadata[k] for k in metadata.keys() if k != 'max_length'):  
                 print(f"Loading cached embeddings from {cache_path}")  
                 # 使用torch.load加载缓存的embeddings  
                 embeddings = torch.load(cache_path)  
@@ -784,26 +817,20 @@ def get_classes_by_clustering(
                 # return process_embeddings(embeddings, num_topics, K)  # 假设有这个后处理函数[聚类逻辑]
                 
             else:  
-                print("Cache metadata mismatch, recomputing embeddings for clustering...") 
-        except (json.JSONDecodeError, FileNotFoundError, RuntimeError) as e:
-            print(f"Error, when loading cache: {e}. Recomputing embeddings...")
-    
-    else:
-        classes = []
-        model = model.eval()
-        
-        
-        # accelerator = Accelerator()
-        
-        device = Config.device
-        # model = accelerator.prepare(model)
-        
-        
-        all_pooled_embeddings = [] # store the pooled embeddings
-        
-        vocab_size = tokenizer.vocab_size
+                print("============= cached meta data ========================")
+                print(cached_metadata)
+                print()
+                print("============== meta data ================================")
+                print(metadata)
+                raise RuntimeError("Sentence embedding's cache metadata mismatch, recomputing embeddings for clustering...") 
 
+        except (json.JSONDecodeError, FileNotFoundError, RuntimeError) as e:
+            raise RuntimeError(f"Error, when loading cache: {e}. Recomputing embeddings...")
+
+
+        # embeddings = torch.load(cache_path)  
         
+    else:
         train_ds, input_key = reformat_input(config, tokenizer, reformat_type = 'cluster')
         train_ds: Dict[str,List[str]]
         
@@ -819,59 +846,18 @@ def get_classes_by_clustering(
         sentences = train_ds[input_key]
         
         print(f"The training data is reformated to only one column {input_key}, now we get each example's embedding using the SentenceTransformer~~~")
-        # train_data_loader = DataLoader(train_ds, 
-        #                             batch_size=config.batch_size, 
-        #                             collate_fn=default_data_collator, 
-        #                             num_workers=NUM_CPU_PROCESSES, # use as your need
-        #                             pin_memory=True,
-        #                             shuffle=False)
-        
-        # model, train_data_loader = accelerator.prepare(model, train_data_loader)
-        
-        # all_batch_embeddings = []
-        # with torch.no_grad():
-        #     for index, batch in enumerate(tqdm(train_data_loader)):
-        #         batch = {k: v.to(device) for k, v in batch.items()}
-                
-        #         # if 'labels' exists in batch，delete it，because inference does not need labels  
-        #         if 'labels' in batch:
-        #             del batch['labels']
-                
-        #         outputs = model(**batch)
-        #         if hasattr(outputs, "last_hidden_state"): # AutoModel
-        #             last_hidden_state = outputs.last_hidden_state # shape = (batch_size, seq_len, hidden_size)
-        #         elif hasattr(outputs, "hidden_states"): # AutoModelForSequenceClassification
-        #             last_hidden_state = outputs.hidden_states[-1] # shape = (batch_size, seq_len, hidden_size)
-        #         else:
-        #             raise ValueError("Can not extract the \"last_hidden_state\" from the model output")
-                
-                
-        #         # average pooling 
-        #         batch_embeddings = last_hidden_state.mean(1) # shape = (batch_size,  hidden_size)
-                
-        #         # print("batch_embeddings.shape = ", batch_embeddings.shape)
-        #         # for embedding in batch_embeddings:
-        #         all_batch_embeddings.append(batch_embeddings) # shape = (1, hidden_size) # 避免循环 
-                
-        #         # 定期清理缓存  
-        #         if torch.cuda.is_available():  
-        #             torch.cuda.empty_cache()  
         
         encoder = SentenceEncoder(
             hidden_size=embedding_size
-        )
+        ).to(device)
         
         embeddings = encoder.encode(
             sentences=sentences
         ) # shape = (dataset_size, hidden_size)
                 
-        # embeddings = torch.cat(all_batch_embeddings, dim=0)
         
         print("all_embeddings.shape = ", embeddings.shape)
-        
-        # 在分布式环境中收集所有进程的嵌入向量  
-        # embeddings = accelerator.gather(embeddings)  
-        
+         
         
         # 保存embeddings到缓存  
         print(f"Saving new embeddings to {cache_path}")  
@@ -881,6 +867,10 @@ def get_classes_by_clustering(
         with open(metadata_path, 'w') as f:  
             json.dump(metadata, f) 
     
+    
+    if embeddings ==None:
+        raise RuntimeError("Sentence embeddings for clustering is None, created failed, please check the code")
+
     # no matter how you get embeddings (cache/model infer), we need to convert it to numpy array for clustering
     embeddings = embeddings.cpu().numpy() 
              
@@ -890,7 +880,7 @@ def get_classes_by_clustering(
     kmeans = KMeans(n_clusters=num_topics, random_state=42)
     kmeans.fit(embeddings)
     
-    centroids = kmeans.cluster_centers_
+    centroids = kmeans.cluster_centers_ # shape = ndarray(n_clusters, n_features)
     
     print("prepare candidate vocabulary...")  
     vocab = tokenizer.get_vocab()  
@@ -922,8 +912,8 @@ def get_classes_by_clustering(
     
     # 加入判断逻辑
     # candidate_token_embeddings = model_unwrapped.embeddings(candidate_token_ids) # shape = (batch_size, 1, hidden_size) == (num_tokens, 1, hidden_size)
-    candidate_token_embeddings = get_vocab_embeddings_from_model(model, candidate_token_ids)
-    candidate_token_embeddings =  candidate_token_embeddings.squeeze(1)
+    candidate_token_embeddings = get_vocab_embeddings_from_model(model, candidate_token_ids).to(device)
+    candidate_token_embeddings =  candidate_token_embeddings.squeeze(1) # shape = (num_tokens, hidden_size)
     
     print("candidate token embeddings shape: ", candidate_token_embeddings.shape)
 
@@ -951,6 +941,9 @@ def get_classes_by_clustering(
         print(f"Cluster {idx + 1}'s best suit token：{candidate_tokens[best_token_id]}, similarity: {similarity:.4f}") 
         classes.append(candidate_tokens[best_token_id])
         
+    cluster_label_embeddings = torch.concat(cluster_label_embeddings, dim=0) # shape = (num_topics, hidden_size)
+    print(f"Saving final label embeddings to {final_label_embeddings_path}")  
+    torch.save(cluster_label_embeddings, final_label_embeddings_path)  
         
     return cluster_label_embeddings
         

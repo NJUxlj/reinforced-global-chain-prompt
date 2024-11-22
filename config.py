@@ -597,6 +597,9 @@ Config = {
     
    
     "models":{
+        "SentenceTransformer":{
+            "model_path":"/root/model/all-MiniLM-L6-v2"
+        },
         "bert-base-uncased": {
             "model_name": "bert-base-uncased",
             "max_length": 512,
@@ -742,8 +745,10 @@ Config = DotDict(Config)
 
 
 
+SENTENCE_TRANSFORMER_PATH = Config.models.SentenceTransformer.model_path
 
 
+BERT_PATH = Config['models']['bert-base-uncased']['model_path']
 
 
 MAX_LENGTH = Config['models']['bert-large-uncased']['max_length']
