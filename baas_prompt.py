@@ -140,6 +140,7 @@ class BaasPromptConfig:
     optimizer_class:type = Adam 
     
     all_layers:bool = False  # 是否在所有层插入prefix, suffix
+    is_prefix:bool = False   # 是否把continuous prompt tokens 作为前缀append在input上，还是类似prompt-tuning直接插入input
     
 
     
@@ -243,7 +244,7 @@ class BaasPromptEncoder(nn.Module):
         # 不需要过prompt_encoder的情况, 只训练continuous_prompt_embeddings， 其余的encoder都用不到(不输入且不更新)
         if not self.prefix_projection:
             prefix_embeds,suffix_embeds = torch.split(
-                self.continuous_prompt_embeddings,
+                self.continuous_prompt_embeddings.clone(),
                 [self.config.prefix_length, self.config.suffix_length],
                 dim=1
             )
@@ -253,7 +254,7 @@ class BaasPromptEncoder(nn.Module):
         # all_embeddings = self.embedding(self.continuous_prompt_embeddings)
         
         prefix_embeds,suffix_embeds = torch.split(
-                self.continuous_prompt_embeddings,
+                self.continuous_prompt_embeddings.clone(),
                 [self.config.prefix_length, self.config.suffix_length],
                 dim=1
             )
@@ -313,6 +314,7 @@ class BassPromptModel(torch.nn.Module):
         self.num_suffix_tokens = config.suffix_length
         
         self.all_layers = config.all_layers # 是否插入所有层
+        self.is_prefix = config.is_prefix # 是前缀还是插入？
         self.num_layers = self.model_config.num_hidden_layers
         self.device = device
         
@@ -403,113 +405,119 @@ class BassPromptModel(torch.nn.Module):
         print(f"input_ids.shape = {input_ids.shape}")  # List[List[int]]
         # input_ids = input_ids.squeeze(1) 
         
-        inputs_embeds:torch.Tensor = self.embedding_layer(input_ids)  
         
-        batch_size = inputs_embeds.size(0)  
+        # 确保不会重复计算或重用张量
+        with torch.set_grad_enabled(True):
+            inputs_embeds:torch.Tensor = self.embedding_layer(input_ids)  
+            
+            # shape = (batch_size, seq_length, hidden_size)
+            prefix_embeds, suffix_embeds = self.prompt_encoder.forward()
+            
+            
+            batch_size = inputs_embeds.size(0)  
+            
+            assert batch_size == self.config.batch_size, "input embedding's batch_size must be equal to config.batch_size"
+            
         
-        assert batch_size == self.config.batch_size, "input embedding's batch_size must be equal to config.batch_size"
-        
-        # 将前缀和后缀Prompt Embeddings扩展到batch维度  
-        # prefix_embeds = self.prefix_embeddings.expand(batch_size, -1, -1)  
-        # suffix_embeds = self.suffix_embeddings.expand(batch_size, -1, -1)  
-        
-        # shape = (batch_size, seq_length, hidden_size)
-        prefix_embeds, suffix_embeds = self.prompt_encoder.forward()
-    
-        past_key_values = self.get_past_key_values(
-            prefix_embeds,
-            inputs_embeds,
-            suffix_embeds,
-            batch_size) if config.all_layers else None
-        
-        
-        if self.all_layers:
-            # 插入self.base_model的每一层
-            self.add_to_all_layers(
-                prefix_embeds,
-                suffix_embeds
-                )
-        
-        print("************* 前缀， 中缀， 后缀 拼接前：*************")
-        print(f"prefix.shape = {prefix_embeds.shape}")
-        print(f"suffix.shape = {suffix_embeds.shape}")
-        print(f"inputs_embeds.shape = {inputs_embeds.shape}")
-        print("**************************************************")
-        print()
-        # 拼接前缀、原始输入和后缀嵌入  
-        
-        inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
-        
-        # 调整attention_mask  
-        if attention_mask is not None:  
-            prefix_mask = torch.ones(batch_size, self.num_prefix_tokens, device=self.device)  
-            suffix_mask = torch.ones(batch_size, self.num_suffix_tokens, device=self.device)  
+            # past_key_values = self.get_past_key_values(
+            #     prefix_embeds,
+            #     inputs_embeds,
+            #     suffix_embeds,
+            #     batch_size) if config.all_layers else None
+            
+            
+            if self.all_layers:
+                # 插入self.base_model的每一层
+                self.add_to_all_layers(
+                    prefix_embeds,
+                    suffix_embeds,
+                    is_prefix=self.is_prefix
+                    )
+            
+            print("************* 前缀， 中缀， 后缀 拼接前：*************")
+            print(f"prefix.shape = {prefix_embeds.shape}")
+            print(f"suffix.shape = {suffix_embeds.shape}")
+            print(f"inputs_embeds.shape = {inputs_embeds.shape}")
+            print("**************************************************")
+            print()
+            # 拼接前缀、原始输入和后缀嵌入  
+            
+            inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
+            
+            # 调整attention_mask  
+            if attention_mask is not None:  
+                prefix_mask = torch.ones(batch_size, self.num_prefix_tokens, device=self.device)  
+                suffix_mask = torch.ones(batch_size, self.num_suffix_tokens, device=self.device)  
 
-            # print(f"attention_mask.shape = {attention_mask.shape}")
-            # print(f"prefix_mask.shape = {prefix_mask.shape}")
-            # print(f"suffix_mask.shape = {suffix_mask.shape}")
+                # print(f"attention_mask.shape = {attention_mask.shape}")
+                # print(f"prefix_mask.shape = {prefix_mask.shape}")
+                # print(f"suffix_mask.shape = {suffix_mask.shape}")
+                
+                attention_mask = attention_mask.squeeze(1)
+                attention_mask = torch.cat([prefix_mask, attention_mask, suffix_mask], dim=1)  # (4, 522)
+                
+                # print(f"attention_mask.shape after concat = {attention_mask.shape}") 
             
-            attention_mask = attention_mask.squeeze(1)
-            attention_mask = torch.cat([prefix_mask, attention_mask, suffix_mask], dim=1)  # (4, 522)
-            
-            # print(f"attention_mask.shape after concat = {attention_mask.shape}") 
-        
-        if token_type_ids is not None:  
-            prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
-            suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=self.device)
-            
-            if True:
-                print(f"token_type_ids.shape = {token_type_ids.shape}")
-                print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
-                print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
-            
-            token_type_ids = token_type_ids.squeeze(1)
-            token_type_ids = torch.cat([prefix_type_ids, token_type_ids, suffix_type_ids], dim=1)
-            
-            token_type_ids = token_type_ids.long() # (4, 522)
-            
-            if True:
-                print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
+            if token_type_ids is not None:  
+                prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
+                suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=self.device)
+                
+                if True:
+                    print(f"token_type_ids.shape = {token_type_ids.shape}")
+                    print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
+                    print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
+                
+                token_type_ids = token_type_ids.squeeze(1)
+                token_type_ids = torch.cat([prefix_type_ids, token_type_ids, suffix_type_ids], dim=1)
+                
+                token_type_ids = token_type_ids.long() # (4, 522)
+                
+                if True:
+                    print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
 
-        
-        # 调用原始模型的forward方法  
-        outputs = self.base_model(  
-            # input_ids=input_ids,                 
-            inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
-            attention_mask=attention_mask,  
-            token_type_ids=token_type_ids if self.model_type == "bert" else None,  
-            position_ids=position_ids if self.model_type == "bert" else None,
-            # labels=labels,
-            head_mask=head_mask,
-            output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
-            output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
-            return_dict=return_dict,
-            # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
-            past_key_values=past_key_values if config.all_layers else None, 
-        )  
-        
-        pooled_output = outputs[1] # shape = (batch_size, hidden_size)
-        
-        logits:torch.Tensor = self.classifier(pooled_output) # shape = (batch_size, num_labels)
-        
-        
-        # return outputs 
-        
-        loss = None
-        if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
             
-        if not return_dict: # 输出嵌套元组
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-        
-        return MultipleChoiceModelOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states if hasattr(outputs,"hidden_states") else None,
-            attentions=outputs.attentions if hasattr(outputs,"attentions") else None,
-        ) 
+            # 调用原始模型的forward方法  
+            outputs = self.base_model(  
+                # input_ids=input_ids,                 
+                inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
+                attention_mask=attention_mask,  
+                token_type_ids=token_type_ids if self.model_type == "bert" else None,  
+                position_ids=position_ids if self.model_type == "bert" else None,
+                # labels=labels,
+                head_mask=head_mask,
+                output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                return_dict=return_dict,
+                # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+                # past_key_values=past_key_values if config.all_layers else None, 
+            )   
+            
+            pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+            
+            logits:torch.Tensor = self.classifier(pooled_output) # shape = (batch_size, num_labels)
+            
+            print("************* BaasPromptModel 中的 base_model 输出：*************")
+            print("logits.shape = ",logits.shape)
+            # print("logits = ",logits)
+            print("**********************************************************\n")
+            
+            # return outputs 
+            
+            loss = None
+            if labels is not None:
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+                
+            if not return_dict: # 输出嵌套元组
+                output = (logits,) + outputs[2:]
+                return ((loss,) + output) if loss is not None else output
+            
+            return MultipleChoiceModelOutput(
+                loss=loss,
+                logits=logits,
+                hidden_states=outputs.hidden_states if hasattr(outputs,"hidden_states") else None,
+                attentions=outputs.attentions if hasattr(outputs,"attentions") else None,
+            ) 
 
     def print_trainable_parameters(self):  
         """
@@ -541,7 +549,7 @@ class BassPromptModel(torch.nn.Module):
             if "prompt_encoder" in name:
                 param.requires_grad = True
             elif "rollback_decoder" in name:
-                param.requires_grad = True
+                param.requires_grad = False
             elif "classifier" in name:
                 param.requires_grad = True
             else:
@@ -613,7 +621,8 @@ class BassPromptModel(torch.nn.Module):
     def add_to_all_layers(
         self,
         prefix_embeddings:torch.Tensor,
-        suffix_embeddings:torch.Tensor
+        suffix_embeddings:torch.Tensor,
+        is_prefix=False,
         ):
         '''
         prefix_embeddings.shape = (batch_size, prefix_length, hidden_size)
@@ -627,6 +636,7 @@ class BassPromptModel(torch.nn.Module):
                 fixed_svd=None,
                 prefix_embeddings=prefix_embeddings,
                 suffix_embeddings=suffix_embeddings,
+                is_prefix=is_prefix
             )  
 
 def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal"):
@@ -1385,6 +1395,7 @@ def train_baas_prompt(config:BaasPromptConfig):
             # else:  
             #     print("batch 不是字典类型")  
             #     continue  # 跳过非字典类型的 batch  
+            optimizer.zero_grad()
             
             labels = batch["labels"]  
             
@@ -1398,11 +1409,15 @@ def train_baas_prompt(config:BaasPromptConfig):
             total_loss += loss.detach().float()
 
             # loss.backward()
-            accelerator.backward(loss)
+            accelerator.backward(loss, retain_graph=True)
             
             optimizer.step()
             lr_scheduler.step()
-            optimizer.zero_grad()
+            
+            # 确保在每次迭代后释放计算图  
+            del outputs  
+
+            torch.cuda.empty_cache()  # 可选，如果内存占用过高
             
             if step == len(train_dataloader)-1:  
                 model.eval()  
