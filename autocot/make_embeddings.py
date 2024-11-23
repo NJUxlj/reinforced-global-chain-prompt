@@ -280,7 +280,7 @@ def encode_k_reasoning_chains(
 
 def save_embeddings(
     embeddings:torch.Tensor,
-    args
+    args:ChainEncodingArguments
     ):
     '''
     这个函数只能从autocot目录调用
@@ -305,22 +305,22 @@ def save_embeddings(
     }  
     
     # 保存embeddings和元数据  
-    embeddings_path = os.path.join(args.embedding_dir, f'embeddings_{args.dataset}.pt')
-    metadata_path = os.path.join(args.embedding_dir, f'metadata_{args.dataset}.json')
+    embeddings_path = os.path.join(args.embedding_dir, f'embeddings_{args.dataset}_{args.hidden_size}.pt')
+    metadata_path = os.path.join(args.embedding_dir, f'metadata_{args.dataset}_{args.hidden_size}.json')
 
     if not os.path.exists(args.embedding_dir):
         os.makedirs(args.embedding_dir)
-        print("已创建数据集 {} 的embedding的存储目录{}".format(args.dataset, args.embedding_dir))
-        print("开始保存embedding, metadata ~~~")
+        print("已创建数据集={}, 且 hidden_size={} 的embedding的存储目录{}".format(args.dataset, args.hidden_size, args.embedding_dir))
+        print("开始保存K个CoT chain embedding, metadata ~~~")
     else:
-        print("数据集 {} 的embedding的存储目录{}已存在~~~~开始检查文件完整性！".format(args.dataset, args.embedding_dir))
+        print("数据集={}, 且 hidden_size={} 的embedding的存储目录{}已存在~~~~开始检查文件完整性！".format(args.dataset, args.hidden_size, args.embedding_dir))
 
         if Path(embeddings_path).exists() and Path(metadata_path).exists():
-            print(f"数据集 {args.dataset} 的embedding文件 和 metadata文件都已存在, 保存完整, 直接使用~~~")
+            print(f"数据集={args.dataset}, 且 hidden_size={args.hidden_size} 的embedding文件 和 metadata文件都已存在, 保存完整, 直接使用~~~")
             return save_info
         
         elif (Path(embeddings_path).exists() or Path(metadata_path).exists()):
-            print(f"数据集 {args.dataset} 的 embedding文件 和 metadata文件 保存不完整（只存在其中一个）。")
+            print(f"数据集={args.dataset}, 且 hidden_size={args.hidden_size} 的 embedding文件 和 metadata文件 保存不完整（只存在其中一个）。")
             print(f"删除不完整的文件，重新开始保存~~~")
 
     torch.save(embeddings, embeddings_path)
@@ -366,7 +366,7 @@ def load_embeddings(
 
 def aggregate_cot_embeddings(
     embeddings:torch.Tensor, 
-    args,
+    args: ChainEncodingArguments,
     use_attention:bool=True,
     )->torch.Tensor:
     """  
@@ -399,7 +399,7 @@ def aggregate_cot_embeddings(
     
     
     # 保存context
-    context_path = os.path.join(args.context_dir, f'context_{args.dataset}.pt')
+    context_path = os.path.join(args.context_dir, f'context_{args.dataset}_{args.hidden_size}.pt')
     parent_dir = os.path.dirname(context_path)
     
     if not os.path.exists(parent_dir):
@@ -410,12 +410,12 @@ def aggregate_cot_embeddings(
         # 如果embedding文件已存在
         print("context embedding的存储目录{}已存在".format(parent_dir))
         if Path(context_path).exists():
-             print("数据集 {} 的context embedding文件已存在，无法覆盖".format(args.dataset))
+             print("数据集={},且 hidden_size={} 的context embedding文件已存在，无法覆盖".format(args.dataset,args.hidden_size))
              print("读取已保存的context~~~~")
              context = torch.load(context_path)
              return context
         else:
-            print("数据集 {} 的context embedding文件不存在，开始保存~~~".format(args.dataset))
+            print("数据集={},且 hidden_size={} 的context embedding文件不存在，开始保存~~~".format(args.dataset,args.hidden_size))
 
     torch.save(context, context_path)
     
@@ -435,7 +435,7 @@ def get_cot_context(args:ChainEncodingArguments)->torch.Tensor:
     print("=========== embedding save info ===============")
     print(save_info)
     
-    context = aggregate_cot_embeddings(embeddings, args,True)
+    context = aggregate_cot_embeddings(embeddings, args, True)
     
     print("******************** Get CoT Context Embedding ************************")
     print("type(context) = ", type(context))

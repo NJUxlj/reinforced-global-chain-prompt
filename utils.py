@@ -205,15 +205,15 @@ def get_classifier_from_model(model)-> nn.Module:
     hidden_size = classifier.in_features  
     
     # 模拟来自BERT的特征输出  
-    dummy_features = torch.randn(batch_size, hidden_size)  
+    # dummy_features = torch.randn(batch_size, hidden_size)  
     
-    # 直接使用分类器进行预测  
-    with torch.no_grad():  
-        outputs = classifier(dummy_features)  
+    # # 直接使用分类器进行预测  
+    # with torch.no_grad():  
+    #     outputs = classifier(dummy_features)  
         
-    print(f"\n分类器输出形状: {outputs.shape}")  
-    print("分类器输出示例：")  
-    print(outputs)   
+    # print(f"\n分类器输出形状: {outputs.shape}")  
+    # print("分类器输出示例：")  
+    # print(outputs)   
     
     
     print("\n分类器的可训练参数：")  
@@ -572,6 +572,34 @@ class GensimWord2VecWrapper:
         return torch.stack(vectors)  
     
 
+import torch.distributed as dist  
+from torch.nn.parallel import DistributedDataParallel as DDP  
+from torch.utils.data.distributed import DistributedSampler 
+
+def setup_distributed(use_cuda=True)->Tuple[torch.device, int]:
+    """
+    设置分布式训练环境
+    Args:
+        use_cuda: 是否使用CUDA设备
+    Returns:
+        device: 训练设备
+        local_rank: 本地进程序号
+    """
+    if not use_cuda:
+        return torch.device("cpu"), 0
+    
+    os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+    
+    # 初始化进程组
+    dist.init_process_group(backend="nccl")
+    
+    local_rank = int(os.environ["LOCAL_RANK"])
+    device = torch.device(f"cuda:{local_rank}")
+    
+    # 设置当前设备
+    torch.cuda.set_device(local_rank)
+    
+    return device, local_rank
 
 
 

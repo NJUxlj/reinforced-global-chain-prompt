@@ -4,7 +4,13 @@ import torch.nn.functional as F
 
 from torch.utils.data import Dataset, DataLoader
 
-from transformers import AutoModel, AutoTokenizer,TrainingArguments, Trainer
+from transformers import (
+    AutoModel, 
+    AutoTokenizer,
+    TrainingArguments, 
+    Trainer,
+    PretrainedConfig
+)
 from accelerate import Accelerator
 from config import Config, BudgetSchedulerConfig   
 
@@ -525,13 +531,38 @@ class BaasPromptV2(torch.nn.Module):
 
 class BaasAttention(nn.Module):  
     """自定义的attention模块，用于插入suffix embeddings"""  
-    def __init__(self, config, layer_idx, fixed_svd, prefix_embeddings = None, suffix_embeddings = None):  
+    def __init__(
+        self, 
+        config:PretrainedConfig, 
+        layer_idx, 
+        fixed_svd:'FixedRankSVD'=None, 
+        prefix_embeddings = None, 
+        suffix_embeddings = None,
+        is_prefix = False
+        ):  
+        '''
+        :param config: base_model 的配置文件
+        :param layer_idx: base_model的隐藏层id
+        :param fixed_svd: FixedSVD对象，用于动态调整每一层的rank(推理步数，即，suffix_length)
+        :param prefix_embeddings: 前缀嵌入, shape=(batch_size, prefix_length, hidden_size), 但是batch维不一定有
+        :param suffix_embeddings: 后缀嵌入, shape=(batch_size, suffix_length, hidden_size), 但是batch维不一定有
+
+        :param is_prefix: 是否把prefix embedding 和 suffix embeddings 作为额外的前缀后缀附加到input上
+                            True: 附加到input上， 输入的总长度变为 max_length + prefix_length + suffix_length
+                            False:类似prompt-tuning 的插入, 输入的总长度还是max_length
+        '''
         super().__init__()  
         self.layer_idx = layer_idx  
         self.fixed_svd = fixed_svd  
+        self.is_prefix = is_prefix
+        
+        self.max_length = config.max_position_embeddings
+        self.prefix_length = prefix_embeddings.shape[0] if prefix_embeddings.dim()==2 else prefix_embeddings.shape[1]
+        self.suffix_length = suffix_embeddings.shape[0] if suffix_embeddings.dim()==2 else suffix_embeddings.shape[1]
+        self.input_length = self.max_length - (self.prefix_length + self.suffix_length)
         
         self.prefix_embeddings:torch.Tensor = prefix_embeddings
-        self.suffix_embeddings = suffix_embeddings
+        self.suffix_embeddings:torch.Tensor = suffix_embeddings
         
         # 多头注意力的配置  
         self.num_attention_heads = config.num_attention_heads  
@@ -555,24 +586,46 @@ class BaasAttention(nn.Module):
                   self.attention_head_size)  
         return x.permute(0, 2, 1, 3)  # shape = (batch_size, num_heads, seq_len, head_size)
         
-    def forward(self, hidden_states, attention_mask=None, head_mask=None, output_attentions=False):  
+    def forward(
+        self, 
+        hidden_states, 
+        attention_mask=None, 
+        head_mask=None, 
+        output_attentions=False
+        ):  
+        '''
+        :param hidden_states: shape=(batch_size, input_length, hidden_size)
+        
+        '''
         batch_size, seq_length, _ = hidden_states.size()  
         
         # 1. 获取当前层的suffix embeddings  
         # P, Lambda, Q = self.fixed_svd.get_layer_matrices(self.layer_idx)  
         # suffix_embeddings = torch.matmul(torch.matmul(P, Lambda), Q)  
         
-        # 2. 扩展suffix_embeddings到batch维度  
-        suffix_embeddings = self.suffix_embeddings.unsqueeze(0).expand(  
-            batch_size, -1, -1)  
+        suffix_embeddings = None 
+        prefix_embeddings = None
         
-        # 2. 扩展suffix_embeddings到batch维度  
-        prefix_embeddings = self.prefix_embeddings.unsqueeze(0).expand(  
-            batch_size, -1, -1)  
+        # 检查并扩展维度
+        if self.suffix_embeddings.dim()==3:
+            suffix_embeddings = self.suffix_embeddings
+        else:
+            suffix_embeddings = self.suffix_embeddings.unsqueeze(0).expand(  
+                batch_size, -1, -1)  
         
-        # 3. 将原始输入和suffix embeddings拼接  
+        if self.prefix_embeddings.dim()==3:
+            prefix_embeddings = self.prefix_embeddings
+        else:
+            prefix_embeddings = self.prefix_embeddings.unsqueeze(0).expand(  
+                batch_size, -1, -1)  
+        
+        # 将原始输入和suffix embeddings拼接  
+        truncated_hidden_states = hidden_states[:]
+        if not self.is_prefix: # p-tuning style
+            truncated_hidden_states = truncated_hidden_states[:, :self.input_length, :]
+            
         extended_hidden_states = torch.cat(  
-            [prefix_embeddings, hidden_states, suffix_embeddings], dim=1)  
+            [prefix_embeddings, truncated_hidden_states, suffix_embeddings], dim=1)  
         
         # 4. 计算Q,K,V  
         query_layer = self.query(hidden_states)  # shape = (hidden_size, hidden_size) * (batch_size, seq_len, hidden_size) = (batch_size, seq_len, hidden_size)
@@ -615,6 +668,11 @@ class BaasAttention(nn.Module):
         
         # 7. 处理attention mask  
         if attention_mask is not None:  
+            
+            if not self.is_prefix:
+                attention_mask = attention_mask[:,:self.input_length]
+            
+            attention_mask= attention_mask.unsqueeze(1).unsqueeze(1)  # shape = (batch_size, 1, 1,seq_length)
             # 扩展attention mask以包含suffix tokens  
             suffix_mask = torch.ones(  
                 (batch_size, 1, 1, suffix_embeddings.size(1)),   

@@ -36,7 +36,8 @@ from utils import *
 from causal_modeling import *
 
 from components import (
-    SentenceEncoder
+    SentenceEncoder,
+    BaasAttention
 )
 
 
@@ -147,6 +148,8 @@ class BaasPromptEncoder(nn.Module):
         self,   
         config: BaasPromptConfig,
         model_config:AutoConfig,
+        prefix_embeddings: torch.Tensor,  
+        suffix_embeddings: torch.Tensor,
         dropout: float = 0.1,
         device = Config.device
     ):  
@@ -157,23 +160,46 @@ class BaasPromptEncoder(nn.Module):
         self.num_layers = model_config.num_hidden_layers  
         self.n_head = model_config.num_attention_heads  
         self.prefix_projection = config.prefix_projection
-        self.device = device  
+        self.device = device
+        self.config = config
+        self.model_config = model_config
+        self.lstm_layers = 2
         
-        # self.prefix_embeddings = prefix_embeddings # shape = (prefix_length, hidden_size)
-        # self.suffix_embeddings = suffix_embeddings  # shape = (suffix_length, hidden_size)
         
+        prefix_embeds = None
+        suffix_embeds = None
+        # 1. 扩展batch维度  
+        if prefix_embeddings.dim()==2:
+            prefix_embeds = prefix_embeddings.unsqueeze(0).expand(config.batch_size, -1, -1).to(self.device)
+        else:
+            prefix_embeds = prefix_embeddings
+        if suffix_embeddings.dim()==2:
+            suffix_embeds = suffix_embeddings.unsqueeze(0).expand(config.batch_size, -1, -1).to(self.device)
+        else:
+            suffix_embeds = suffix_embeddings
+            
+        # 直接赋值的tensor，除非特别设置requires_grad=True，否则不会更新
+        self.continuous_prompt_embeddings = torch.concat(
+            [
+                prefix_embeds,
+                suffix_embeds,
+            ], dim=1
+        )  # shape = (batch_size, prefix_length+suffix_length, hidden_size)
+        
+        # 底下的模块都是需要参数更新的
+ 
         # 2. 双向LSTM编码器  
         self.forward_lstm = nn.LSTM(  
             self.hidden_size,  
             self.hidden_size // 2,  
-            num_layers=self.num_layers,  
+            num_layers=self.lstm_layers,  
             bidirectional=True,  
             batch_first=True  
         ).to(self.device)  
         self.backward_lstm = nn.LSTM(  
             self.hidden_size,  
             self.hidden_size // 2,  
-            num_layers=self.num_layers, 
+            num_layers=self.lstm_layers, 
             bidirectional=True,  
             batch_first=True  
         ).to(self.device)  
@@ -203,9 +229,6 @@ class BaasPromptEncoder(nn.Module):
 
     def forward(
             self,
-            prefix_embeddings: torch.Tensor,  
-            suffix_embeddings: torch.Tensor,
-            batch_size:int =1 ,
         )->Tuple[torch.Tensor, torch.Tensor]:  
         '''
         Args:
@@ -215,16 +238,25 @@ class BaasPromptEncoder(nn.Module):
             prefix_output, suffix_output   shape = (batch_size, seq_length, hidden_size)
         
         '''
-        # 1. 扩展batch维度  
-        if prefix_embeddings.dim()==2:
-            prefix_embeds = prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
-        if suffix_embeddings.dim()==2:
-            suffix_embeds = suffix_embeddings.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
         
-        # 不需要过prompt_encoder的情况
+            
+        # 不需要过prompt_encoder的情况, 只训练continuous_prompt_embeddings， 其余的encoder都用不到(不输入且不更新)
         if not self.prefix_projection:
+            prefix_embeds,suffix_embeds = torch.split(
+                self.continuous_prompt_embeddings,
+                [self.config.prefix_length, self.config.suffix_length],
+                dim=1
+            )
             return prefix_embeds, suffix_embeds
         
+        # shape = (batch_size, prefix_length+suffix_length, hidden_size)
+        # all_embeddings = self.embedding(self.continuous_prompt_embeddings)
+        
+        prefix_embeds,suffix_embeds = torch.split(
+                self.continuous_prompt_embeddings,
+                [self.config.prefix_length, self.config.suffix_length],
+                dim=1
+            )
         
         # 2. 添加位置编码  
         prefix_embeds = self.prefix_pos_embedding(prefix_embeds)  
@@ -315,17 +347,22 @@ class BassPromptModel(torch.nn.Module):
         
         self.suffix_embeddings = self.initialize_suffix_prompts() #shape =  (seq_length, hidden_size)
         
-        self.prompt_encoder = BaasPromptEncoder(self.config, self.model_config, device = self.device)
+        # 整个模型需要更新的参数都在这里
+        self.prompt_encoder = BaasPromptEncoder(
+            self.config, 
+            self.model_config, 
+            self.prefix_embeddings,
+            self.suffix_embeddings,
+            device = self.device
+            )
           
-        self.prefix_embeddings, self.suffix_embeddings = self.prompt_encoder.forward(
-            prefix_embeddings = self.prefix_embeddings,
-            suffix_embeddings = self.suffix_embeddings,
-            batch_size= 1,
-            )  # shape = (batch_size, seq_length, hidden_size), 等下会在forward函数中把他扩展成真实的batch_size
+        # self.prefix_embeddings, self.suffix_embeddings = self.prompt_encoder.forward()  
+        # shape = (batch_size, seq_length, hidden_size), 等下会在_init_函数中把他扩展成真实的batch_size
         
 
         self.embedding_layer = self.model.get_input_embeddings()  # 获取词嵌入层
         
+        # 这个可以更新
         self.classifier = get_classifier_from_model(self.model)
         
         self.disable_grad_calc() # 禁用梯度计算
@@ -358,8 +395,8 @@ class BassPromptModel(torch.nn.Module):
         labels:Optional[torch.Tensor] = None,
         head_mask=None,
         # inputs_embeds=None,
-        output_attentions:bool=True,
-        output_hidden_states:bool=True,
+        output_attentions:bool=False,
+        output_hidden_states:bool=False,
         return_dict:bool=True, # 返回 SequenceClassifierOutput 对像
         ):  
         # 原始输入嵌入
@@ -370,18 +407,28 @@ class BassPromptModel(torch.nn.Module):
         
         batch_size = inputs_embeds.size(0)  
         
+        assert batch_size == self.config.batch_size, "input embedding's batch_size must be equal to config.batch_size"
+        
         # 将前缀和后缀Prompt Embeddings扩展到batch维度  
-        prefix_embeds = self.prefix_embeddings.expand(batch_size, -1, -1)  
-        suffix_embeds = self.suffix_embeddings.expand(batch_size, -1, -1)  
+        # prefix_embeds = self.prefix_embeddings.expand(batch_size, -1, -1)  
+        # suffix_embeds = self.suffix_embeddings.expand(batch_size, -1, -1)  
         
         # shape = (batch_size, seq_length, hidden_size)
-        prefix_embeds, suffix_embeds = self.prompt_encoder.forward(prefix_embeds, suffix_embeds, batch_size)
+        prefix_embeds, suffix_embeds = self.prompt_encoder.forward()
     
         past_key_values = self.get_past_key_values(
             prefix_embeds,
             inputs_embeds,
             suffix_embeds,
             batch_size) if config.all_layers else None
+        
+        
+        if self.all_layers:
+            # 插入self.base_model的每一层
+            self.add_to_all_layers(
+                prefix_embeds,
+                suffix_embeds
+                )
         
         print("************* 前缀， 中缀， 后缀 拼接前：*************")
         print(f"prefix.shape = {prefix_embeds.shape}")
@@ -411,16 +458,18 @@ class BassPromptModel(torch.nn.Module):
             prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
             suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=self.device)
             
-            # print(f"token_type_ids.shape = {token_type_ids.shape}")
-            # print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
-            # print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
+            if True:
+                print(f"token_type_ids.shape = {token_type_ids.shape}")
+                print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
+                print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
             
             token_type_ids = token_type_ids.squeeze(1)
             token_type_ids = torch.cat([prefix_type_ids, token_type_ids, suffix_type_ids], dim=1)
             
             token_type_ids = token_type_ids.long() # (4, 522)
             
-            # print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
+            if True:
+                print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
 
         
         # 调用原始模型的forward方法  
@@ -458,8 +507,8 @@ class BassPromptModel(torch.nn.Module):
         return MultipleChoiceModelOutput(
             loss=loss,
             logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            hidden_states=outputs.hidden_states if hasattr(outputs,"hidden_states") else None,
+            attentions=outputs.attentions if hasattr(outputs,"attentions") else None,
         ) 
 
     def print_trainable_parameters(self):  
@@ -478,7 +527,7 @@ class BassPromptModel(torch.nn.Module):
             
         for name, param in self.named_parameters():  
             num_params = param.numel()  
-            if param.requires_grad and ("prefix_embeddings" in name or "suffix_embeddings" in name or "classifier" in name):  
+            if param.requires_grad and ("prompt_encoder" in name or "rollback_decoder" in name or "classifier" in name):  
                 trainable_params += num_params
                 all_params += num_params  
                   
@@ -489,11 +538,9 @@ class BassPromptModel(torch.nn.Module):
     def disable_grad_calc(self):
         """disable grad calc for base model parameters"""
         for name, param in self.named_parameters():
-            if "prefix_embeddings" in name or "suffix_embeddings" in name:
+            if "prompt_encoder" in name:
                 param.requires_grad = True
             elif "rollback_decoder" in name:
-                param.requires_grad = True
-            elif "prompt_encoder" in name:
                 param.requires_grad = True
             elif "classifier" in name:
                 param.requires_grad = True
@@ -533,7 +580,7 @@ class BassPromptModel(torch.nn.Module):
         config:BaasPromptConfig,
         classes_initiate_method = "cluster",
         num_topics=5,
-        max_length=512
+        max_length=512,
         )->torch.Tensor: 
         """ 
         use the class labels to initialize the prefix tokens
@@ -563,8 +610,24 @@ class BassPromptModel(torch.nn.Module):
 
         return prefix_embeddings
     
-    def add_to_all_layers(self):
-        pass
+    def add_to_all_layers(
+        self,
+        prefix_embeddings:torch.Tensor,
+        suffix_embeddings:torch.Tensor
+        ):
+        '''
+        prefix_embeddings.shape = (batch_size, prefix_length, hidden_size)
+        suffix_embedding.shape = (batch_size, suffix_length, hidden_size)
+        '''
+        # 将prefix 和 suffix 更新到Bert中的每一层
+        for i, layer in enumerate(self.base_model.encoder.layer):  
+            layer.attention.self = BaasAttention(  
+                config=self.base_model.config,  
+                layer_idx=i,  
+                fixed_svd=None,
+                prefix_embeddings=prefix_embeddings,
+                suffix_embeddings=suffix_embeddings,
+            )  
 
 def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal"):
     '''
@@ -1175,7 +1238,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 
 
 def train_baas_prompt(config:BaasPromptConfig):
-
+    setup_distributed()
     
     model_name = config.model_name
     dataset_name = config.dataset_name
