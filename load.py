@@ -1579,9 +1579,9 @@ def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length),
         batched=True,
         batch_size=Config['batch_size'],
-        num_proc=NUM_CPU_PROCESSES,
+        num_proc=NUM_PROCESSES,
         remove_columns= dataset['train'].column_names,           # dataset.column_names,
-        load_from_cache_file=False,
+        load_from_cache_file=True,
         desc=f"Running tokenizer on dataset {dataset_name}",
     )
     print(f"\nProcessed dataset type: {type(processed_dataset)}")

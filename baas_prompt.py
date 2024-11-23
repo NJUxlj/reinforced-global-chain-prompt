@@ -1248,7 +1248,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 
 
 def train_baas_prompt(config:BaasPromptConfig):
-    setup_distributed()
+    # setup_distributed()
     
     model_name = config.model_name
     dataset_name = config.dataset_name
@@ -1570,6 +1570,7 @@ if __name__ == "__main__":
         num_epochs=5,
         num_labels=2,
         all_layers=False,
+        is_prefix=False,
         prefix_projection=True,
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,
