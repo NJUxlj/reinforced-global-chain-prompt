@@ -1413,8 +1413,8 @@ def train_baas_prompt(config:BaasPromptConfig):
             
             logits = outputs.logits
             
-            loss = criterion(logits, labels.long())
-            total_loss += loss.detach().float()
+            loss:torch.Tensor = criterion(logits, labels.long())
+            total_loss += loss.detach().item()
 
             # loss.backward()
             accelerator.backward(loss, retain_graph=True)
