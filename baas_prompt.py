@@ -1438,7 +1438,7 @@ def train_baas_prompt(config:BaasPromptConfig):
             #     optimizer.zero_grad()
             
             # 梯度累积
-            if (step+1) % config.gradient_accumulation_steps == 0:
+            if (step) % config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
