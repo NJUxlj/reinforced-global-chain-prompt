@@ -1404,9 +1404,11 @@ def train_baas_prompt(config:BaasPromptConfig):
             #     print("batch 不是字典类型")  
             #     continue  # 跳过非字典类型的 batch  
             
-            if step % 100 == 0:  # 定期清理缓存
-                # 确保梯度确实在更新  
-                detect_param_grad_updates(model)
+            if step % 100 == 0:  
+                if accelerator.is_main_process:
+                    # 确保梯度确实在更新  
+                    detect_param_grad_updates(model,epoch,step)
+                # 定期清理缓存
                 torch.cuda.empty_cache()    
             
             
@@ -1425,14 +1427,24 @@ def train_baas_prompt(config:BaasPromptConfig):
             # loss.backward()
             accelerator.backward(loss, retain_graph=True)
             
+            
+            
+            # # 梯度累积  
+            # if accelerator.sync_gradients:  
+            #     # 在这里添加梯度裁剪，max_norm可以根据需要调整（常用值：1.0, 5.0, 10.0）  
+            #     accelerator.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            #     optimizer.step()
+            #     lr_scheduler.step()
+            #     optimizer.zero_grad()
+            
             # 梯度累积
             if (step+1) % config.gradient_accumulation_steps == 0:
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
                 
-                # 假设 step = 31, batch_size =2
-                # (step+1)*2 = 64 = target batch_size
+            # 假设 step = 31, batch_size =2
+            # (step+1)*2 = 64 = target batch_size
             
             
             
@@ -1509,14 +1521,16 @@ def train_baas_prompt(config:BaasPromptConfig):
         # tokenizer.save_pretrained('path_to_save_tokenizer')   
 
 
-def detect_param_grad_updates(model):
+def detect_param_grad_updates(model, epoch, step):
     '''
     检测可训练参数的梯度是否真的在更新
     '''  
+    print(f"******************* Epoch:{epoch}, Step:{step}, Check Whether Gradient is Updating ***************8")
     for name, param in model.named_parameters():  
         if param.requires_grad:  
             print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
             print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}")  
+    print("**************************************************************\n")
 
 def evaluate_bidirectional_prompt_tuning(model, accelerator:Accelerator, eval_dataloader:DataLoader=None):
     model.eval()  
