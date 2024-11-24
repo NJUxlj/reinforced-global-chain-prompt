@@ -120,7 +120,7 @@ class BaasPromptConfig:
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
     suffix_length: int = 10
     num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
-    batch_size:int = 16
+    batch_size:int = 4
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
@@ -142,7 +142,7 @@ class BaasPromptConfig:
     all_layers:bool = False  # 是否在所有层插入prefix, suffix
     is_prefix:bool = False   # 是否把continuous prompt tokens 作为前缀append在input上，还是类似prompt-tuning直接插入input
     
-    gradient_accumulation_steps:int = 32  # 梯度累积的步数 = 目标批量大小 / 实际批量大小  常见的选择是 8、16、32
+    gradient_accumulation_steps:int = 32  # 梯度累积的步数 = 目标批量大小(64) / 实际批量大小(2) = 32,  常见的选择是 8、16、32
     mixed_precision:str="fp16"  # 启用混合精度训练  
     
 class BaasPromptEncoder(nn.Module):  
@@ -1331,9 +1331,10 @@ def train_baas_prompt(config:BaasPromptConfig):
             sampler=eval_sampler
         )
     
+
     accelerator = Accelerator(
         gradient_accumulation_steps=config.gradient_accumulation_steps,  
-        mixed_precision=config.mixed_precision, 
+        mixed_precision=config.mixed_precision,
     )
     
     
@@ -1370,15 +1371,17 @@ def train_baas_prompt(config:BaasPromptConfig):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
         logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
-    
 
-        
+    if accelerator.is_main_process:  
+        accelerator.init_trackers("training") 
         
     global_step = 0
-    
+    optimizer.zero_grad()
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
+        if train_sampler is not None:  # 每轮训练都打乱顺序
+            train_sampler.set_epoch(epoch) 
         for step, batch in enumerate(tqdm(train_dataloader)):
             # print(f"Batch labels: {batch['labels']}") 
             # batch = {k: v.to(device) for k, v in batch.items()}
@@ -1401,9 +1404,12 @@ def train_baas_prompt(config:BaasPromptConfig):
             #     print("batch 不是字典类型")  
             #     continue  # 跳过非字典类型的 batch  
             
-            if step % 50 == 0:  # 定期清理缓存  
+            if step % 100 == 0:  # 定期清理缓存
+                # 确保梯度确实在更新  
+                detect_param_grad_updates(model)
                 torch.cuda.empty_cache()    
-            optimizer.zero_grad()
+            
+            
             
             labels = batch["labels"]  
             
@@ -1414,13 +1420,20 @@ def train_baas_prompt(config:BaasPromptConfig):
             logits = outputs.logits
             
             loss:torch.Tensor = criterion(logits, labels.long())
-            total_loss += loss.detach().item()
+            total_loss += loss.detach().float().item() 
 
             # loss.backward()
             accelerator.backward(loss, retain_graph=True)
             
-            optimizer.step()
-            lr_scheduler.step()
+            # 梯度累积
+            if (step+1) % config.gradient_accumulation_steps == 0:
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+                
+                # 假设 step = 31, batch_size =2
+                # (step+1)*2 = 64 = target batch_size
+            
             
             
             
@@ -1431,8 +1444,7 @@ def train_baas_prompt(config:BaasPromptConfig):
             torch.cuda.empty_cache()  # 可选，如果内存占用过高
             
             if step == len(train_dataloader)-1:  
-                avg_loss = total_loss / len(train_dataloader)   
-                print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+                  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  
@@ -1447,19 +1459,30 @@ def train_baas_prompt(config:BaasPromptConfig):
                         labels_cpu = val_labels.cpu().numpy()  
                         all_preds.extend(preds)  
                         all_labels.extend(labels_cpu)  
+                
+                
+                
+                
+                
                 # 计算评价指标  
                 accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
                 precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+
+                accelerator.wait_for_everyone() 
+
                 print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                
+                
                 if accelerator.is_main_process:
+                    avg_loss = total_loss / len(train_dataloader)   
+                    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
                     logger.info({'epoch': epoch, 'avg_loss': avg_loss, 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
-                    # print()
 
                 model.train()  
             global_step+=1
 
         
-            
+    accelerator.end_training()
 
     
     # 判断模型名称
@@ -1486,7 +1509,14 @@ def train_baas_prompt(config:BaasPromptConfig):
         # tokenizer.save_pretrained('path_to_save_tokenizer')   
 
 
-
+def detect_param_grad_updates(model):
+    '''
+    检测可训练参数的梯度是否真的在更新
+    '''  
+    for name, param in model.named_parameters():  
+        if param.requires_grad:  
+            print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
+            print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}")  
 
 def evaluate_bidirectional_prompt_tuning(model, accelerator:Accelerator, eval_dataloader:DataLoader=None):
     model.eval()  
