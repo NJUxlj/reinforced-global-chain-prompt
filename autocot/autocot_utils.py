@@ -17,9 +17,12 @@ from collections import defaultdict
 
 # 获取当前文件所在目录的父目录  
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
-
 # 将父目录添加到sys.path  
 sys.path.insert(0, parent_directory) 
+# 获取当前文件所在目录  
+current_directory = os.path.dirname(os.path.abspath(__file__)) 
+# 将当前目录添加到sys.path  
+sys.path.insert(0, current_directory) 
 
 from load import *
 

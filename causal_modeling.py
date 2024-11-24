@@ -115,13 +115,15 @@ class OutputTransformation(nn.Module):
 
 class MultiHeadAttention(nn.Module):  
     """多头注意力机制"""  
-    def __init__(self, d_model, num_heads):  
+    def __init__(self, d_model, num_heads, debug:bool=False):  
         super().__init__()  
         assert d_model % num_heads == 0, "d_model必须能被num_heads整除"  
         
         self.d_model = d_model  
         self.num_heads = num_heads  
         self.d_k = d_model // num_heads  
+        
+        self.debug = debug
         
         # 定义线性变换层  
         self.W_q = nn.Linear(d_model, d_model)  
@@ -166,9 +168,10 @@ class MultiHeadAttention(nn.Module):
         K = K.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)  
         V = V.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)  
         
-        print("Q.shape = ",Q.shape)
-        print("K.shape = ",K.shape)
-        print("V.shape = ",V.shape)
+        if self.debug:
+            print("Q.shape = ",Q.shape)
+            print("K.shape = ",K.shape)
+            print("V.shape = ",V.shape)
         
         
         # 计算注意力  
@@ -177,7 +180,9 @@ class MultiHeadAttention(nn.Module):
         # 重塑回原始维度  
         output = output.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)  
         output = self.W_o(output)  
-        print("attention_output.shape = ", output.shape)
+        
+        if self.debug:
+            print("attention_output.shape = ", output.shape)
         
         return output, attention_weights  
 

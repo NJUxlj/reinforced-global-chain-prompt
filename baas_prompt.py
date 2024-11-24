@@ -120,7 +120,7 @@ class BaasPromptConfig:
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
     suffix_length: int = 10
     num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
-    batch_size:int = 32
+    batch_size:int = 16
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
@@ -142,7 +142,8 @@ class BaasPromptConfig:
     all_layers:bool = False  # 是否在所有层插入prefix, suffix
     is_prefix:bool = False   # 是否把continuous prompt tokens 作为前缀append在input上，还是类似prompt-tuning直接插入input
     
-
+    gradient_accumulation_steps:int = 32  # 梯度累积的步数 = 目标批量大小 / 实际批量大小  常见的选择是 8、16、32
+    mixed_precision:str="fp16"  # 启用混合精度训练  
     
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
@@ -299,7 +300,15 @@ class BaasPromptEncoder(nn.Module):
 
 
 class BassPromptModel(torch.nn.Module):  
-    def __init__(self, model, tokenizer, config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments=None, device = Config.device):  
+    def __init__(
+        self, 
+        model, 
+        tokenizer, 
+        config:BaasPromptConfig, 
+        chain_encode_args:ChainEncodingArguments=None, 
+        device = Config.device,
+        debug:bool=False
+        ):  
         super(BassPromptModel, self).__init__()  
         self.model = model
         self.config:BaasPromptConfig = config
@@ -317,6 +326,7 @@ class BassPromptModel(torch.nn.Module):
         self.is_prefix = config.is_prefix # 是前缀还是插入？
         self.num_layers = self.model_config.num_hidden_layers
         self.device = device
+        self.debug=debug
         
         d_ff = self.hidden_size*4
         self.rollback_decoder = RollbackDecoderWithHead(
@@ -402,7 +412,8 @@ class BassPromptModel(torch.nn.Module):
         return_dict:bool=True, # 返回 SequenceClassifierOutput 对像
         ):  
         # 原始输入嵌入
-        print(f"input_ids.shape = {input_ids.shape}")  # List[List[int]]
+        if self.debug:
+            print(f"input_ids.shape = {input_ids.shape}")  # List[List[int]]
         # input_ids = input_ids.squeeze(1) 
         
         
@@ -434,12 +445,13 @@ class BassPromptModel(torch.nn.Module):
                     is_prefix=self.is_prefix
                     )
             
-            print("************* 前缀， 中缀， 后缀 拼接前：*************")
-            print(f"prefix.shape = {prefix_embeds.shape}")
-            print(f"suffix.shape = {suffix_embeds.shape}")
-            print(f"inputs_embeds.shape = {inputs_embeds.shape}")
-            print("**************************************************")
-            print()
+            if self.debug:
+                print("************* 前缀， 中缀， 后缀 拼接前：*************")
+                print(f"prefix.shape = {prefix_embeds.shape}")
+                print(f"suffix.shape = {suffix_embeds.shape}")
+                print(f"inputs_embeds.shape = {inputs_embeds.shape}")
+                print("**************************************************")
+                print()
             # 拼接前缀、原始输入和后缀嵌入  
             
             inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
@@ -462,7 +474,8 @@ class BassPromptModel(torch.nn.Module):
                 prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
                 suffix_type_ids = torch.zeros(batch_size, self.num_suffix_tokens, device=self.device)
                 
-                if True:
+                if self.debug:
+                    print("********************* token_type_ids.shape ******************************")
                     print(f"token_type_ids.shape = {token_type_ids.shape}")
                     print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
                     print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
@@ -472,8 +485,9 @@ class BassPromptModel(torch.nn.Module):
                 
                 token_type_ids = token_type_ids.long() # (4, 522)
                 
-                if True:
+                if self.debug:
                     print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
+                    print("**************************************************************************\n")
 
             
             # 调用原始模型的forward方法  
@@ -496,12 +510,12 @@ class BassPromptModel(torch.nn.Module):
             
             logits:torch.Tensor = self.classifier(pooled_output) # shape = (batch_size, num_labels)
             
-            print("************* BaasPromptModel 中的 base_model 输出：*************")
-            print("logits.shape = ",logits.shape)
-            # print("logits = ",logits)
-            print("**********************************************************\n")
+            if self.debug:
+                print("************* BaasPromptModel 中的 base_model 输出：*************")
+                print("logits.shape = ",logits.shape)
+                # print("logits = ",logits)
+                print("**********************************************************\n")
             
-            # return outputs 
             
             loss = None
             if labels is not None:
@@ -1272,20 +1286,7 @@ def train_baas_prompt(config:BaasPromptConfig):
 
     
     
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=1,  
-        # mixed_precision='fp16', 
-    )
     
-    
-    baas_model = BassPromptModel(  
-        model=model,
-        tokenizer=tokenizer,
-        config=config,
-        chain_encode_args=None,
-        device = accelerator.device
-    )
-
 
     
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
@@ -1318,7 +1319,7 @@ def train_baas_prompt(config:BaasPromptConfig):
             # shuffle=True, # shuffle is not necessary when using DistributedSampler
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True,
+            # pin_memory=True,
             sampler=train_sampler
         )
     
@@ -1326,20 +1327,25 @@ def train_baas_prompt(config:BaasPromptConfig):
             eval_ds, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True,
+            # pin_memory=True,
             sampler=eval_sampler
         )
-
-
-    # grad 已经在 BaasModel内部进行了处理
-    # # make sure to frozen the base model parameters
-    # for param in baas_model.base_model.parameters():  
-    #     param.requires_grad = False  
-        
-    # # make sure that the prefix and suffix tokens is trainable
-    # baas_model.prefix_embeddings.requires_grad = True  
-    # baas_model.suffix_embeddings.requires_grad = True 
     
+    accelerator = Accelerator(
+        gradient_accumulation_steps=config.gradient_accumulation_steps,  
+        mixed_precision=config.mixed_precision, 
+    )
+    
+    
+    baas_model = BassPromptModel(  
+        model=model,
+        tokenizer=tokenizer,
+        config=config,
+        chain_encode_args=None,
+        device = accelerator.device,
+        debug=False
+    )
+ 
     
     optimizer = config.optimizer_class(
         filter(lambda p: p.requires_grad, baas_model.parameters()), 
@@ -1354,7 +1360,6 @@ def train_baas_prompt(config:BaasPromptConfig):
     
     model = baas_model 
     
-
     
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
@@ -1395,6 +1400,9 @@ def train_baas_prompt(config:BaasPromptConfig):
             # else:  
             #     print("batch 不是字典类型")  
             #     continue  # 跳过非字典类型的 batch  
+            
+            if step % 50 == 0:  # 定期清理缓存  
+                torch.cuda.empty_cache()    
             optimizer.zero_grad()
             
             labels = batch["labels"]  
@@ -1414,12 +1422,17 @@ def train_baas_prompt(config:BaasPromptConfig):
             optimizer.step()
             lr_scheduler.step()
             
+            
+            
             # 确保在每次迭代后释放计算图  
             del outputs  
+            del loss
 
             torch.cuda.empty_cache()  # 可选，如果内存占用过高
             
             if step == len(train_dataloader)-1:  
+                avg_loss = total_loss / len(train_dataloader)   
+                print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
                 model.eval()  
                 all_preds = []  
                 all_labels = []  
@@ -1439,14 +1452,13 @@ def train_baas_prompt(config:BaasPromptConfig):
                 precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
                 print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
                 if accelerator.is_main_process:
-                    logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
+                    logger.info({'epoch': epoch, 'avg_loss': avg_loss, 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
                     # print()
 
                 model.train()  
             global_step+=1
 
-        avg_loss = total_loss / len(train_dataloader)   
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+        
             
 
     
