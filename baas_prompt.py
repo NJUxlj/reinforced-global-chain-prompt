@@ -121,7 +121,7 @@ class BaasPromptConfig:
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
     suffix_length: int = 10
     num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
-    batch_size:int = 16
+    batch_size:int = 32
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
@@ -579,6 +579,8 @@ class BassPromptModel(torch.nn.Module):
         self.print_trainable_parameters()
     
     def init_trainable_parameters(self):
+        
+        print("********************** Initializing trainable parameters: **********************")
         for name, param in self.named_parameters():
             if "prompt_encoder" in name:
                 if 'weight' in name:  
@@ -633,6 +635,8 @@ class BassPromptModel(torch.nn.Module):
                     # 其他参数使用均匀分布  
                     torch.nn.init.uniform_(param, -0.1, 0.1) 
                 print(f"Initialized {name} with shape {param.shape}")
+                
+        print("***********************************************\n\n\n")
                     
                     
 
@@ -1619,17 +1623,17 @@ def detect_param_grad_updates(model, epoch, step):
     '''
     检测可训练参数的梯度是否真的在更新
     '''  
-    print(f"******************* Epoch:{epoch}, Step:{step}, Check Whether Gradient is Updating ***************8")
+    print(f"\n\n******************* Epoch:{epoch}, Step:{step}, Check Whether Gradient is Updating ***************8")
     for name, param in model.named_parameters():  
         if param.requires_grad:  
             print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
             print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}") 
     
-    print("=========================================================================")
+    print("\n\n================== NaN Gradient Detection ========================================")
     for name, param in model.named_parameters():  
         if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):  
             print(f"Gradient of {name} contains nan or inf at epoch:{epoch} step: {step}")
-    print("**************************************************************\n")
+    print("**************************************************************\n\n\n")
 
 def evaluate_baas_prompt(
     model, 

@@ -2,7 +2,6 @@
 # 获取当前文件所在目录的父目录  
 import os, sys
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
-
 # 将父目录添加到sys.path  
 sys.path.insert(0, parent_directory) 
 
@@ -27,6 +26,9 @@ from transformers import (
 from config import Config
 from config import NUM_CPU_PROCESSES
 from config import SENTENCE_TRANSFORMER_PATH
+from utils import setup_distributed
+
+
 from causal_modeling import RollbackDecoderWithHead
 
 from dataclasses import dataclass
@@ -412,7 +414,8 @@ def aggregate_cot_embeddings(
         if Path(context_path).exists():
              print("数据集={},且 hidden_size={} 的context embedding文件已存在，无法覆盖".format(args.dataset,args.hidden_size))
              print("读取已保存的context~~~~")
-             context = torch.load(context_path)
+             device, local_rank = setup_distributed()
+             context = torch.load(context_path,map_location=device)
              return context
         else:
             print("数据集={},且 hidden_size={} 的context embedding文件不存在，开始保存~~~".format(args.dataset,args.hidden_size))

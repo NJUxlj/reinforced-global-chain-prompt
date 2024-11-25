@@ -591,8 +591,9 @@ def setup_distributed(use_cuda=True)->Tuple[torch.device, int]:
     
     os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
     
-    # 初始化进程组
-    dist.init_process_group(backend="nccl")
+    # 检查进程组是否已经初始化  
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
     
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device(f"cuda:{local_rank}")
