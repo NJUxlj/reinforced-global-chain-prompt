@@ -92,6 +92,7 @@ from collections import defaultdict
 from sentence_transformers import SentenceTransformer, models
 from dataclasses import dataclass
 from collections import Counter
+from swanlab.integration.accelerate import SwanLabTracker
 
 
 import nltk  
@@ -120,7 +121,7 @@ class BaasPromptConfig:
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
     suffix_length: int = 10
     num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
-    batch_size:int = 4
+    batch_size:int = 16
     num_epochs:int = 2
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
@@ -144,6 +145,10 @@ class BaasPromptConfig:
     
     gradient_accumulation_steps:int = 32  # 梯度累积的步数 = 目标批量大小(64) / 实际批量大小(2) = 32,  常见的选择是 8、16、32
     mixed_precision:str="fp16"  # 启用混合精度训练  
+    max_grad_norm:float = 1.0  # 最大梯度范数   常用值：1.0, 5.0, 10.0
+    norm_type:float = 2.0   # # 2.0表示L2范数，1.0表示L1范数
+    
+    seed:int=42
     
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
@@ -379,6 +384,8 @@ class BassPromptModel(torch.nn.Module):
         
         self.disable_grad_calc() # 禁用梯度计算
         
+        self.init_trainable_parameters()
+        
     def get_past_key_values(
         self, 
         prefix_embeddings:torch.Tensor,
@@ -570,6 +577,64 @@ class BassPromptModel(torch.nn.Module):
                 param.requires_grad = False
 
         self.print_trainable_parameters()
+    
+    def init_trainable_parameters(self):
+        for name, param in self.named_parameters():
+            if "prompt_encoder" in name:
+                if 'weight' in name:  
+                    if len(param.shape) >= 2:  
+                        # 权重矩阵使用 xavier_uniform  
+                        torch.nn.init.xavier_uniform_(param)  
+                    else:  
+                        # 1维权重使用正态分布  
+                        torch.nn.init.normal_(param, mean=0.0, std=0.02)   
+                elif 'bias' in name:  
+                    torch.nn.init.zeros_(param)
+                elif 'embeddings' in name:  
+                    # 嵌入层使用正态分布  
+                    torch.nn.init.normal_(param, mean=0.0, std=0.02)  
+                else:  
+                    # 其他参数使用均匀分布  
+                    torch.nn.init.uniform_(param, -0.1, 0.1) 
+                print(f"Initialized {name} with shape {param.shape}")  
+            
+            elif "rollback_decoder" in name:
+                if 'weight' in name:  
+                    if len(param.shape) >= 2:  
+                        # 权重矩阵使用 xavier_uniform  
+                        torch.nn.init.xavier_uniform_(param)  
+                    else:  
+                        # 1维权重使用正态分布  
+                        torch.nn.init.normal_(param, mean=0.0, std=0.02)   
+                elif 'bias' in name:  
+                    torch.nn.init.zeros_(param)
+                elif 'embeddings' in name:  
+                    # 嵌入层使用正态分布  
+                    torch.nn.init.normal_(param, mean=0.0, std=0.02)  
+                else:  
+                    # 其他参数使用均匀分布  
+                    torch.nn.init.uniform_(param, -0.1, 0.1) 
+                print(f"Initialized {name} with shape {param.shape}")
+                
+            elif "classifier" in name:
+                if 'weight' in name:  
+                    if len(param.shape) >= 2:  
+                        # 权重矩阵使用 xavier_uniform  
+                        torch.nn.init.xavier_uniform_(param)  
+                    else:  
+                        # 1维权重使用正态分布  
+                        torch.nn.init.normal_(param, mean=0.0, std=0.02)   
+                elif 'bias' in name:  
+                    torch.nn.init.zeros_(param)
+                elif 'embeddings' in name:  
+                    # 嵌入层使用正态分布  
+                    torch.nn.init.normal_(param, mean=0.0, std=0.02)  
+                else:  
+                    # 其他参数使用均匀分布  
+                    torch.nn.init.uniform_(param, -0.1, 0.1) 
+                print(f"Initialized {name} with shape {param.shape}")
+                    
+                    
 
     def initialize_suffix_prompts(self)->torch.Tensor:  
         """  
@@ -1264,6 +1329,8 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 def train_baas_prompt(config:BaasPromptConfig):
     # setup_distributed()
     
+    fix_seed(config.seed)
+    
     model_name = config.model_name
     dataset_name = config.dataset_name
     model_path = config.model_path
@@ -1296,7 +1363,10 @@ def train_baas_prompt(config:BaasPromptConfig):
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
-    
+    print("************************* Dataset Size *****************************")
+    print(f"Train set size: {len(train_ds)}")  
+    print(f"Validation set size: {len(eval_ds)}")     
+    print("***************************************************************\n")
 
     print("dataset is preprocessed successfully ~~~")
     # 使用DistributedSampler进行数据分布  
@@ -1331,12 +1401,20 @@ def train_baas_prompt(config:BaasPromptConfig):
             sampler=eval_sampler
         )
     
-
+    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
+    tracker = SwanLabTracker("BAAS_PROMPT_TRAING", experiment_name=exp_name)  # 训练可视化
     accelerator = Accelerator(
         gradient_accumulation_steps=config.gradient_accumulation_steps,  
-        mixed_precision=config.mixed_precision,
+        # mixed_precision=config.mixed_precision,
+        log_with=[tracker]
     )
-    
+    tracker_config = {
+        "num_epoch": config.num_epochs,
+        "batch_num": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "seed": config.seed,
+    }
+    accelerator.init_trackers("BAAS_PROMPT_TRAING", config=tracker_config)
     
     baas_model = BassPromptModel(  
         model=model,
@@ -1346,6 +1424,8 @@ def train_baas_prompt(config:BaasPromptConfig):
         device = accelerator.device,
         debug=False
     )
+    
+    baas_model.to(accelerator.device)
  
     
     optimizer = config.optimizer_class(
@@ -1353,12 +1433,19 @@ def train_baas_prompt(config:BaasPromptConfig):
         lr=lr
     )
     
+    # 计算总训练步数  
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)  
+    max_train_steps = num_epochs * num_update_steps_per_epoch
+    
+    
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=config.warmup_steps,
-        num_training_steps=(len(train_dataloader) * num_epochs),
+        # num_training_steps=(len(train_dataloader) * num_epochs),
+        num_training_steps=max_train_steps
     )
     
+
     model = baas_model 
     
     
@@ -1383,117 +1470,124 @@ def train_baas_prompt(config:BaasPromptConfig):
         if train_sampler is not None:  # 每轮训练都打乱顺序
             train_sampler.set_epoch(epoch) 
         for step, batch in enumerate(tqdm(train_dataloader)):
-            # print(f"Batch labels: {batch['labels']}") 
-            # batch = {k: v.to(device) for k, v in batch.items()}
-            # batch = {"input_ids": tensor([[101, 7592, 2199, 2, ...], [101, 7592, 2199, ...]]), "attention_mask": tensor([[1, 1, 1,  ..., 0, 0, 0], [1, 1, 1, ...]])}
-            
-            # labels=None
-            # if isinstance(batch, dict):  
-            #     print(f"batch 的类型：{type(batch)}")  
-            #     print(f"batch 的 keys：{batch.keys()}")  
 
-            #     # 提取 labels，不修改原始 batch  
-            #     labels = batch["labels"]  
-
-            #     # 创建新的输入字典，不包含 labels  
-            #     # 原因：在多进程环境中，最好避免对共享对象batch进行原地修改。
-            #     inputs = {k: v for k, v in batch.items() if k != "labels"}  
-            #     print(f"inputs 的 keys：{inputs.keys()}")  
-
-            # else:  
-            #     print("batch 不是字典类型")  
-            #     continue  # 跳过非字典类型的 batch  
-            
-            if step % 100 == 0:  
-                if accelerator.is_main_process:
-                    # 确保梯度确实在更新  
-                    detect_param_grad_updates(model,epoch,step)
-                # 定期清理缓存
-                torch.cuda.empty_cache()    
-            
-            
-            
-            labels = batch["labels"]  
-            
-            outputs = model(**batch)
-            
-            criterion = nn.CrossEntropyLoss()
-            
-            logits = outputs.logits
-            
-            loss:torch.Tensor = criterion(logits, labels.long())
-            total_loss += loss.detach().float().item() 
-
-            # loss.backward()
-            accelerator.backward(loss, retain_graph=True)
-            
-            
-            
-            # # 梯度累积  
-            # if accelerator.sync_gradients:  
-            #     # 在这里添加梯度裁剪，max_norm可以根据需要调整（常用值：1.0, 5.0, 10.0）  
-            #     accelerator.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            #     optimizer.step()
-            #     lr_scheduler.step()
-            #     optimizer.zero_grad()
-            
-            # 梯度累积
-            if (step) % config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+            with accelerator.accumulate(model):
+                if step % 500 == 0:  
+                    if accelerator.is_main_process:
+                        # 确保梯度确实在更新  
+                        detect_param_grad_updates(model,epoch,step)
+                    # 定期清理缓存
+                    torch.cuda.empty_cache()    
                 
-            # 假设 step = 31, batch_size =2
-            # (step+1)*2 = 64 = target batch_size
-            
-            
-            
-            
-            # 确保在每次迭代后释放计算图  
-            del outputs  
-            del loss
+                
+                
+                labels = batch["labels"]  
+                
+                outputs = model(**batch)
+                
+                criterion = nn.CrossEntropyLoss()
+                
+                logits = outputs.logits
+                
+                loss:torch.Tensor = criterion(logits, labels.long())
+                total_loss += loss.detach().float().item() 
+                
 
-            torch.cuda.empty_cache()  # 可选，如果内存占用过高
-            
-            if step == len(train_dataloader)-1:  
-                  
-                model.eval()  
-                all_preds = []  
-                all_labels = []  
-                with torch.no_grad():  
-                    for val_batch in eval_dataloader:  
-                        val_input_ids = val_batch['input_ids']
-                        val_attention_mask = val_batch['attention_mask'] 
-                        val_labels = val_batch['labels']
-                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
-                        logits = val_outputs['logits']  
-                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
-                        labels_cpu = val_labels.cpu().numpy()  
-                        all_preds.extend(preds)  
-                        all_labels.extend(labels_cpu)  
+                # loss.backward()
+                accelerator.backward(loss, retain_graph=True)
+                
+                
+                should_update = accelerator.sync_gradients
+                
+                
+                # 梯度累积  
+                if should_update:  
+                    # 在这里添加梯度裁剪，max_norm可以根据需要调整（常用值：1.0, 5.0, 10.0）  
+                    accelerator.clip_grad_norm_(
+                        model.parameters(), 
+                        max_norm=config.max_grad_norm,
+                        norm_type=config.norm_type
+                        )
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+                
+                # 梯度累积
+                # if (step) % config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+                #     optimizer.step()
+                #     lr_scheduler.step()
+                #     optimizer.zero_grad()
+                    
+                # 假设 step = 31, batch_size =2
+                # (step+1)*2 = 64 = target batch_size
                 
                 
                 
                 
-                
-                # 计算评价指标  
-                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
+                # 确保在每次迭代后释放计算图  
+                del outputs  
+                del loss
 
-                accelerator.wait_for_everyone() 
-
-                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
-                
-                
-                if accelerator.is_main_process:
-                    avg_loss = total_loss / len(train_dataloader)   
-                    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
-                    logger.info({'epoch': epoch, 'avg_loss': avg_loss, 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
-
-                model.train()  
+                torch.cuda.empty_cache()  # 可选，如果内存占用过高
+            
             global_step+=1
+            
+            
+        if accelerator.is_local_main_process:
+            print(f"begin epoch {epoch} evaluating...")    
+            
+            # if step == len(train_dataloader)-1:  
+        eval_results = evaluate_baas_prompt(model, accelerator, eval_dataloader)
+        accelerator.wait_for_everyone()  
+                # model.eval()  
+                # all_preds = []  
+                # all_labels = []  
+                # with torch.no_grad():  
+                #     for val_batch in eval_dataloader:  
+                #         val_input_ids = val_batch['input_ids']
+                #         val_attention_mask = val_batch['attention_mask'] 
+                #         val_labels = val_batch['labels']
+                #         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
+                #         logits = val_outputs['logits']  
+                #         preds = torch.argmax(logits, dim=1).cpu().numpy()  
+                #         labels_cpu = val_labels.cpu().numpy()  
+                #         all_preds.extend(preds)  
+                #         all_labels.extend(labels_cpu)  
+                
+                
+                
+                
+                
+                # # 计算评价指标  
+                # accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
+                # precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
 
+                # accelerator.wait_for_everyone() 
+
+                # print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+                
+        # 记录自定义的logger
+        if accelerator.is_main_process and logger is not None:
+            avg_loss = total_loss / len(train_dataloader)   
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
+            logger.info({
+                'epoch': epoch, 
+                'avg_loss': avg_loss, 
+                **eval_results
+                })  
         
+        # 记录到swanlab的logger， 用于可视化
+        accelerator.log(
+            {
+                'epoch': epoch, 
+                'avg_loss': avg_loss,
+                **eval_results
+            }
+        )
+
+        model.train()  
+
+    accelerator.wait_for_everyone()
     accelerator.end_training()
 
     
@@ -1529,74 +1623,60 @@ def detect_param_grad_updates(model, epoch, step):
     for name, param in model.named_parameters():  
         if param.requires_grad:  
             print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
-            print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}")  
+            print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}") 
+    
+    print("=========================================================================")
+    for name, param in model.named_parameters():  
+        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):  
+            print(f"Gradient of {name} contains nan or inf at epoch:{epoch} step: {step}")
     print("**************************************************************\n")
 
-def evaluate_bidirectional_prompt_tuning(model, accelerator:Accelerator, eval_dataloader:DataLoader=None):
-    model.eval()  
+def evaluate_baas_prompt(
+    model, 
+    accelerator:Accelerator, 
+    eval_dataloader:DataLoader=None
+    )->Dict:
     
+    model.eval()  
     all_preds = []  
     all_labels = []  
     
-    # 7. 评估循环  
-    with torch.no_grad():  
-        for batch in eval_dataloader:  
+    for batch in eval_dataloader:  
+        with torch.no_grad():  
+        
             # 获取输入数据  
-            input_ids = batch['input_ids']  
-            attention_mask = batch['attention_mask']  
-            labels = batch['labels']  
-            
-            # 获取token_type_ids（如果存在）  
-            token_type_ids = batch.get('token_type_ids', None)  
-            
-            # 前向传播  
-            outputs = model(  
-                input_ids=input_ids,  
-                attention_mask=attention_mask,  
-                token_type_ids=token_type_ids,  
-                labels=labels  
-            )  
-            
-            # 获取预测结果  
-            logits = outputs.logits  
-            
-            gathered_logits = accelerator.gather(logits)  
-            gathered_labels = accelerator.gather(labels)  
-            
-            # 计算预测结果  
-            preds = torch.argmax(gathered_logits, dim=1).cpu().numpy()  
-            labels_cpu = gathered_labels.cpu().numpy()  
-            
-            all_preds.extend(preds)  
-            all_labels.extend(labels_cpu)  
+            # input_ids = batch['input_ids']  
+            # attention_mask = batch['attention_mask']  
+            # labels = batch['labels']  
+            outputs = model(**batch)
+            preds = outputs.logits.argmax(dim=-1) 
+            labels = batch['labels']
+        
+            preds, labels = accelerator.gather_for_metrics(
+                (preds, labels)
+            )
+    
+            all_preds.extend(preds.cpu().numpy())  
+            all_labels.extend(labels.cpu().numpy())  
     
     if accelerator.is_main_process:  
-        # 计算评价指标  
-        accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-        precision, recall, f1, _ = precision_recall_fscore_support(  
-            all_labels, all_preds, average='weighted'  
-        )  
-        
-        label_distribution = Counter(all_labels)  
-        pred_distribution = Counter(all_preds) 
-        
-        results = {  
-            'accuracy': accuracy,  
-            'precision': precision,  
-            'recall': recall,  
-            'f1': f1  
-        }  
-        
+        metrics = {  
+            'accuracy': accuracy_score(all_labels, all_preds),  
+            'precision': precision_score(all_labels, all_preds, average='weighted'),  
+            'recall': recall_score(all_labels, all_preds, average='weighted'),  
+            'f1': f1_score(all_labels, all_preds, average='weighted')  
+        }          
         # debug info
-        print("\nEvaluation Results:")  
+        print("\n****************** Evaluation Results:**************************")  
         print(f"Total samples evaluated: {len(all_labels)}")  
-        print(f"Label distribution: {dict(label_distribution)}")  
-        print(f"Prediction distribution: {dict(pred_distribution)}")  
-        print("\nClassification Report:")  
+        print(f"Batch predictions distribution: {np.bincount(all_preds)}")  
+        print(f"Batch labels distribution: {np.bincount(all_labels)}")   
+        print("\n******************** Classification Report: ***********************")  
         print(classification_report(all_labels, all_preds))         
+        print("*****************************************************************\n")
          
         
-        return results 
+        return metrics 
     
     # 非主进程返回None  
     return None
