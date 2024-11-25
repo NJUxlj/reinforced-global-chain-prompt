@@ -1480,6 +1480,7 @@ def train_baas_prompt(config:BaasPromptConfig):
                     if accelerator.is_main_process:
                         # 确保梯度确实在更新  
                         detect_param_grad_updates(model,epoch,step)
+                        monitor_gradients(model, step)
                     # 定期清理缓存
                     torch.cuda.empty_cache()    
                 
@@ -1584,7 +1585,7 @@ def train_baas_prompt(config:BaasPromptConfig):
         accelerator.log(
             {
                 'epoch': epoch, 
-                'avg_loss': avg_loss,
+                # 'avg_loss': avg_loss,
                 **eval_results
             }
         )
@@ -1634,6 +1635,26 @@ def detect_param_grad_updates(model, epoch, step):
         if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):  
             print(f"Gradient of {name} contains nan or inf at epoch:{epoch} step: {step}")
     print("**************************************************************\n\n\n")
+    
+
+def monitor_gradients(model, step):  
+    print(f"\n\n********************** Monitor Gradients for step={step}******************************8")
+    grad_stats = {}  
+    for name, param in model.named_parameters():  
+        if param.grad is not None:  
+            grad_norm = param.grad.norm().item()  
+            if grad_norm < 1e-8:  
+                print(f"Warning: Very small gradient for {name}: {grad_norm}")  
+            grad_stats[name] = grad_norm  
+    
+    # 检查梯度比例  
+    max_grad = max(grad_stats.values())  
+    min_grad = min(grad_stats.values())  
+    if max_grad / min_grad > 1000:  # 梯度比例阈值  
+        print(f"Warning: Large gradient ratio 'max_grad/min_grad' at step {step}: {max_grad/min_grad}")
+    
+    print("*********************************************************************\n\n\n")
+
 
 def evaluate_baas_prompt(
     model, 
