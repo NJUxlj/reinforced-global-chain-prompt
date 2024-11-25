@@ -1442,7 +1442,7 @@ def train_baas_prompt(config:BaasPromptConfig):
         optimizer=optimizer,
         num_warmup_steps=config.warmup_steps,
         # num_training_steps=(len(train_dataloader) * num_epochs),
-        num_training_steps=max_train_steps
+        num_training_steps=max_train_steps  
     )
     
 
@@ -1472,7 +1472,7 @@ def train_baas_prompt(config:BaasPromptConfig):
         for step, batch in enumerate(tqdm(train_dataloader)):
 
             with accelerator.accumulate(model):
-                if step % 500 == 0:  
+                if step % 1000 == 0:  
                     if accelerator.is_main_process:
                         # 确保梯度确实在更新  
                         detect_param_grad_updates(model,epoch,step)
