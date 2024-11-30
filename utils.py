@@ -630,8 +630,14 @@ def monitor_gradients(model, step):
         if param.grad is not None:  
             grad_norm = param.grad.norm().item()  
             if grad_norm < 1e-8:  
-                print(f"Warning: Very small gradient for {name}: {grad_norm}")  
-            grad_stats[name] = grad_norm  
+                print(f"Warning: Very small gradient for {name}: {grad_norm}") 
+            grad_stats[name] = grad_norm
+        else:
+            print(f"Warning: No gradient for {name}")
+    
+    if None in grad_stats.values() or grad_stats == {}:
+        print(f"Warning: None in grad_stats.values() at step {step}")
+        return
     
     # 检查梯度比例  
     max_grad = max(grad_stats.values())  

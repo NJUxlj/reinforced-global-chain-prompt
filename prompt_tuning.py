@@ -150,7 +150,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
     tracker = SwanLabTracker("PROMPT_TUNING_TRAING", experiment_name=exp_name)  # 训练可视化
     accelerator = Accelerator(
-        gradient_accumulation_steps=None,  
+        # gradient_accumulation_steps=500,  
         # mixed_precision=config.mixed_precision,
         log_with=[tracker]
     )
