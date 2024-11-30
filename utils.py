@@ -606,6 +606,45 @@ def setup_distributed(use_cuda=True)->Tuple[torch.device, int]:
 
 
 
+def detect_param_grad_updates(model, epoch, step):
+    '''
+    检测可训练参数的梯度是否真的在更新
+    '''  
+    print(f"\n\n******************* Epoch:{epoch}, Step:{step}, Check Whether Gradient is Updating ***************8")
+    for name, param in model.named_parameters():  
+        if param.requires_grad:  
+            print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
+            print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}") 
+    
+    print("\n\n================== NaN Gradient Detection ========================================")
+    for name, param in model.named_parameters():  
+        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):  
+            print(f"Gradient of {name} contains nan or inf at epoch:{epoch} step: {step}")
+    print("**************************************************************\n\n\n")
+    
+
+def monitor_gradients(model, step):  
+    print(f"\n\n********************** Monitor Gradients for step={step}******************************8")
+    grad_stats = {}  
+    for name, param in model.named_parameters():  
+        if param.grad is not None:  
+            grad_norm = param.grad.norm().item()  
+            if grad_norm < 1e-8:  
+                print(f"Warning: Very small gradient for {name}: {grad_norm}")  
+            grad_stats[name] = grad_norm  
+    
+    # 检查梯度比例  
+    max_grad = max(grad_stats.values())  
+    min_grad = min(grad_stats.values())  
+    if max_grad / min_grad > 1000:  # 梯度比例阈值  
+        print(f"Warning: Large gradient ratio 'max_grad/min_grad' at step {step}: {max_grad/min_grad}")
+    
+    print("*********************************************************************\n\n\n")
+
+
+
+
+
 def main():
     '''
     for testing
