@@ -1331,7 +1331,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 
 
 def train_baas_prompt(config:BaasPromptConfig):
-    # setup_distributed()
+    setup_distributed()
     
     fix_seed(config.seed)
     

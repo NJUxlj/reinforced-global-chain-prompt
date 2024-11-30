@@ -103,6 +103,7 @@ class PromptTuningTrainerConfig:
 def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     fix_seed(config.seed)
+    setup_distributed()
     # 初始化参数  
     model_name = config.model_name
     
@@ -256,13 +257,13 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         for step, batch in enumerate(tqdm(train_dataloader)):
             # with accelerator.accumulate(model):  # 使用梯度累积 
             
-            if step % 1000 == 0:  
+            if step % 1000 == 0 and step!=0:  
                 if accelerator.is_main_process:
                     # 确保梯度确实在更新  
                     detect_param_grad_updates(model,epoch,step)
                     monitor_gradients(model, step)
                 # 定期清理缓存
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
                      
             batch = {k: v.to(device) for k, v in batch.items()}  
             labels = batch["labels"]  
@@ -300,8 +301,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
           
         global_step+=1
         
-    if accelerator.is_local_main_process:
-        print(f"begin epoch {epoch} evaluating...")   
+        if accelerator.is_main_process:
+            print(f"begin epoch {epoch} evaluating...")   
         eval_results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)
         accelerator.wait_for_everyone()
         # 记录自定义的logger
@@ -314,18 +315,18 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                 **eval_results
                 })  
         
-        # 记录到swanlab的logger， 用于可视化
-        accelerator.log(
-            {
-                'epoch': epoch, 
-                # 'avg_loss': avg_loss,
-                **eval_results
-            }
-        )
+            # 记录到swanlab的logger， 用于可视化
+            accelerator.log(
+                {
+                    'epoch': epoch, 
+                    # 'avg_loss': avg_loss,
+                    **eval_results
+                }
+            )
 
         model.train()
-    accelerator.wait_for_everyone()
-    accelerator.end_training()
+        accelerator.wait_for_everyone()
+        accelerator.end_training()
         
             # if step % 100 ==0 and step !=0:
             #     if accelerator.is_local_main_process: 
@@ -450,8 +451,6 @@ def evaluate_prompt_tuning(
                 (preds, labels)
             )
             
-            preds= preds.cpu().numpy().tolist()
-            labels = labels.cpu().numpy().tolist()
         
             all_preds.extend(preds.cpu().numpy())  
             all_labels.extend(labels.cpu().numpy())   
