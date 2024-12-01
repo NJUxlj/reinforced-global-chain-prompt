@@ -648,6 +648,37 @@ def monitor_gradients(model, step):
     print("*********************************************************************\n\n\n")
 
 
+def record_epoch_param_state(model, param_monitor:Dict):
+    # 添加参数状态监控  
+    print("*************************** 记录上一轮训练后的参数 ********************************")
+    for name, param in model.named_parameters():  
+        if 'prompt_encoder' in name and param.requires_grad:  
+            if name not in param_monitor:  
+                param_monitor[name] = []  
+            param_monitor[name].append(param.data.clone().cpu())
+    
+    return param_monitor
+
+def print_prediction_distribution(outputs,step,loss):
+    print("*************************** 打印训练过程中的预测分布 ***************************************")
+    with torch.no_grad():  
+        preds = outputs.logits.argmax(dim=-1)  
+        print(f"\nStep {step} predictions distribution:",   
+                torch.bincount(preds).cpu().numpy())  
+        print(f"Current loss: {loss.item():.4f}")  
+    print("******************************************************************************************\n\n")
+
+def check_param_after_epoch(model,param_monitor:Dict, epoch:int):
+    print("************************ 检查每轮训练后的参数是否变化 ****************************")
+    for name in param_monitor:  
+        param_change = torch.norm(  
+            # 当前轮-上一轮的差值
+            param_monitor[name][-1] - param_monitor[name][-2]  
+        ).item()  
+        print(f"\nEpoch {epoch} {name} change: {param_change:.6f}")  
+
+    print("*******************************************************************\n\n")
+
 
 
 

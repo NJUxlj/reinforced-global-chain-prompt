@@ -49,7 +49,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from autocot.make_embeddings import (
     get_cot_context,
     rollback_one_step_extend,
-    ChainEncodingArguments
+    ChainEncodingArguments,
+    generate_new_step
 )
 
 from datasets import (
@@ -67,6 +68,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  
 from torch.optim import Adam
+from copy import deepcopy
 import numpy as np
 import csv
 import evaluate
@@ -431,6 +433,9 @@ class BassPromptModel(torch.nn.Module):
             # shape = (batch_size, seq_length, hidden_size)
             prefix_embeds, suffix_embeds = self.prompt_encoder.forward()
             
+            # 使用RollbackEncoder对suffix_embeds进行rollbcak half N, residual connection
+            suffix_embeds= suffix_embeds + self.rollback_half_extend(suffix_embeds)
+            
             
             batch_size = inputs_embeds.size(0)  
             
@@ -700,6 +705,27 @@ class BassPromptModel(torch.nn.Module):
         # prefix_prompt_embeddings = torch.nn.Parameter(prefix_embeddings, requires_grad=True)   # (num_prefix_tokens, embedding_size)
 
         return prefix_embeddings
+
+    
+    def rollback_half_extend(self, suffix_embeds:torch.Tensor):
+        '''
+        suffix_embeds.shape = (batch_size, num_suffix_tokens, hidden_size)
+        '''
+        
+        suffix_embeddings = deepcopy(suffix_embeds).to(self.device)
+        print(f"扩展推理链 suffix embedding steps from {self.num_suffix_tokens} to {self.num_suffix_tokens//2}")
+        source_length = self.num_suffix_tokens//2
+        suffix_embeddings = suffix_embeddings[:,:source_length,:] # rollback N/2 step
+        
+        # use multihead-attention to generate new steps using causual language modeling
+        for i in range(source_length, self.num_suffix_tokens):
+            # 生成新的推理步骤
+            token_id, new_step_embedding = generate_new_step(suffix_embeddings, self.model, self.rollback_decoder) # shape = [hidden_size]
+            new_step_embedding = new_step_embedding.unsqueeze(0).unsqueeze(0).expand(len(suffix_embeddings),1,self.hidden_size) # [1, hidden_dim]
+            suffix_embeddings = torch.cat([suffix_embeddings, new_step_embedding], dim=1)
+
+        return suffix_embeddings
+
     
     def add_to_all_layers(
         self,

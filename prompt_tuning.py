@@ -102,8 +102,8 @@ class PromptTuningTrainerConfig:
 
 def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
-    fix_seed(config.seed)
-    setup_distributed()
+    # fix_seed(config.seed)
+    # setup_distributed()
     # 初始化参数  
     model_name = config.model_name
     
@@ -133,19 +133,34 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
     
+    # 使用DistributedSampler进行数据分布  
+    train_sampler = DistributedSampler(  
+        train_ds,  
+        shuffle=True,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
+    eval_sampler = DistributedSampler(  
+        eval_ds,  
+        shuffle=False,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
     train_dataloader = DataLoader(
             train_ds, 
-            shuffle=True, 
+            # shuffle=True, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler=train_sampler
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler = eval_sampler
         )
     
     exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
@@ -246,26 +261,31 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     global_step = 0
     best_accuracy = 0 
     
+    optimizer.zero_grad()
+    # 添加参数状态监控  
+    param_monitor = {}
 
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
-        
-        # if accelerator.is_main_process:  
-        #     progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)  
-
+        if train_sampler is not None:  # 每轮训练都打乱顺序
+            train_sampler.set_epoch(epoch) 
+            
+        # 记录每个epoch开始时的参数状态  
+        if accelerator.is_main_process:
+            record_epoch_param_state(model, param_monitor)
+            
         for step, batch in enumerate(tqdm(train_dataloader)):
             # with accelerator.accumulate(model):  # 使用梯度累积 
             
             if step % 1000 == 0 and step!=0:  
                 if accelerator.is_main_process:
-                    # 确保梯度确实在更新  
-                    detect_param_grad_updates(model,epoch,step)
-                    monitor_gradients(model, step)
+                    pass
+                    
                 # 定期清理缓存
                 # torch.cuda.empty_cache()
                      
-            batch = {k: v.to(device) for k, v in batch.items()}  
+            batch = {k: v.to(accelerator.device) for k, v in batch.items()}
             labels = batch["labels"]  
             
             outputs = model(**batch)
@@ -275,6 +295,11 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             logits = outputs.logits
             
             loss = criterion(logits, labels.long())
+            
+            if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
+                # 打印训练过程中的预测分布
+                print_prediction_distribution(outputs,step,loss)
+                
             # loss= outputs.loss
             total_loss += loss.detach().float().item() 
 
@@ -290,6 +315,10 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                 #     max_norm=config.max_grad_norm,
                 #     norm_type=config.norm_type
                 #     )
+                if step % 300 == 0 and step!=0 and accelerator.is_main_process:
+                    # 确保梯度确实在更新  
+                    detect_param_grad_updates(model,epoch,step)
+                    monitor_gradients(model, step)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -300,6 +329,10 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             torch.cuda.empty_cache()
           
         global_step+=1
+        
+        # 在每个epoch结束后检查参数变化  
+        if accelerator.is_main_process and epoch > 0:  
+            check_param_after_epoch(model,param_monitor,epoch)
         
         if accelerator.is_main_process:
             print(f"begin epoch {epoch} evaluating...")   
@@ -325,8 +358,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             )
 
         model.train()
-        accelerator.wait_for_everyone()
-        accelerator.end_training()
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
         
             # if step % 100 ==0 and step !=0:
             #     if accelerator.is_local_main_process: 
@@ -436,6 +469,8 @@ def evaluate_prompt_tuning(
     # 如果需要保持原始模型状态不变  
     # evaluation_mode = model.training  # 保存当前状态  
     
+    # 保存原始训练状态  
+    training_state = model.training  
     model.eval()  
     all_preds = []  
     all_labels = []  
@@ -452,20 +487,28 @@ def evaluate_prompt_tuning(
             )
             
         
-            all_preds.extend(preds.cpu().numpy())  
-            all_labels.extend(labels.cpu().numpy())   
+            all_preds.append(preds.cpu())  
+            all_labels.append(labels.cpu())   
+            
+    
+    all_preds = torch.cat(all_preds).numpy()  
+    all_labels = torch.cat(all_labels).numpy() 
             
     
     
-    # 确保只在主进程上计算指标  
+    # 在主进程上计算指标  
+    metrics = None   
+    
+    # 计算评价指标  
+    metrics = {  
+        'accuracy': accuracy_score(all_labels, all_preds),  
+        'precision': precision_score(all_labels, all_preds, average='weighted'),  
+        'recall': recall_score(all_labels, all_preds, average='weighted'),  
+        'f1': f1_score(all_labels, all_preds, average='weighted')  
+    }          
+    
     if accelerator.is_main_process: 
-        # 计算评价指标  
-        metrics = {  
-            'accuracy': accuracy_score(all_labels, all_preds),  
-            'precision': precision_score(all_labels, all_preds, average='weighted'),  
-            'recall': recall_score(all_labels, all_preds, average='weighted'),  
-            'f1': f1_score(all_labels, all_preds, average='weighted')  
-        }          
+        
         # debug info
         print("\n****************** Evaluation Results:**************************")  
         print(f"Total samples evaluated: {len(all_labels)}")  
@@ -474,11 +517,14 @@ def evaluate_prompt_tuning(
         print("\n******************** Classification Report: ***********************")  
         print(classification_report(all_labels, all_preds))         
         print("*****************************************************************\n")
-         
         
-        return metrics 
         
-    return None  
+    
+    # 恢复模型原始状态  
+    model.train(training_state) 
+        
+    return metrics 
+        
     
 
 
