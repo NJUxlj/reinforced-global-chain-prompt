@@ -28,8 +28,16 @@ from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
     AutoModelForMultipleChoice,
-    get_linear_schedule_with_warmup
+    get_linear_schedule_with_warmup,
+    Trainer,
+    TrainingArguments,
 )
+
+from transformers.trainer_utils import EvalPrediction 
+from transformers.utils import PaddingStrategy
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+
 from peft import (
     TaskType,
     PeftType,
@@ -96,13 +104,141 @@ class PromptTuningTrainerConfig:
     optimizer_class:type = Adam
     
     seed:int=42
+    
+    
+    
+@dataclass  
+class DataCollatorForPromptTuning:  
+    """  
+    数据整理器，处理批量数据  
+    """  
+    tokenizer: PreTrainedTokenizerBase  
+    padding: Union[bool, str, PaddingStrategy] = True  
+    max_length: int = None  
+    pad_to_multiple_of: int = None  
+
+    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:  
+        # 提取输入特征  
+        input_ids = [{"input_ids": feature["input_ids"]} for feature in features]  
+        attention_mask = [{"attention_mask": feature["attention_mask"]} for feature in features]  
+        
+        # 批量填充  
+        batch = self.tokenizer.pad(  
+            input_ids,  
+            padding=self.padding,  
+            max_length=self.max_length,  
+            pad_to_multiple_of=self.pad_to_multiple_of,  
+            return_tensors="pt",  
+        )  
+        
+        # 添加标签  
+        if "label" in features[0].keys():  
+            batch["labels"] = torch.tensor([f["label"] for f in features], dtype=torch.long)  
+            
+        return batch  
+
+class PromptTuningTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            labels = inputs.pop("labels")  
+            outputs = model(**inputs)  
+            logits = outputs.logits  
+            loss_fct = nn.CrossEntropyLoss()
+            
+            loss = loss_fct(logits.view(-1, model.module.config.num_labels), labels.view(-1))
+            
+            return (loss, outputs) if return_outputs else loss
+        
+        
+def compute_metrics(eval_pred: EvalPrediction):  
+    """  
+    计算评估指标  
+    """  
+    metric = evaluate.load("accuracy")  
+    precision_metric = evaluate.load("precision")  
+    recall_metric = evaluate.load("recall") 
+    f1_metric = evaluate.load("f1")  
+    
+    
+    predictions = eval_pred.predictions  
+    labels = eval_pred.label_ids  
+    
+    # 获取预测类别  
+    preds = np.argmax(predictions, axis=1)  
+    
+    results = {}  
+    # 计算准确率  
+    results.update(metric.compute(predictions=preds, references=labels)) 
+    
+    # 计算精确率（使用weighted average处理类别不平衡）  
+    results.update(precision_metric.compute(predictions=preds, references=labels, average="weighted"))  
+    
+    # 计算召回率  
+    results.update(recall_metric.compute(predictions=preds, references=labels, average="weighted"))  
+    # 计算F1分数  
+    results.update(f1_metric.compute(predictions=preds, references=labels, average="weighted"))  
+    
+    # 打印详细结果  
+    print("\nEvaluation Results:")  
+    for metric_name, value in results.items():  
+        print(f"{metric_name}: {value:.4f}")  
+    
+    return results  
 
 
+
+def setup_trainer(config: PromptTuningTrainerConfig, model, train_dataset, eval_dataset, tokenizer):  
+    """  
+    设置和配置Trainer  
+    """  
+    
+    # 训练参数配置  
+    training_args = TrainingArguments(  
+        output_dir=f"prompt_tuning_{config.model_name}",  
+        learning_rate=config.learning_rate,  # 相对较大的学习率  
+        per_device_train_batch_size=config.batch_size,  
+        per_device_eval_batch_size=config.batch_size,  
+        num_train_epochs=config.num_epochs,  
+        weight_decay=config.weight_decay,  
+        evaluation_strategy="epoch",  
+        save_strategy="epoch",  
+        # load_best_model_at_end=True,  
+        # metric_for_best_model="f1",  
+        # greater_is_better=True,  
+        push_to_hub=False,  
+        remove_unused_columns=False,  
+        gradient_accumulation_steps=4,  # 梯度累积  
+        warmup_ratio=0.1,  
+        logging_strategy="epoch",
+        logging_dir=Config['logging_dir'][model_name][config.peft_method][dataset_name],
+        # logging_steps=100,  
+        # report_to=["tensorboard"],  
+        # save_total_limit=2,  # 只保存最好的2个检查点  
+    )  
+    
+    # 数据整理器  
+    data_collator = DataCollatorForPromptTuning(  
+        tokenizer=tokenizer,  
+        padding=True,  
+        max_length=config.max_seq_length  
+    )  
+    
+    # 初始化Trainer  
+    trainer = PromptTuningTrainer(  
+        model=model,  
+        args=training_args,  
+        train_dataset=train_dataset,  
+        eval_dataset=eval_dataset,  
+        # data_collator=data_collator,  
+        tokenizer=tokenizer,  
+        compute_metrics=compute_metrics,    
+    )  
+    
+    return trainer  
 
 
 def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
-    # fix_seed(config.seed)
+    # fix_seed(config.seed)t_t
     # setup_distributed()
     # 初始化参数  
     model_name = config.model_name
@@ -133,51 +269,6 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
     
-    # 使用DistributedSampler进行数据分布  
-    train_sampler = DistributedSampler(  
-        train_ds,  
-        shuffle=True,  
-        seed=42  
-    ) if torch.distributed.is_initialized() else None 
-    
-    eval_sampler = DistributedSampler(  
-        eval_ds,  
-        shuffle=False,  
-        seed=42  
-    ) if torch.distributed.is_initialized() else None 
-    
-    train_dataloader = DataLoader(
-            train_ds, 
-            # shuffle=True, 
-            collate_fn=default_data_collator, 
-            batch_size=batch_size,
-            pin_memory=True,
-            sampler=train_sampler
-        )
-    
-    eval_dataloader = DataLoader(
-            eval_ds, 
-            collate_fn=default_data_collator, 
-            batch_size=batch_size,
-            pin_memory=True,
-            sampler = eval_sampler
-        )
-    
-    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
-    tracker = SwanLabTracker("PROMPT_TUNING_TRAING", experiment_name=exp_name)  # 训练可视化
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=500,  
-        # mixed_precision=config.mixed_precision,
-        log_with=[tracker]
-    )
-    tracker_config = {
-        "num_epoch": config.num_epochs,
-        "batch_num": config.batch_size,
-        "learning_rate": config.learning_rate,
-        "seed": config.seed,
-    }
-    accelerator.init_trackers("PROMPT_TUNING_TRAING", config=tracker_config)
-    
     
     # Prompt-tuning
     peft_config = PromptTuningConfig(
@@ -202,258 +293,53 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     # Output Shape: (batch_size, total_virtual_tokens, token_dim)
     
     model = get_peft_model(model, peft_config)
-    model.to(accelerator.device)
     model.print_trainable_parameters()
     
     # for param in model.base_model.parameters():  
     #     param.requires_grad = False
     
 
+
+    # optimizer = torch.optim.AdamW(
+    #     [p for p in model.parameters() if p.requires_grad],
+    #     lr=lr
+    # )
     
-    if accelerator.is_main_process:
-        print("===================== Weight Summary =========================")
-        for name, param in model.named_parameters():  
-            if 'prompt_encoder' in name or 'classifier' in name:  
-                # param.requires_grad = True 
-                print("weight name = {}, shape = {}, requires_grad = {}".format(name, param.shape, param.requires_grad))
-            else:
-                # param.requires_grad = False
-                pass
-        
-        print("=============================================================")
-        
-        
-    if accelerator.is_main_process:
-        # 打印可训练参数  
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
-        print(f"Trainable parameters (self-calculated): {trainable_params}")  
+    # lr_scheduler = get_linear_schedule_with_warmup(
+    #     optimizer=optimizer,
+    #     num_warmup_steps=config.warmup_steps,
+    #     num_training_steps=(len(train_dataloader) * num_epochs),
+    # )
 
 
-    optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=lr
-    )
-    
-    lr_scheduler = get_linear_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=config.warmup_steps,
-        num_training_steps=(len(train_dataloader) * num_epochs),
-    )
-    
 
+    trainer = setup_trainer(  
+        config,  
+        model,  
+        train_ds,  
+        eval_ds,  
+        tokenizer  
+    )  
     
-    model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
-        model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
+    # 开始训练  
+    print("Starting training...")  
+    train_results = trainer.train()  
     
-    if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
-        if not os.path.exists(logging_dir):
-            os.makedirs(logging_dir)  
-            print(f"已创建新的log存储路径: {logging_dir}") 
-        logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
+    # 保存最终模型  
+    trainer.save_model(f"final_model_{config.model_name}")  
     
+    # 打印训练结果  
+    print("Training results:")  
+    print(train_results)  
     
-    if accelerator.is_main_process:  
-        accelerator.init_trackers("training")
-        
-        
-    device = accelerator.device
-    global_step = 0
-    best_accuracy = 0 
+    # 进行最终评估  
+    eval_results = trainer.evaluate()  
+    print("Final evaluation results:")  
+    print(eval_results)  
     
-    optimizer.zero_grad()
-    # 添加参数状态监控  
-    param_monitor = {}
-
-    for epoch in range(num_epochs):
-        model.train()
-        total_loss = 0
-        if train_sampler is not None:  # 每轮训练都打乱顺序
-            train_sampler.set_epoch(epoch) 
-            
-        # 记录每个epoch开始时的参数状态  
-        if accelerator.is_main_process:
-            record_epoch_param_state(model, param_monitor)
-            
-        for step, batch in enumerate(tqdm(train_dataloader)):
-            # with accelerator.accumulate(model):  # 使用梯度累积 
-                    
-                # 定期清理缓存
-                # torch.cuda.empty_cache()
-                     
-            batch = {k: v.to(accelerator.device) for k, v in batch.items()}
-            labels = batch["labels"]  
-            
-            outputs = model(**batch)
-            
-            criterion = nn.CrossEntropyLoss()
-            
-            logits = outputs.logits
-            
-            loss = criterion(logits, labels.long())
-            
-            if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
-                # 打印训练过程中的预测分布
-                print_prediction_distribution(outputs,step,loss)
-                
-            # loss= outputs.loss
-            total_loss += loss.detach().float().item() 
-
-            accelerator.wait_for_everyone()
-            
-            accelerator.backward(loss, retain_graph=True)
-            
-            should_update = accelerator.sync_gradients
-            
-            if should_update:  
-                # 在这里添加梯度裁剪，max_norm可以根据需要调整（常用值：1.0, 5.0, 10.0）  
-                # accelerator.clip_grad_norm_(
-                #     model.parameters(), 
-                #     max_norm=config.max_grad_norm,
-                #     norm_type=config.norm_type
-                #     )
-                if step % 300 == 0 and step!=0 and accelerator.is_main_process:
-                    # 确保梯度确实在更新  
-                    detect_param_grad_updates(model,epoch,step)
-                    monitor_gradients(model, step)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-            
-            del outputs
-            del loss
-            
-            torch.cuda.empty_cache()
-          
-        global_step+=1
-        
-        accelerator.wait_for_everyone()
-        
-        # 在每个epoch结束后检查参数变化  
-        if accelerator.is_main_process and epoch > 0:  
-            check_param_after_epoch(model,param_monitor,epoch)
-        
-        if accelerator.is_main_process:
-            print(f"begin epoch {epoch} evaluating...")   
-        eval_results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)
-        accelerator.wait_for_everyone()
-        # 记录自定义的logger
-        if accelerator.is_main_process and logger is not None:
-            avg_loss = total_loss / len(train_dataloader)   
-            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
-            logger.info({
-                'epoch': epoch, 
-                'avg_loss': avg_loss, 
-                **eval_results
-                })  
-        
-            # 记录到swanlab的logger， 用于可视化
-            accelerator.log(
-                {
-                    'epoch': epoch, 
-                    # 'avg_loss': avg_loss,
-                    **eval_results
-                }
-            )
-
-        model.train()
-    accelerator.wait_for_everyone()
-    accelerator.end_training()
-        
-            # if step % 100 ==0 and step !=0:
-            #     if accelerator.is_local_main_process: 
-            #          # 检查模型参数变化  
-            #         for name, param in model.named_parameters():  
-            #             if param.requires_grad:  
-            #                 print(f"{name}: mean={param.data.mean().item():.4f}, "  
-            #                     f"std={param.data.std().item():.4f}, "  
-            #                     f"grad_mean={param.grad.mean().item() if param.grad is not None else 'None'}") 
-                    
-
-    #         if step == len(train_dataloader)-1:
-    #             pass  
-    #             # results, model, accelerator = evaluate_prompt_tuning(model, eval_dataloader, accelerator)  
-                
-    #             # model=model
-    #             # accelerator = accelerator
-                
-    #             # if accelerator.is_main_process:             
-    #             #     logger.info({
-    #             #         'epoch': epoch, 
-    #             #         'loss': loss.item(), 
-    #             #         'accuracy':results["accuracy"], 
-    #             #         "precision": results["precision"], 
-    #             #         "recall": results["recall"], 
-    #             #         "f1": results["f1"], 
-    #             #     })
-        
-    #     # 每轮完全结束以后进行评价
-    #     results = evaluate_prompt_tuning(model, eval_dataloader, accelerator, device)  
-        
-    #     if accelerator.is_main_process:             
-    #         logger.info({
-    #             'epoch': epoch, 
-    #             'loss': loss.item(), 
-    #             'accuracy':results["accuracy"], 
-    #             "precision": results["precision"], 
-    #             "recall": results["recall"], 
-    #             "f1": results["f1"], 
-    #         }) 
-            
-    #     if accelerator.is_local_main_process: 
-    #         avg_loss = total_loss / len(train_dataloader)   
-    #         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
-    
-    # # 所有epoch结束以后进行总评
-    # results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)
-    # if accelerator.is_main_process:
-    #     logger.info({
-    #                 'accuracy':results["accuracy"], 
-    #                 "precision": results["precision"], 
-    #                 "recall": results["recall"], 
-    #                 "f1": results["f1"], 
-    #             }) 
-
-
-    # 保存权重
-    print("model name = ", model_name)
-    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
-    
-    # wait every GPU processes to reach here
-    torch.distributed.barrier()  
-    
-    # if not os.path.exists(save_path):
-    #     os.makedirs(save_path)  
-    #     print(f"已创建新的权重存储路径: {save_path}") 
-    
-    # accelerator.save({  
-    #     'prefix_encoder': model.prefix_encoder.state_dict(),  
-    #     'classifier': model.classifier.state_dict()  
-    # }, save_path) 
+    return trainer, eval_results  
     
     
-    
-    # # 只让主进程处理文件操作  
-    # if accelerator.is_main_process:  
-    #     # 如果目录已存在，删除整个目录及其内容  
-    #     if os.path.exists(save_path):  
-    #         try:  
-    #             shutil.rmtree(save_path)  
-    #             print(f"已删除旧的权重目录: {save_path}")  
-    #         except Exception as e:  
-    #             print(f"删除旧权重目录时出错: {e}")  
-        
-    #     # 创建新的目录  
-    #     try:  
-    #         os.makedirs(save_path)  
-    #         print(f"已创建新的权重存储路径: {save_path}")  
-    #     except Exception as e:  
-    #         print(f"创建新目录时出错: {e}")   
-        
-    
-    # model_state_dict = get_peft_model_state_dict(model.module)
-    # accelerator.save(model_state_dict, save_path)  
-
 
 
 
@@ -636,8 +522,8 @@ if __name__ == '__main__':
     '''
 
     '''
-    model_path = Config["models"]['qwen']["Qwen2.5-0.5B"]["model_path"]
-    model_name = "Qwen2.5-0.5B"
+    model_path = Config["models"]["bert-large-uncased"]["model_path"]
+    model_name = "bert-large-uncased"
     
     # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
     # model_name = 'Qwen2.5-1.5B'
@@ -661,5 +547,7 @@ if __name__ == '__main__':
     )
 
 
-    train_prompt_tuning(config)
+    trainer, eval_results = train_prompt_tuning(config)
+
+    print("eval results = \n", eval_results)
     

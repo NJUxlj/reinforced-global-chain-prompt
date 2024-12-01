@@ -624,16 +624,17 @@ def detect_param_grad_updates(model, epoch, step):
     
 
 def monitor_gradients(model, step):  
-    print(f"\n\n********************** Monitor Gradients for step={step}******************************8")
+    print(f"\n\n********************** Monitor Gradients for step={step}******************************")
     grad_stats = {}  
     for name, param in model.named_parameters():  
-        if param.grad is not None:  
-            grad_norm = param.grad.norm().item()  
-            if grad_norm < 1e-8:  
-                print(f"Warning: Very small gradient for {name}: {grad_norm}") 
-            grad_stats[name] = grad_norm
-        else:
-            print(f"Warning: No gradient for {name}")
+        if param.requires_grad:
+            if param.grad is not None:  
+                grad_norm = param.grad.norm().item()  
+                if grad_norm < 1e-8:  
+                    print(f"Warning: Very small gradient for {name}: {grad_norm}") 
+                grad_stats[name] = grad_norm
+            else:
+                print(f"Warning: No gradient (gradient is None) for {name}")
     
     if None in grad_stats.values() or grad_stats == {}:
         print(f"Warning: None in grad_stats.values() at step {step}")
@@ -652,7 +653,7 @@ def record_epoch_param_state(model, param_monitor:Dict):
     # 添加参数状态监控  
     print("*************************** 记录上一轮训练后的参数 ********************************")
     for name, param in model.named_parameters():  
-        if 'prompt_encoder' in name and param.requires_grad:  
+        if param.requires_grad:  
             if name not in param_monitor:  
                 param_monitor[name] = []  
             param_monitor[name].append(param.data.clone().cpu())
