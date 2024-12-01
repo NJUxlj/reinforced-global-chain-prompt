@@ -266,7 +266,7 @@ Config = {
     "num_layers": 4,
     "dropout": 0.5,
     "learning_rate": 1e-3,
-    "batch_size": 32,
+    "batch_size": 16,
     "num_epochs": 2,
     "num_workers": 4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -659,6 +659,16 @@ Config = {
                 "model_path": "models/qwen_model.pth"
             }
            
+        },
+        "t5":{
+          "flan-t5-large":{
+                "model_name": "flan-t5-large",
+                "max_length": 512,
+                "num_labels": 1,
+                "hidden_dim": 1024,
+                "model_type": "t5",
+                "model_path": f"{MODEL_BASE_PATH}flan-t5-large"
+          },  
         },
         
         "llama":{

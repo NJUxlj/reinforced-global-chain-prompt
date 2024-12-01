@@ -10,6 +10,7 @@ from datasets import (
 from dataclasses import dataclass 
 from transformers import (
     AutoTokenizer, 
+    AutoModelForSequenceClassification,
     BertTokenizerFast,
     AutoModel,
     PreTrainedTokenizer,  
@@ -215,7 +216,8 @@ def preprocess_function_race(
         first_four_columns = ["article", "question", "options", "answer"],
         dataset_name = 'race', 
         max_length = 512, 
-        tokenizer = None
+        tokenizer = None,
+        model_config=None,
     )->Dict[str,Union[List,List[List]]]:
     
     ''' 
@@ -240,9 +242,14 @@ def preprocess_function_race(
     results = {
         "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
-        "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+        # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     }
+    
+    if model_config.model_type == "bert":
+        results["token_type_ids"]=list()
+    else:
+        pass
     # 初始化结果列表  
     # input_texts = []  
     # labels = [] 
@@ -329,7 +336,7 @@ def preprocess_function_arc(examples, text_column = "article", label_column  ="a
 
 
 def preprocess_function_sciq(examples, first_four_columns = ["article", "question", "options", "answer"], 
-                               dataset_name = 'sciq', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+                               dataset_name = 'sciq', max_length = 512, tokenizer = None, model_config=None)->Dict[str,Union[List,List[List]]]:
     """  
     预处理SciQ数据集的样本，准备用于模型输入  
     
@@ -355,9 +362,13 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
     results = {
             "input_ids": list(),   # List[List[List[int]]]
             "attention_mask": list(),
-            "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+            # "token_type_ids": list() if model_config.model_type == "bert" else None, 
             "labels": list()    # List[int]
         }
+    if model_config.model_type == "bert":
+        results["token_type_ids"]=list()
+    else:
+        pass
     
     # 处理每个样本  
     for i in range(batch_size):  
@@ -402,7 +413,14 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
             results['labels'].append(1 if i == label else 0) 
             # results['labels'].append(label) 
             
-            
+    # 将结果转换为 PyTorch 张量并移动到 GPU  
+    # tensor_results = {  
+    #     key: torch.tensor(value, device=device) for key, value in results.items() if value  
+    # }  
+    
+    # if not result['token_type_ids']:
+    #     # 移除
+    #     results.pop('token_type_ids')
     return results
 
 def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
@@ -787,6 +805,8 @@ class McqDatasetWrapper:
             label_map: 标签映射字典，例如 {"A": 0, "B": 1, "C": 2, "D": 3}  
         """  
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)  
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
+        self.model_config=self.model.config
         self.max_seq_length = max_seq_length  
         self.label_map = label_map or {"A": 0, "B": 1, "C": 2, "D": 3}  
         self.split = None
@@ -1537,7 +1557,7 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
         #                                  dataset_name = 'race', max_length = max_length)
         
         model_inputs = preprocess_function_race(examples, first_four_columns = first_four_columns, 
-                                    dataset_name = 'race', max_length = max_length, tokenizer = wrapper.tokenizer)
+                                    dataset_name = 'race', max_length = max_length, tokenizer = wrapper.tokenizer, model_config = wrapper.model_config)
     elif dataset_name == 'multirc':
         model_inputs = preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
                                          dataset_name = 'multirc', max_length = max_length)
@@ -1546,14 +1566,14 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
                                          dataset_name = 'arc', max_length = max_length)
     elif dataset_name == 'dream':
         model_inputs = preprocess_function_dream(examples, first_four_columns = first_four_columns, 
-                                         dataset_name = 'dream', max_length = max_length, tokenizer = wrapper.tokenizer)
+                                         dataset_name = 'dream', max_length = max_length, tokenizer = wrapper.tokenizer, model_config = wrapper.model_config)
     elif dataset_name == 'sciq':
         model_inputs = preprocess_function_sciq(examples, first_four_columns = first_four_columns, 
-                                         dataset_name = 'sciq', max_length = max_length, tokenizer = wrapper.tokenizer)
+                                         dataset_name = 'sciq', max_length = max_length, tokenizer = wrapper.tokenizer, model_config = wrapper.model_config)
         
     elif dataset_name == 'commonsense_qa':
         model_inputs = preprocess_function_commonsense_qa(examples, first_four_columns = first_four_columns, 
-                                         dataset_name = 'commonsense_qa', max_length = max_length, tokenizer = wrapper.tokenizer)
+                                         dataset_name = 'commonsense_qa', max_length = max_length, tokenizer = wrapper.tokenizer, model_config = wrapper.model_config)
     else:
         raise ValueError(f"Unsupported dataset name: {dataset_name}, please select from [race, multirc, arc, dream, sciq, commonsense_qa]")
 
@@ -1561,7 +1581,7 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
 
 
 
-def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
+def preprocess_dataset_peft(dataset_name, model_path, max_length=512)->Dataset:
     """  
     处理整个数据集  [dataset必须同时包含train, test, validation(dev)] [针对PEFT任务]
                     # train and validation will be put to dataloader for training and evaluation
@@ -1572,7 +1592,7 @@ def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
         
         preprocessed_dataset: 处理后的数据集，包含train, test, validation(dev) 3个部分 
     """ 
-    wrapper = McqDatasetWrapper()
+    wrapper = McqDatasetWrapper(model_name_or_path=model_path)
     dataset_configs = wrapper.dataset_configs
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
     processed_dataset:DatasetDict = dataset.map(
@@ -1583,6 +1603,9 @@ def preprocess_dataset_peft(dataset_name, max_length=512)->Dataset:
         remove_columns= dataset['train'].column_names,           # dataset.column_names,
         load_from_cache_file=True,
         desc=f"Running tokenizer on dataset {dataset_name}",
+        # writer_batch_size=1000,
+        # keep_in_memory=False
+        
     )
     print(f"\nProcessed dataset type: {type(processed_dataset)}")
     # name = processed_dataset.info.dataset_name if hasattr(processed_dataset.info, 'dataset_name') else None 

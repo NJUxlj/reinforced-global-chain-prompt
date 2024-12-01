@@ -165,7 +165,14 @@ def get_hidden_size_using_model(model):
     else:
         raise RuntimeError("This model object does not have a config file, check again~~~")
     
-    print(f"model:{model_name}'s hidden_size = {config.hidden_size}")
+    if hasattr(config,'hidden_size'):
+        hidden_size = config.hidden_size
+    elif hasattr(config, 'd_model'):
+        hidden_size = config.d_model
+    else:
+        raise ValueError(f"the passed model object does not have the attribute `hidden_size` \
+            The current model type = {model_type}")
+    print(f"model:{model_name}'s hidden_size = {hidden_size}")
     return config.hidden_size
 
 def get_classifier_from_model(model)-> nn.Module:  
@@ -244,6 +251,9 @@ def get_max_length_from_model(model):
     # 如果没有max_position_embeddings，尝试获取max_sequence_length  
     elif hasattr(config, 'max_sequence_length'):  
         return config.max_sequence_length  
+    
+    elif hasattr(config, 'n_positions'):  
+        return config.n_positions
     
     else:
         raise ValueError("Error model object, please check your config, it should have either [max_position_embeddings | max_sequence_length]") 

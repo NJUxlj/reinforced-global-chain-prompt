@@ -8,6 +8,13 @@ import evaluate
 import os
 from dataclasses import dataclass
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import (   
+    accuracy_score,  
+    precision_score,  
+    recall_score,  
+    f1_score,  
+    classification_report  
+)  
 from typing import Tuple, List, Tuple, Optional, Union, Dict, Any
 
 
@@ -185,6 +192,23 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
     
+    
+    print("training set size = ", len(train_ds))
+    print("eval set size = ", len(eval_ds))
+    
+    # 使用DistributedSampler进行数据分布  
+    train_sampler = DistributedSampler(  
+        train_ds,  
+        shuffle=True,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
+    eval_sampler = DistributedSampler(  
+        eval_ds,  
+        shuffle=False,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
     train_dataloader = DataLoader(
             train_ds, 
             shuffle=True, 
@@ -338,20 +362,75 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     print("model name = ", model_name)
     save_path = Config['save_model_dir'][model_name][config.peft_method][dataset_name]
     
-    # # wait every GPU processes to reach here
-    # torch.distributed.barrier()  
+
+def evaluate_prompt_tuning(
+        model, 
+        eval_dataloader, 
+        accelerator:Accelerator, 
+    )->Dict:  
+    """  
+    评估函数  
+    """  
+    # 如果需要保持原始模型状态不变  
+    # evaluation_mode = model.training  # 保存当前状态  
     
-    # if not os.path.exists(save_path):
-    #     os.makedirs(save_path)  
-    #     print(f"已创建新的权重存储路径: {save_path}") 
+    # 保存原始训练状态  
+    training_state = model.training  
+    model.eval()  
+    all_preds = []  
+    all_labels = []  
     
-    # # accelerator.save({  
-    # #     'prefix_encoder': model.prefix_encoder.state_dict(),  
-    # #     'classifier': model.classifier.state_dict()  
-    # # }, save_path)  
+    for batch in eval_dataloader:  
+        with torch.no_grad():  
+
+            outputs = model(**batch)
+            preds = outputs.logits.argmax(dim=-1) 
+            labels = batch['labels']
+            
+            preds, labels = accelerator.gather_for_metrics(
+                (preds, labels)
+            )
+            
+        
+            all_preds.append(preds.cpu())  
+            all_labels.append(labels.cpu())   
+            
     
-    # accelerator.save(model.state_dict(), save_path)  
+    all_preds = torch.cat(all_preds).numpy()  
+    all_labels = torch.cat(all_labels).numpy() 
+            
     
+    
+    # 在主进程上计算指标  
+    metrics = None   
+    
+    # 计算评价指标  
+    metrics = {  
+        'accuracy': accuracy_score(all_labels, all_preds),  
+        'precision': precision_score(all_labels, all_preds, average='weighted'),  
+        'recall': recall_score(all_labels, all_preds, average='weighted'),  
+        'f1': f1_score(all_labels, all_preds, average='weighted')  
+    }     
+    
+    accelerator.wait_for_everyone()     
+    
+    if accelerator.is_main_process: 
+        
+        # debug info
+        print("\n****************** Evaluation Results:**************************")  
+        print(f"Total samples evaluated: {len(all_labels)}")  
+        print(f"Batch predictions distribution: {np.bincount(all_preds)}")  
+        print(f"Batch labels distribution: {np.bincount(all_labels)}")   
+        print("\n******************** Classification Report: ***********************")  
+        print(classification_report(all_labels, all_preds))         
+        print("*****************************************************************\n")
+        
+        
+    
+    # 恢复模型原始状态  
+    model.train(training_state) 
+        
+    return metrics 
 
 
 

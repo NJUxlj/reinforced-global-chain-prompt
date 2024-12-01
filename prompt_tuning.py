@@ -123,15 +123,38 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     max_length = max_length - prefix_length
     print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
     
-    
     # 加载数据集
     dataset_name = config.dataset_name
     dataset_path = get_dataset_path_by_name(dataset_name)
     
-    processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
+    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
+    tracker = SwanLabTracker("PROMPT_TUNING_TRAING", experiment_name=exp_name)  # 训练可视化
+    accelerator = Accelerator(
+        # gradient_accumulation_steps=500,  
+        # mixed_precision=config.mixed_precision,
+        log_with=[tracker]
+    )
+    tracker_config = {
+        "num_epoch": config.num_epochs,
+        "batch_num": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "seed": config.seed,
+    }
+    accelerator.init_trackers("PROMPT_TUNING_TRAING", config=tracker_config)
+    
+    
+    
+    
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length=max_length)
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
+    
+    # train_ds = train_ds[:5000]
+    
+    
+    print("training set size = ", len(train_ds))
+    print("eval set size = ", len(eval_ds))
     
     # 使用DistributedSampler进行数据分布  
     train_sampler = DistributedSampler(  
@@ -163,20 +186,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             sampler = eval_sampler
         )
     
-    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
-    tracker = SwanLabTracker("PROMPT_TUNING_TRAING", experiment_name=exp_name)  # 训练可视化
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=500,  
-        # mixed_precision=config.mixed_precision,
-        log_with=[tracker]
-    )
-    tracker_config = {
-        "num_epoch": config.num_epochs,
-        "batch_num": config.batch_size,
-        "learning_rate": config.learning_rate,
-        "seed": config.seed,
-    }
-    accelerator.init_trackers("PROMPT_TUNING_TRAING", config=tracker_config)
+    
     
     
     # Prompt-tuning
@@ -246,7 +256,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
@@ -283,6 +294,9 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                      
             batch = {k: v.to(accelerator.device) for k, v in batch.items()}
             labels = batch["labels"]  
+            
+            print("batch.keys = \n",batch.keys())
+            print("+++++++++++++++++++++++++++++++++++++++++++++++++")
             
             outputs = model(**batch)
             
@@ -417,10 +431,10 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
 
     # 保存权重
     print("model name = ", model_name)
-    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
+    # save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
     
     # wait every GPU processes to reach here
-    torch.distributed.barrier()  
+    # torch.distributed.barrier()  
     
     # if not os.path.exists(save_path):
     #     os.makedirs(save_path)  
@@ -636,8 +650,8 @@ if __name__ == '__main__':
     '''
 
     '''
-    model_path = Config["models"]['qwen']["Qwen2.5-0.5B"]["model_path"]
-    model_name = "Qwen2.5-0.5B"
+    model_path = Config["models"]['t5']["flan-t5-large"]["model_path"]
+    model_name = "flan-t5-large"
     
     # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
     # model_name = 'Qwen2.5-1.5B'

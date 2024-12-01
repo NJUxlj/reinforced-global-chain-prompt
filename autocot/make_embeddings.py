@@ -532,7 +532,10 @@ def generate_new_step(context: torch.Tensor,
     
     # 将context扩展为batch维度
     if context.dim()==2:
-        context = context.unsqueeze(0)  # [1, seq_len, hidden_dim]  
+        context = context.unsqueeze(0)  # [1, seq_len, hidden_dim] 
+    
+    if context.dim()==3:
+        context = context[:1] # # 保留第一个batch 
     
     with torch.no_grad():  
         # 通过解码器生成新的隐藏状态  

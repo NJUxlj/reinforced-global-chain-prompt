@@ -712,7 +712,7 @@ class BassPromptModel(torch.nn.Module):
         suffix_embeds.shape = (batch_size, num_suffix_tokens, hidden_size)
         '''
         
-        suffix_embeddings = deepcopy(suffix_embeds).to(self.device)
+        suffix_embeddings = suffix_embeds.detach().clone().to(self.device)  
         print(f"扩展推理链 suffix embedding steps from {self.num_suffix_tokens} to {self.num_suffix_tokens//2}")
         source_length = self.num_suffix_tokens//2
         suffix_embeddings = suffix_embeddings[:,:source_length,:] # rollback N/2 step
@@ -1388,7 +1388,7 @@ def train_baas_prompt(config:BaasPromptConfig):
     
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
     
-    processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length = max_length)
     
     
     train_ds = processed_ds["train"]
@@ -1570,23 +1570,7 @@ def train_baas_prompt(config:BaasPromptConfig):
             # if step == len(train_dataloader)-1:  
         eval_results = evaluate_baas_prompt(model, accelerator, eval_dataloader)
         accelerator.wait_for_everyone()  
-                # model.eval()  
-                # all_preds = []  
-                # all_labels = []  
-                # with torch.no_grad():  
-                #     for val_batch in eval_dataloader:  
-                #         val_input_ids = val_batch['input_ids']
-                #         val_attention_mask = val_batch['attention_mask'] 
-                #         val_labels = val_batch['labels']
-                #         val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
-                #         logits = val_outputs['logits']  
-                #         preds = torch.argmax(logits, dim=1).cpu().numpy()  
-                #         labels_cpu = val_labels.cpu().numpy()  
-                #         all_preds.extend(preds)  
-                #         all_labels.extend(labels_cpu)  
-                
-                
-                
+
                 
                 
                 # # 计算评价指标  
@@ -1646,40 +1630,40 @@ def train_baas_prompt(config:BaasPromptConfig):
         # tokenizer.save_pretrained('path_to_save_tokenizer')   
 
 
-def detect_param_grad_updates(model, epoch, step):
-    '''
-    检测可训练参数的梯度是否真的在更新
-    '''  
-    print(f"\n\n******************* Epoch:{epoch}, Step:{step}, Check Whether Gradient is Updating ***************8")
-    for name, param in model.named_parameters():  
-        if param.requires_grad:  
-            print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
-            print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}") 
+# def detect_param_grad_updates(model, epoch, step):
+#     '''
+#     检测可训练参数的梯度是否真的在更新
+#     '''  
+#     print(f"\n\n******************* Epoch:{epoch}, Step:{step}, Check Whether Gradient is Updating ***************8")
+#     for name, param in model.named_parameters():  
+#         if param.requires_grad:  
+#             print(f"{name}'s parameter mean: {param.data.mean().item() if param.data is not None else 'None'}")  
+#             print(f"{name}'s gradient norm: {param.grad.norm().item() if param.grad is not None else 'None'}") 
     
-    print("\n\n================== NaN Gradient Detection ========================================")
-    for name, param in model.named_parameters():  
-        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):  
-            print(f"Gradient of {name} contains nan or inf at epoch:{epoch} step: {step}")
-    print("**************************************************************\n\n\n")
+#     print("\n\n================== NaN Gradient Detection ========================================")
+#     for name, param in model.named_parameters():  
+#         if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):  
+#             print(f"Gradient of {name} contains nan or inf at epoch:{epoch} step: {step}")
+#     print("**************************************************************\n\n\n")
     
 
-def monitor_gradients(model, step):  
-    print(f"\n\n********************** Monitor Gradients for step={step}******************************8")
-    grad_stats = {}  
-    for name, param in model.named_parameters():  
-        if param.grad is not None:  
-            grad_norm = param.grad.norm().item()  
-            if grad_norm < 1e-8:  
-                print(f"Warning: Very small gradient for {name}: {grad_norm}")  
-            grad_stats[name] = grad_norm  
+# def monitor_gradients(model, step):  
+#     print(f"\n\n********************** Monitor Gradients for step={step}******************************8")
+#     grad_stats = {}  
+#     for name, param in model.named_parameters():  
+#         if param.grad is not None:  
+#             grad_norm = param.grad.norm().item()  
+#             if grad_norm < 1e-8:  
+#                 print(f"Warning: Very small gradient for {name}: {grad_norm}")  
+#             grad_stats[name] = grad_norm  
     
-    # 检查梯度比例  
-    max_grad = max(grad_stats.values())  
-    min_grad = min(grad_stats.values())  
-    if max_grad / min_grad > 1000:  # 梯度比例阈值  
-        print(f"Warning: Large gradient ratio 'max_grad/min_grad' at step {step}: {max_grad/min_grad}")
+#     # 检查梯度比例  
+#     max_grad = max(grad_stats.values())  
+#     min_grad = min(grad_stats.values())  
+#     if max_grad / min_grad > 1000:  # 梯度比例阈值  
+#         print(f"Warning: Large gradient ratio 'max_grad/min_grad' at step {step}: {max_grad/min_grad}")
     
-    print("*********************************************************************\n\n\n")
+#     print("*********************************************************************\n\n\n")
 
 
 def evaluate_baas_prompt(
@@ -1752,7 +1736,7 @@ if __name__ == "__main__":
     config = BaasPromptConfig(
         model_name = model_name,
         model_path = model_path,
-        dataset_name="race",
+        dataset_name=dataset_name,
         max_seq_length=max_seq_length,
         num_epochs=5,
         num_labels=2,
