@@ -30,6 +30,19 @@ python run_autocot_demo.py \
 --demo_save_dir demos/sciq \
 --max_ra_len 20
 
+python run_autocot_demo.py \
+--task dream \
+--pred_file cot_log/dream_zero_shot_cot.log \
+--demo_save_dir demos/dream \
+--max_ra_len 20
+
+python run_autocot_demo.py \
+--task commonsense_qa \
+--pred_file cot_log/commonsense_qa_zero_shot_cot.log \
+--demo_save_dir demos/commonsense_qa \
+--max_ra_len 20
+
+# 最大推理步数为20
 
 '''
 
