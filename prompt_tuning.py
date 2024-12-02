@@ -648,8 +648,8 @@ if __name__ == '__main__':
     '''
 
     '''
-    model_path = Config["models"]['t5']["flan-t5-large"]["model_path"]
-    model_name = "flan-t5-large"
+    model_path = Config["models"]["bert-large-uncased"]["model_path"]
+    model_name = "bert-large-uncased"
     
     # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
     # model_name = 'Qwen2.5-1.5B'
