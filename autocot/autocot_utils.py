@@ -308,7 +308,7 @@ def cluster_dataloader(
     dataloader, 
     args, 
     config:DatasetConfig, 
-    begin_example = 300,
+    begin_example = 0,
     num_example = 300, 
     n_clusters=8, 
     random_state=42

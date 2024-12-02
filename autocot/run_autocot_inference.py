@@ -229,6 +229,8 @@ def main():
             # x, y = data
             x = data[config.question_key]
             
+            print("Question = \n",x)
+            
             # y = data[config.label_key]
             # x = "Q: " + x[0] + "\n" + "A:"
             x = "Q: " + x + " " + "A: "
