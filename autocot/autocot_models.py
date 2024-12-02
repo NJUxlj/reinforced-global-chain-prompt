@@ -340,6 +340,8 @@ class HierarchicalAttentionFusion(nn.Module):
         
         self.dropout = nn.Dropout(dropout).to(device)   
         
+        self._initialize_weights()
+        
     def forward(  
         self,  
         embeddings: torch.Tensor,  
@@ -469,6 +471,66 @@ class HierarchicalAttentionFusion(nn.Module):
         context = chain_output.mean(dim=0)
         # (LxH)
         return context, attention_info  
+    
+    def _initialize_weights(self):  
+        """  
+        初始化模型的所有参数  
+        """  
+        def _init_layer(module):  
+            if isinstance(module, nn.Linear):  
+                # 线性层使用xavier初始化  
+                nn.init.xavier_uniform_(module.weight)  
+                if module.bias is not None:  
+                    nn.init.zeros_(module.bias)  
+            
+            elif isinstance(module, nn.LayerNorm):  
+                # LayerNorm层的gamma和beta分别初始化为1和0  
+                nn.init.ones_(module.weight)  
+                nn.init.zeros_(module.bias)  
+            
+            elif isinstance(module, MultiHeadAttention):  
+                # 注意力层中的线性变换初始化  
+                # Q, K, V 投影矩阵使用xavier初始化  
+                for name, param in module.named_parameters():  
+                    if 'weight' in name:  
+                        # 对于注意力的权重，使用xavier初始化但要根据头数进行缩放  
+                        nn.init.xavier_uniform_(param, gain=1/math.sqrt(2*self.num_heads))  
+                    elif 'bias' in name:  
+                        nn.init.zeros_(param)  
+            
+            elif isinstance(module, FeedForward):  
+                # 前馈网络层初始化  
+                for name, param in module.named_parameters():  
+                    if 'weight' in name:  
+                        nn.init.kaiming_uniform_(param, nonlinearity='relu')  
+                    elif 'bias' in name:  
+                        nn.init.zeros_(param)  
+
+        # 对序列级注意力层进行初始化  
+        for attention in self.sequence_attentions:  
+            _init_layer(attention)  
+        
+        # 对链级注意力层进行初始化  
+        _init_layer(self.chain_attention)  
+        
+        # 对所有LayerNorm层进行初始化  
+        for norm in self.sequence_norms:  
+            _init_layer(norm)  
+        _init_layer(self.chain_norm)  
+        
+        # 如果使用FFN，初始化FFN相关层  
+        if self.use_ffn:  
+            for ffn in self.sequence_ffns:  
+                _init_layer(ffn)  
+            _init_layer(self.chain_ffn)  
+            for norm in self.ffn_norms:  
+                _init_layer(norm)  
+
+    def reset_parameters(self):  
+        """  
+        提供一个公共方法用于重新初始化参数  
+        """  
+        self._initialize_weights()  
 
 
 if __name__ == '__main__':  

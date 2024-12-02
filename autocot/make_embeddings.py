@@ -485,7 +485,9 @@ def rollback_one_step_extend(
 def generate_new_step(context: torch.Tensor,
                       model:AutoModelForSequenceClassification,  
                      decoder: RollbackDecoderWithHead = None,  
-                     temperature: float = 0.7) -> Tuple[int, torch.Tensor]:  
+                     temperature: float = 0.7,
+                     debug=False
+                     ) -> Tuple[int, torch.Tensor]:  
     """生成下一个token并返回其embedding  
     
     Args:  
@@ -541,8 +543,9 @@ def generate_new_step(context: torch.Tensor,
         # 通过解码器生成新的隐藏状态  
         next_token_logits  = decoder.forward(context, causal_mask)  # shape = [1, vocab_size]
         
-        print("next_token_logits.shape = ", next_token_logits.shape)
-        print("next_token_logits = ", next_token_logits)
+        if debug:
+            print("next_token_logits.shape = ", next_token_logits.shape)
+            print("next_token_logits = ", next_token_logits)
         
         # 应用温度缩放  
         # # temperature 影响概率分布的"锐利度", <1 使分布更尖锐，>1 使分布更平缓    
@@ -552,8 +555,9 @@ def generate_new_step(context: torch.Tensor,
         # 计算概率分布  
         probs = F.softmax(next_token_logits, dim=-1)  
         
-        print("probs.shape = ", probs.shape)
-        print("probs = ", probs)    
+        if debug:
+            print("probs.shape = ", probs.shape)
+            print("probs = ", probs)    
         # 采样下一个token  
         next_token = torch.multinomial(probs, num_samples=1)  # [1, 1] 
         
@@ -577,12 +581,13 @@ def generate_new_step(context: torch.Tensor,
         next_token_embedding = decoder.embed_tokens(next_token)  # [1, 1, hidden_dim]  
         next_token_embedding = next_token_embedding.squeeze()  # [hidden_dim]  
         
-        print("next_token_embedding.shape = ", next_token_embedding.shape)
-        print("next_token_embedding = ", next_token_embedding)
+        if debug:
+            print("next_token_embedding.shape = ", next_token_embedding.shape)
+            print("next_token_embedding = ", next_token_embedding)
 
     # return new_step.squeeze(0)  # [hidden_dim]  
     return next_token.squeeze().item(), next_token_embedding
-
+    
         
 
 

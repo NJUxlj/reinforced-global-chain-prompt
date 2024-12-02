@@ -115,10 +115,10 @@ class OutputTransformation(nn.Module):
 
 class MultiHeadAttention(nn.Module):  
     """多头注意力机制"""  
-    def __init__(self, d_model, num_heads, debug:bool=False):  
+    def __init__(self, d_model, num_heads, debug:bool=False, device=Config.device):  
         super().__init__()  
         assert d_model % num_heads == 0, "d_model必须能被num_heads整除"  
-        
+        self.device=device
         self.d_model = d_model  
         self.num_heads = num_heads  
         self.d_k = d_model // num_heads  
@@ -126,10 +126,10 @@ class MultiHeadAttention(nn.Module):
         self.debug = debug
         
         # 定义线性变换层  
-        self.W_q = nn.Linear(d_model, d_model)  
-        self.W_k = nn.Linear(d_model, d_model)  
-        self.W_v = nn.Linear(d_model, d_model)  
-        self.W_o = nn.Linear(d_model, d_model)  
+        self.W_q = nn.Linear(d_model, d_model).to(self.device)  
+        self.W_k = nn.Linear(d_model, d_model).to(self.device)  
+        self.W_v = nn.Linear(d_model, d_model).to(self.device)  
+        self.W_o = nn.Linear(d_model, d_model).to(self.device)  
         
     def scaled_dot_product_attention(self, Q, K, V, mask=None):  
         """计算缩放点积注意力  
@@ -188,34 +188,39 @@ class MultiHeadAttention(nn.Module):
 
 class PositionwiseFeedForward(nn.Module):  
     """位置前馈网络"""  
-    def __init__(self, d_model, d_ff):  
+    def __init__(self, d_model, d_ff, device=Config.device):  
         super().__init__()  
-        self.fc1 = nn.Linear(d_model, d_ff)  
-        self.fc2 = nn.Linear(d_ff, d_model)  
-        self.relu = nn.ReLU()  
+        self.device=device
+        self.fc1 = nn.Linear(d_model, d_ff).to(self.device)  
+        self.fc2 = nn.Linear(d_ff, d_model).to(self.device)  
+        self.relu = nn.ReLU().to(self.device)  
         
     def forward(self, x):  
         return self.fc2(self.relu(self.fc1(x)))  
 
 class DecoderLayer(nn.Module):  
     """解码器层"""  
-    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):  
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1, debug=False, device=Config.device):  
         super().__init__()  
-        self.self_attn = MultiHeadAttention(d_model, num_heads)  
-        self.feed_forward = PositionwiseFeedForward(d_model, d_ff)  
-        self.norm1 = nn.LayerNorm(d_model)  
-        self.norm2 = nn.LayerNorm(d_model)  
-        self.dropout = nn.Dropout(dropout)  
+        self.device=device
+        self.self_attn = MultiHeadAttention(d_model, num_heads, debug=debug, device=self.device)  
+        self.feed_forward = PositionwiseFeedForward(d_model, d_ff, device=self.device)  
+        self.norm1 = nn.LayerNorm(d_model).to(self.device)  
+        self.norm2 = nn.LayerNorm(d_model).to(self.device)  
+        self.dropout = nn.Dropout(dropout).to(self.device)  
+        self.debug=debug
         
     def forward(self, x:torch.Tensor, mask=None):  
         '''
         x.shape = [B, L, H]  # L: 序列长度, H: 隐藏层维度
         '''
-        print(" ******************* Inside Decoder Layer **********************8")
-        print("x.shape = ", x.shape)
-        print("x 的正确形状是 [B, L, H]")
-        print("x = ",x)
-        print("***************************************************************\n")
+        
+        if self.debug:
+            print(" ******************* Inside Decoder Layer **********************8")
+            print("x.shape = ", x.shape)
+            print("x 的正确形状是 [B, L, H]")
+            print("x = ",x)
+            print("***************************************************************\n")
         
         # 自注意力  
         attn_output, _ = self.self_attn(x, x, x, mask)  # [B, L, H]
@@ -225,7 +230,8 @@ class DecoderLayer(nn.Module):
         ff_output = self.feed_forward(x)  
         x = self.norm2(x + self.dropout(ff_output))  
         
-        print("feedforward_output.shape = ", x.shape)
+        if self.debug:
+            print("feedforward_output.shape = ", x.shape)
         
         return x  
     
@@ -240,31 +246,37 @@ class RollbackDecoderWithHead(nn.Module):
         num_heads = 8, 
         dropout=0.1,
         num_layers=2,
+        debug = False,
+        device=Config.device
         ):
         super().__init__()
-        self.decoder_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
-        self.head = nn.Linear(d_model, d_model)
+        self.device=device
+        self.debug=debug
+        self.decoder_layer = DecoderLayer(d_model, num_heads, d_ff, dropout,debug=self.debug, device=self.device).to(self.device)
+        self.head = nn.Linear(d_model, d_model).to(self.device)
         # self.bert_model = BertModel.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"] )
-        self.model=model
+        self.model=model.to(self.device)
         # self.token_embedding = self.bert_model.embeddings.word_embeddings  # shape = [vocab_size, d_model] 
-        self.token_embedding = get_word_embeddings_from_model(self.model)
+        self.token_embedding = get_word_embeddings_from_model(self.model).to(self.device)
         self.num_layers = num_layers
         self.decoders = nn.ModuleList([
             self.decoder_layer
             for _ in range(self.num_layers)
-        ])
+        ]).to(self.device)
         
         self.vocab_size = self.model.config.vocab_size
         # 输出投影到词表大小  
-        self.classifier = nn.Linear(d_model, self.vocab_size)  
+        self.classifier = nn.Linear(d_model, self.vocab_size).to(self.device)
         
         
     def forward(self, x, mask=None):  
         decoder_output = x
-        print("*********** decoder input ***************")
-        print("decoder_input.shape = ", decoder_output.shape)
-        print("decoder_input = ", decoder_output)
-        print("**********************************\n")
+        
+        if self.debug:
+            print("*********** decoder input ***************")
+            print("decoder_input.shape = ", decoder_output.shape)
+            print("decoder_input = ", decoder_output)
+            print("**********************************\n")
         
         for i in range(self.num_layers):
             decoder_output =self.decoders[i](decoder_output) # [B, L, H]
