@@ -670,6 +670,7 @@ if __name__ == '__main__':
         num_labels=2,
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,
+        batch_size=4
     )
 
 

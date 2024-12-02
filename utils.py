@@ -652,8 +652,11 @@ def monitor_gradients(model, step):
     
     # 检查梯度比例  
     max_grad = max(grad_stats.values())  
-    min_grad = min(grad_stats.values())  
-    if max_grad / min_grad > 1000:  # 梯度比例阈值  
+    min_grad = min(grad_stats.values()) 
+    
+    if min_grad == 0:
+        print(f"Warning: min_grad is 0 at step {step}")
+    elif max_grad / min_grad > 1000:  # 梯度比例阈值  
         print(f"Warning: Large gradient ratio 'max_grad/min_grad' at step {step}: {max_grad/min_grad}")
     
     print("*********************************************************************\n\n\n")
