@@ -616,7 +616,20 @@ Config = {
             "hidden_dim": 1024,
             "model_path": f"{MODEL_BASE_PATH}bert-large-uncased"
         },
-    
+        "roberta-large":{
+            "model_name": "roberta-large",
+            "max_length": 512,
+            "num_labels": 4,
+            "hidden_dim": 1024,
+            "model_path": f"{MODEL_BASE_PATH}roberta-large"
+        },
+        "deberta-v3-large":{
+            "model_name": "deberta-v3-large",
+            "max_length": 512,
+            "num_labels": 4,
+            "hidden_dim": 1024,
+            "model_path": f"{MODEL_BASE_PATH}deberta-v3-large"
+        },
         "qwen":{
             "Qwen2.5-0.5B":{
                 "model_name": "Qwen2.5-0.5B",
