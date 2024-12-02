@@ -299,11 +299,9 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
             
             outputs = model(**batch)
-            
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
-            
             loss = criterion(logits, labels.long())
             
             if step % 300 == 0 and step!=0 and accelerator.is_main_process:  

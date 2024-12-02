@@ -66,10 +66,16 @@ from peft import (
 from accelerate import (
     Accelerator
 )
-
+from swanlab.integration.accelerate import SwanLabTracker
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support 
-
+from sklearn.metrics import (   
+    accuracy_score,  
+    precision_score,  
+    recall_score,  
+    f1_score,  
+    classification_report  
+) 
 
 
 # we follow the setting of prompt-tuning (Lester et al., 2021)
@@ -82,9 +88,9 @@ class PtuningV2Config:
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
     prefix_length: int = 100                        # 前缀长度  
-    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
     batch_size:int = 32
-    num_epochs:int = 2
+    num_epochs:int = 5
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                     # 最大序列长度  
     learning_rate: float = 0.3                   # 前缀参数的学习率  
@@ -98,11 +104,14 @@ class PtuningV2Config:
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
     optimizer_class:type = Adam
+    
+    seed:int=42
 
 class PrefixEncoder(nn.Module):  
     """前缀编码器"""  
-    def __init__(self, config: PtuningV2Config, model_config:AutoConfig):  
+    def __init__(self, config: PtuningV2Config, model_config:AutoConfig, device = Config.device):  
         super().__init__()  
+        self.device = device
         self.prefix_length = config.prefix_length  
         self.hidden_size = model_config.hidden_size  
         self.n_layer = model_config.num_hidden_layers  
@@ -111,18 +120,18 @@ class PrefixEncoder(nn.Module):
         
         if self.prefix_projection:  
             # 使用MLP来生成前缀  
-            self.embedding = nn.Embedding(self.prefix_length, config.prefix_hidden_size)  
+            self.embedding = nn.Embedding(self.prefix_length, config.prefix_hidden_size).to(self.device)  
             self.trans = nn.Sequential(  
                 nn.Linear(config.prefix_hidden_size, config.prefix_hidden_size),  
                 nn.Tanh(),  
                 nn.Linear(config.prefix_hidden_size, self.n_layer * 2 * self.hidden_size)  
-            )  
+            ).to(self.device)  
         else:  
             # 直接优化前缀参数  
             '''
             self.n_layer * 2  是因为要把prefix embedding插入到每一个transformer层的W_k, W_v矩阵上
             '''
-            self.embedding = nn.Embedding(self.prefix_length, self.n_layer * 2 * self.hidden_size)  
+            self.embedding = nn.Embedding(self.prefix_length, self.n_layer * 2 * self.hidden_size).to(self.device) 
 
     def forward(self, batch_size: int) -> torch.Tensor:  
         '''
@@ -218,15 +227,17 @@ class PrefixEncoder(nn.Module):
 
 # 定义P-Tuning V2的BERT模型  
 class PTuningV2ForSequenceClassification(nn.Module):  
-    def __init__(self, model, num_labels, prompt_length, config:PtuningV2Config=None):  
+    def __init__(self, model, num_labels, prompt_length, config:PtuningV2Config=None, device=Config.device):  
         super(PTuningV2ForSequenceClassification, self).__init__()  
         self.config = config
+        self.device = device
         # 加载预训练的BERT模型  
         # 加载预训练模型  
         self.model = config.auto_model_class.from_pretrained(  
             config.model_path,  
             num_labels=config.num_labels  
-        )  
+        ) 
+        self.model.to(self.device) 
         self.model_config = self.model.config
         
         # 获取模型类型  
@@ -234,20 +245,21 @@ class PTuningV2ForSequenceClassification(nn.Module):
         
         # 获取基础模型  
         self.base_model = self.model.base_model  
+        self.base_model.to(self.device)
         
         # 冻结基础模型参数  (这里不能用self.model, 因为这样会把classifier也冻结了)
         for param in self.base_model.parameters():  
             param.requires_grad = False   
         
         # 初始化前缀编码器  
-        self.prefix_encoder = PrefixEncoder(config, self.model_config)  
+        self.prefix_encoder = PrefixEncoder(config, self.model_config, device=self.device)  
         
-        self.dropout = torch.nn.Dropout(self.model_config.hidden_dropout_prob)
+        self.dropout = torch.nn.Dropout(self.model_config.hidden_dropout_prob).to(self.device)
         
         # self.prefix_tokens = torch.arange(self.prefix_encoder.prefix_length).long() 
         
         
-        self.classifier:nn.Module = get_classifier_from_model(self.model)
+        self.classifier:nn.Module = get_classifier_from_model(self.model).to(self.device)
         
         # for param in self.classifier.parameters():  
         #     param.requires_grad = False 
@@ -428,16 +440,17 @@ class Racedataset(Dataset):
         
         
 def train_p_tuning_v2(config: PtuningV2Config=None):
+    # fix_seed(config.seed)
+    # setup_distributed()
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
-    dataset_name = config.dataset_name
     # 初始化参数  
     # num_labels = 4  # ['A', 'B', 'C', 'D']
     num_labels = config.num_labels
     prefix_length = config.prefix_length 
     batch_size = config.batch_size
     num_epochs = config.num_epochs
-    learning_rate = config.learning_rate
+    lr = config.learning_rate
     max_length = config.max_seq_length
     
     print(f"before inserting prompt tokens, {model_name}'s max length = {max_length}")
@@ -447,7 +460,25 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     
     # wrapper = McqDatasetWrapper()
+    dataset_name = config.dataset_name
     dataset_path = get_dataset_path_by_name(dataset_name)
+    
+    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
+    tracker = SwanLabTracker("P_TUNING_V2_TRAING", experiment_name=exp_name)  # 训练可视化
+    accelerator = Accelerator(
+        # gradient_accumulation_steps=500,  
+        # mixed_precision=config.mixed_precision,
+        log_with=[tracker]
+    )
+    tracker_config = {
+        "num_epoch": config.num_epochs,
+        "batch_num": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "seed": config.seed,
+    }
+    accelerator.init_trackers("P_TUNING_V2_TRAING", config=tracker_config)
+    
+    
     
     processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
     
@@ -455,37 +486,48 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
 
-
-    # # 创建数据集和数据加载器  
-    # train_dataset = Racedataset(dataset['train'], tokenizer, prompt_length)  
-    # train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  
+    print("training set size = ", len(train_ds))
+    print("eval set size = ", len(eval_ds))
+    
+    train_sampler = DistributedSampler(  
+        train_ds,  
+        shuffle=True,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
+    eval_sampler = DistributedSampler(  
+        eval_ds,  
+        shuffle=False,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
     
     train_dataloader = DataLoader(
             train_ds, 
-            shuffle=True, 
+            # shuffle=True, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler=train_sampler
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler=eval_sampler
         )
 
-    # 初始化模型  
-    device = Config['device'] 
     # encapsulate the base model into a P-Tuning V2 model
-    model = PTuningV2ForSequenceClassification(model, num_labels, prefix_length, config=config)  
-    model.to(device)  
+    model = PTuningV2ForSequenceClassification(model, num_labels, prefix_length, config=config, device=accelerator.device)  
+    model.to(accelerator.device)  
     
     model.print_total_params()
     
-     # 打印可训练参数  
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
-    print(f"Trainable parameters (self-calculated): {trainable_params}")  
+    if accelerator.is_main_process:    
+        # 打印可训练参数  
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
+        print(f"Trainable parameters (self-calculated): {trainable_params}")  
 
 
     # 只优化Prompt Encoder和分类器的参数  
@@ -502,16 +544,10 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=config.warmup_steps,
+        num_warmup_steps=0,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
-    # early_stopping = EarlyStopping(patience=3, min_delta=1e-4) 
-    
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=1,  
-        # mixed_precision='fp16', 
-    )
     
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
@@ -521,81 +557,109 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     print("type(model) = ", type(model))
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
         logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
-    
+      
+    if accelerator.is_main_process:  
+        accelerator.init_trackers("training")
+        
 
     # 训练循环  
     global_step = 0 
+    optimizer.zero_grad()
+    # 添加参数状态监控  
+    param_monitor = {}
+    
     for epoch in range(num_epochs):  
         model.train() 
         total_loss = 0
-        for step, batch in enumerate(tqdm(train_dataloader)):  
+        if train_sampler is not None:  # 每轮训练都打乱顺序
+            train_sampler.set_epoch(epoch) 
+        # 记录每个epoch开始时的参数状态  
+        if accelerator.is_main_process:
+            record_epoch_param_state(model, param_monitor)
             
+        for step, batch in enumerate(tqdm(train_dataloader)):  
+            batch = {k: v.to(accelerator.device) for k, v in batch.items()}
             labels = batch["labels"]  
             
             outputs = model(**batch)
             
-            # print("outputs = \n", outputs)
-            # print("type(outputs) = ", type(outputs))
-            
-            # criterion = nn.CrossEntropyLoss()
-            
             logits = outputs.logits
             loss = outputs.loss
             # loss = criterion(logits, labels.long())
-            total_loss += loss.detach().float()
+            total_loss += loss.detach().float().item() 
+
             
-            accelerator.backward(loss)
+            accelerator.wait_for_everyone()
             
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-            # input_ids = batch['input_ids'].to(device)  
-            # attention_mask = batch['attention_mask'].to(device)  
-            # labels = batch['labels'].to(device)  
-            # outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)  
-            # loss = outputs['loss']  
-            # loss.backward()  
-            # optimizer.step()  
-            # total_loss += loss.item()
+            accelerator.backward(loss, retain_graph=True)
             
-            if step == len(train_dataloader) - 1:  
-                results = evaluate_ptuning_v2(model, eval_dataloader, accelerator)  
-                
-                if accelerator.is_main_process:
-                    logger.info({
-                        'epoch': epoch, 
-                        'loss': loss.item(), 
-                        'accuracy':results['accuracy'],
-                        "precision": results['precision'], 
-                        "recall": results['recall'], 
-                        "f1": results['f1'] 
-                        })  
-                    
-                    
-                model.train()  
-            global_step+=1
+            should_update = accelerator.sync_gradients
+            
+            if should_update:  
+                if step % 300 == 0 and step!=0 and accelerator.is_main_process:
+                    # 确保梯度确实在更新  
+                    detect_param_grad_updates(model,epoch,step)
+                    monitor_gradients(model, step)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+            
+            del outputs
+            del loss
+            
+            torch.cuda.empty_cache()
+        global_step+=1
+        accelerator.wait_for_everyone()
+            
+        # 在每个epoch结束后检查参数变化  
+        if accelerator.is_main_process and epoch > 0:  
+            check_param_after_epoch(model,param_monitor,epoch)
         
-        if accelerator.is_local_main_process:       
+        if accelerator.is_main_process:
+            print(f"begin epoch {epoch} evaluating...")   
+        eval_results = evaluate_ptuning_v2(model, eval_dataloader, accelerator)
+        accelerator.wait_for_everyone()
+        # 记录自定义的logger
+        if accelerator.is_main_process and logger is not None:
             avg_loss = total_loss / len(train_dataloader)   
-            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
+            logger.info({
+                'epoch': epoch, 
+                'avg_loss': avg_loss, 
+                **eval_results
+                })  
+        
+            # 记录到swanlab的logger， 用于可视化
+            accelerator.log(
+                {
+                    'epoch': epoch, 
+                    # 'avg_loss': avg_loss,
+                    **eval_results
+                }
+            )
+
+        model.train()
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
 
     # 保存模型
     
-    print("model name = ", model_name)
-    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
-    unwrapped_model = accelerator.unwrap_model(model)
+    # print("model name = ", model_name)
+    # save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
+    # unwrapped_model = accelerator.unwrap_model(model)
     
-    # wait every GPU processes to reach here
-    torch.distributed.barrier()  
+    # # wait every GPU processes to reach here
+    # torch.distributed.barrier()  
     
-    if not os.path.exists(os.path.dirname(save_path)):
-        os.makedirs(os.path.dirname(save_path))  
-        print(f"已创建新的权重存储路径: {os.path.dirname(save_path)}") 
+    # if not os.path.exists(os.path.dirname(save_path)):
+    #     os.makedirs(os.path.dirname(save_path))  
+    #     print(f"已创建新的权重存储路径: {os.path.dirname(save_path)}") 
     
     # 只保存prompt embedding  
     # prompt_state_dict = {}  
@@ -608,14 +672,81 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     #     state_dict=prompt_state_dict,  
     # )  
     
-    accelerator.save({  
-        'prefix_encoder': model.prefix_encoder.state_dict(),  
-        'classifier': model.classifier.state_dict()  
-    }, save_path)  
+    # accelerator.save({  
+    #     'prefix_encoder': model.prefix_encoder.state_dict(),  
+    #     'classifier': model.classifier.state_dict()  
+    # }, save_path)  
     
+def evaluate_ptuning_v2(
+        model, 
+        eval_dataloader, 
+        accelerator:Accelerator, 
+    )->Dict:  
+    """  
+    评估函数  
+    """  
+    # 如果需要保持原始模型状态不变  
+    # evaluation_mode = model.training  # 保存当前状态  
+    
+    # 保存原始训练状态  
+    training_state = model.training  
+    model.eval()  
+    all_preds = []  
+    all_labels = []  
+    
+    for batch in eval_dataloader:  
+        with torch.no_grad():  
 
+            outputs = model(**batch)
+            preds = outputs.logits.argmax(dim=-1) 
+            labels = batch['labels']
+            
+            preds, labels = accelerator.gather_for_metrics(
+                (preds, labels)
+            )
+            
+        
+            all_preds.append(preds.cpu())  
+            all_labels.append(labels.cpu())   
+            
+    
+    all_preds = torch.cat(all_preds).numpy()  
+    all_labels = torch.cat(all_labels).numpy() 
+            
+    
+    
+    # 在主进程上计算指标  
+    metrics = None   
+    
+    # 计算评价指标  
+    metrics = {  
+        'accuracy': accuracy_score(all_labels, all_preds),  
+        'precision': precision_score(all_labels, all_preds, average='weighted'),  
+        'recall': recall_score(all_labels, all_preds, average='weighted'),  
+        'f1': f1_score(all_labels, all_preds, average='weighted')  
+    }     
+    
+    accelerator.wait_for_everyone()     
+    
+    if accelerator.is_main_process: 
+        
+        # debug info
+        print("\n****************** Evaluation Results:**************************")  
+        print(f"Total samples evaluated: {len(all_labels)}")  
+        print(f"Batch predictions distribution: {np.bincount(all_preds)}")  
+        print(f"Batch labels distribution: {np.bincount(all_labels)}")   
+        print("\n******************** Classification Report: ***********************")  
+        print(classification_report(all_labels, all_preds))         
+        print("*****************************************************************\n")
+        
+        
+    
+    # 恢复模型原始状态  
+    model.train(training_state) 
+        
+    return metrics 
 
-def evaluate_ptuning_v2(model, eval_dataloader, accelerator:Accelerator):  
+def evaluate_ptuning_v2_legacy(model, eval_dataloader, accelerator:Accelerator):  
     """  
     评估函数  
     """  
@@ -662,27 +793,13 @@ if __name__ == "__main__":
     model_name = "bert-base-uncased"
     dataset_name = "race"
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    hidden_size = Config["models"]["bert-base-uncased"]["hidden_dim"]
-    
-    # # 使用 AutoModel可以直接调用model.embedding. 否则不会暴露嵌入层
-    # model = AutoModel.from_pretrained(model_path, num_labels=4)
-    # tokenizer = AutoTokenizer.from_pretrained(model_path)
-    # print(f"Model's current num_labels: {model.config.num_labels}") 
-     
-    # model_config = model.config
-    # model_name_or_path = model_config.name_or_path
-    # print("model_name_or_path = ", model_name_or_path)
-    
-    # if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-    #     padding_side = "left"
-    # else:
-    #     padding_side = "right"
-    
-    # print("padding_side = ", padding_side)
+    # hidden_size = Config["models"]["bert-base-uncased"]["hidden_dim"]
+
     
     model, tokenizer = prepare_model_tokenizer(model_path,AutoModelForSequenceClassification, model_path)
 
     max_seq_length = get_max_length_from_model(model)
+    hidden_size = get_hidden_size_using_model(model)
 
     config = PtuningV2Config(
         model_name = "bert-base-uncased",
@@ -691,11 +808,12 @@ if __name__ == "__main__":
         dataset_name=dataset_name,
         # learning_rate=Config['learning_rate'],
         max_seq_length=max_seq_length,
-        # num_labels=4,
+        num_labels=2,
         # batch_size=Config['batch_size'],
         # num_epochs = Config['num_epochs'],
         prefix_projection=True,
         prefix_hidden_size=hidden_size,
+        prefix_length=100
     )
 
     # 这里传model进去只是为了符合其他fine-tuning的写法，实际上这里不需要model

@@ -54,10 +54,17 @@ from peft import (
 from accelerate import (
     Accelerator,
 )
+from swanlab.integration.accelerate import SwanLabTracker
 
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
-
+from sklearn.metrics import (   
+    accuracy_score,  
+    precision_score,  
+    recall_score,  
+    f1_score,  
+    classification_report  
+)
 
 # we follow the setting of prompt-tuning (Lester et al., 2021)
 @dataclass  
@@ -69,9 +76,9 @@ class PtuningConfig:
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
     prefix_length: int = 100                        # 前缀长度  
-    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
     batch_size:int = 32
-    num_epochs:int = 2
+    num_epochs:int = 5
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                     # 最大序列长度  
     learning_rate: float = 0.3                   # 前缀参数的学习率  
@@ -79,7 +86,7 @@ class PtuningConfig:
     
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768    
-    encoder_hidden_size:int = 512  # 重参数化器MLP的隐藏层大小# prefix token 的维度 (P_theta')
+    encoder_hidden_size:int = 768  # 重参数化器MLP的隐藏层大小# prefix token 的维度 (P_theta')
     
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减  
@@ -88,12 +95,15 @@ class PtuningConfig:
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
     optimizer_class:type = Adam
+    
+    seed:int=42
 
 
 def train_p_tuning(config:PtuningConfig):
+    # fix_seed(config.seed)
+    # setup_distributed()
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
-    dataset_name = config.dataset_name
     # 初始化参数  
     # num_labels = 4  # ['A', 'B', 'C', 'D']
     num_labels = config.num_labels
@@ -110,7 +120,24 @@ def train_p_tuning(config:PtuningConfig):
     
     
     # wrapper = McqDatasetWrapper()
+    dataset_name = config.dataset_name
     dataset_path = get_dataset_path_by_name(dataset_name)
+    
+    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
+    tracker = SwanLabTracker("P_TUNING_TRAING", experiment_name=exp_name)  # 训练可视化
+    accelerator = Accelerator(
+        # gradient_accumulation_steps=500,  
+        # mixed_precision=config.mixed_precision,
+        log_with=[tracker]
+    )
+    tracker_config = {
+        "num_epoch": config.num_epochs,
+        "batch_num": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "seed": config.seed,
+    }
+    accelerator.init_trackers("P_TUNING_TRAING", config=tracker_config)
+    
     
     processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
     
@@ -118,23 +145,37 @@ def train_p_tuning(config:PtuningConfig):
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]
 
-
+    print("training set size = ", len(train_ds))
+    print("eval set size = ", len(eval_ds))
+    
+    train_sampler = DistributedSampler(  
+        train_ds,  
+        shuffle=True,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
+    
+    eval_sampler = DistributedSampler(  
+        eval_ds,  
+        shuffle=False,  
+        seed=42  
+    ) if torch.distributed.is_initialized() else None 
     
     train_dataloader = DataLoader(
             train_ds, 
-            shuffle=True, 
+            # shuffle=True, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler=train_sampler
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler = eval_sampler
         )
-    device = Config['device'] 
     
     # Prompt-tuning
     peft_config = PromptEncoderConfig(
@@ -145,7 +186,7 @@ def train_p_tuning(config:PtuningConfig):
         # num_transformer_submodules=1,
         # num_attention_heads=12,
         # num_layers=12,
-        encoder_reparameterization_type="MLP",
+        encoder_reparameterization_type="LSTM",
         encoder_hidden_size=config.encoder_hidden_size,
         encoder_num_layers=2,
         encoder_dropout= 0.1,
@@ -157,7 +198,7 @@ def train_p_tuning(config:PtuningConfig):
     # Output Shape: (batch_size, total_virtual_tokens, token_dim)
     
     model = get_peft_model(model, peft_config)
-    
+    model.to(accelerator.device)
     
     # make sure to frozen the base model parameters
     for param in model.base_model.parameters():  
@@ -184,14 +225,10 @@ def train_p_tuning(config:PtuningConfig):
 
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=config.warmup_steps,
+        num_warmup_steps=0,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=1,  
-        # mixed_precision='fp16', 
-    )
     
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
@@ -199,86 +236,114 @@ def train_p_tuning(config:PtuningConfig):
     print("type(model) = ", type(model))
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name]["p-tuning"][dataset_name]
+        logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
         logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
     
-
+    if accelerator.is_main_process:  
+        accelerator.init_trackers("training")
     
     
-    device = Config['device']
     global_step = 0
 
-    # 定义一个列表来存储评估结果  
-    evaluation_results = []  
+    optimizer.zero_grad()
+    # 添加参数状态监控  
+    param_monitor = {}
 
     
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
+        if train_sampler is not None:  # 每轮训练都打乱顺序
+            train_sampler.set_epoch(epoch) 
+            
         for step, batch in enumerate(tqdm(train_dataloader)):
+            batch = {k: v.to(accelerator.device) for k, v in batch.items()}
+            
             labels = batch["labels"]  
             outputs = model(**batch)
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
             loss = criterion(logits, labels.long())
-            total_loss += loss.detach().float()
+            if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
+                # 打印训练过程中的预测分布
+                print_prediction_distribution(outputs,step,loss)
+                
+            total_loss += loss.detach().float().item() 
+
             
-            accelerator.backward(loss)
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
+            accelerator.wait_for_everyone()
+            accelerator.backward(loss, retain_graph=True)
             
-            if step == len(train_dataloader) - 1:  
-                model.eval()  
-                all_preds = []  
-                all_labels = []  
-                with torch.no_grad():  
-                    for val_batch in eval_dataloader:  
-                        val_input_ids = val_batch['input_ids']
-                        val_attention_mask = val_batch['attention_mask']
-                        val_labels = val_batch['labels'] 
-                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
-                        logits = val_outputs['logits']  
-                        preds = torch.argmax(logits, dim=1).cpu().numpy()  
-                        labels_cpu = val_labels.cpu().numpy()  
-                        all_preds.extend(preds)  
-                        all_labels.extend(labels_cpu)  
-                # 计算评价指标  
-                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
-                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
+            should_update = accelerator.sync_gradients
+            
+            if should_update:  
+                if step % 300 == 0 and step!=0 and accelerator.is_main_process:
+                    # 确保梯度确实在更新  
+                    detect_param_grad_updates(model,epoch,step)
+                    monitor_gradients(model, step)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+            
+            del outputs
+            del loss
+            
+            torch.cuda.empty_cache()
+        global_step+=1
+        accelerator.wait_for_everyone()
+        
+        # 在每个epoch结束后检查参数变化  
+        if accelerator.is_main_process and epoch > 0:  
+            check_param_after_epoch(model,param_monitor,epoch)
+        
+        if accelerator.is_main_process:
+            print(f"begin epoch {epoch} evaluating...")   
+        eval_results = evaluate_p_tuning(model, eval_dataloader, accelerator)
+        accelerator.wait_for_everyone()
+        # 记录自定义的logger
+        if accelerator.is_main_process and logger is not None:
+            avg_loss = total_loss / len(train_dataloader)   
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
+            logger.info({
+                'epoch': epoch, 
+                'avg_loss': avg_loss, 
+                **eval_results
+                })  
+        
+            # 记录到swanlab的logger， 用于可视化
+            accelerator.log(
+                {
+                    'epoch': epoch, 
+                    # 'avg_loss': avg_loss,
+                    **eval_results
+                }
+            )
 
-                if accelerator.is_main_process:
-                    logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
-                    # print()
-
-                model.train()  
-            global_step+=1
-
-        avg_loss = total_loss / len(train_dataloader)   
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+        model.train()
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
             
     
     # 保存模型
     
     print("model name = ", model_name)
-    save_path = Config['save_model_dir'][model_name]['p-tuning'][dataset_name]
+    # save_path = Config['save_model_dir'][model_name]['p-tuning'][dataset_name]
     
-    # wait every GPU processes to reach here
-    torch.distributed.barrier()  
+    # # wait every GPU processes to reach here
+    # torch.distributed.barrier()  
     
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)  
-        print(f"已创建新的权重存储路径: {save_path}") 
+    # if not os.path.exists(save_path):
+    #     os.makedirs(save_path)  
+    #     print(f"已创建新的权重存储路径: {save_path}") 
     
-    # if accelerator.is_main_process():
-    #     torch.save()
+    # # if accelerator.is_main_process():
+    # #     torch.save()
 
-    accelerator.save(model.state_dict(), save_path)  
+    # accelerator.save(model.state_dict(), save_path)  
     
     
     
@@ -287,32 +352,75 @@ def train_p_tuning(config:PtuningConfig):
     
     
     
-def evaluate_p_tuning(config: PtuningConfig):
-    # 保存评估结果到 CSV 文件  
-    csv_file_path = f'csv/{config.model_name}/{config.peft_method}/{config.dataset_name}/evaluation_output.csv'  
+def evaluate_p_tuning(
+        model, 
+        eval_dataloader, 
+        accelerator:Accelerator, 
+    )->Dict:  
+    """  
+    评估函数  
+    """  
+    # 如果需要保持原始模型状态不变  
+    # evaluation_mode = model.training  # 保存当前状态  
+    
+    # 保存原始训练状态  
+    training_state = model.training  
+    model.eval()  
+    all_preds = []  
+    all_labels = []  
+    
+    for batch in eval_dataloader:  
+        with torch.no_grad():  
 
-    evaluation_results = {}
+            outputs = model(**batch)
+            preds = outputs.logits.argmax(dim=-1) 
+            labels = batch['labels']
+            
+            preds, labels = accelerator.gather_for_metrics(
+                (preds, labels)
+            )
+            
+        
+            all_preds.append(preds.cpu())  
+            all_labels.append(labels.cpu())   
+            
     
-    # 这里进行评估集的迭代推理
+    all_preds = torch.cat(all_preds).numpy()  
+    all_labels = torch.cat(all_labels).numpy() 
+            
     
-    evaluation_results.append({  
-                        'accuracy': accuracy,
-                        'precision': precision,
-                        'recall': recall,
-                        'f1': f1,
-                    })  
     
-
+    # 在主进程上计算指标  
+    metrics = None   
     
-    with open(csv_file_path, mode='w', newline='', encoding='utf-8') as csv_file:  
-        fieldnames = ['peft_method', 'dataset','model_name','accuracy', 'precision','recall','f1']  
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)  
-
-        writer.writeheader()  
-        for result in evaluation_results:  
-            writer.writerow(result)  
-
-    print(f"Evaluation results saved to {csv_file_path}") 
+    # 计算评价指标  
+    metrics = {  
+        'accuracy': accuracy_score(all_labels, all_preds),  
+        'precision': precision_score(all_labels, all_preds, average='weighted'),  
+        'recall': recall_score(all_labels, all_preds, average='weighted'),  
+        'f1': f1_score(all_labels, all_preds, average='weighted')  
+    }     
+    
+    accelerator.wait_for_everyone()     
+    
+    if accelerator.is_main_process: 
+        
+        # debug info
+        print("\n****************** Evaluation Results:**************************")  
+        print(f"Total samples evaluated: {len(all_labels)}")  
+        print(f"Batch predictions distribution: {np.bincount(all_preds)}")  
+        print(f"Batch labels distribution: {np.bincount(all_labels)}")   
+        print("\n******************** Classification Report: ***********************")  
+        print(classification_report(all_labels, all_preds))         
+        print("*****************************************************************\n")
+        
+        
+    
+    # 恢复模型原始状态  
+    model.train(training_state) 
+        
+    return metrics 
+        
     
     
     
@@ -322,17 +430,26 @@ if __name__ == '__main__':
     
     '''
     model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model_name = "bert-base-uncased"
+    
+    dataset_name = "race"
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path)
 
     max_seq_length = get_max_length_from_model(model)
+    hidden_size = get_hidden_size_using_model(model)
     
     config = PtuningConfig(
-        model_name = "bert-base-uncased",
+        model_name = model_name,
         model_path = model_path,
         max_seq_length=max_seq_length,
-        dataset_name= 'race',
+        dataset_name= dataset_name,
         num_epochs=5,
+        num_labels=2,
+        prefix_hidden_size=hidden_size,
+        encoder_hidden_size=hidden_size,
+        prefix_length=100,
+        
     )
     
     train_p_tuning(config)
