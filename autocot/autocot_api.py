@@ -13,10 +13,22 @@ current_directory = os.path.dirname(os.path.abspath(__file__))
 # 将当前目录添加到sys.path  
 sys.path.insert(0, current_directory) 
 
-from load import *
-from autocot_utils import *
 
+# from autocot_utils import *
+from load import *
 from config import NUM_CPU_PROCESSES
+from autocot_utils import (
+    setup_logger,
+    LoggerWriter,
+    logging,
+    extract_answer,
+    Decoder,
+    create_demo_text
+)
+
+
+
+
 
 
 
@@ -240,10 +252,10 @@ def cot_log_generator():
     # 保存原始的stdout  
     original_stdout = sys.stdout  
     
-    train_ds, first_four_columns = preprocess_dataset_autocot(args.dataset)
+    train_ds, data_config = preprocess_dataset_autocot(args.dataset)
 
-    question_key = first_four_columns[1]
-    answer_key = first_four_columns[3]
+    question_key = data_config.question_key
+    answer_key = data_config.label_key
     questions = train_ds[question_key]
     answers = train_ds[answer_key]
         

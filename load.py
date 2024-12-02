@@ -47,7 +47,7 @@ class DatasetConfig:
     subset: str = None  
 
 
-def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None, cache_dir = None):
+def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None, cache_dir = None, train_size=22000):
     '''
     load dataset from huggingface hub
     
@@ -65,6 +65,15 @@ def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None
         ds = load_dataset(dataset_path, subset_name, split=split, cache_dir=cache_dir)
     else:
         ds = load_dataset(dataset_path, split=split, cache_dir=cache_dir)
+    
+    if train_size is not None:  
+        if split=='train':
+            train_size = min(train_size, len(ds))  
+            ds = ds.select(range(train_size))  
+            
+        if split == None or split=='all':
+            train_size = min(train_size, len(ds['train'])) 
+            ds['train'] = ds['train'].select(range(train_size))
 
     return ds
 
@@ -704,7 +713,6 @@ def preprocess_func_autocot(config: DatasetConfig, examples:Dict[str,List]):
         config.question_key: new_questions,  
         config.label_key: examples[config.label_key]  
     }  
-    # return examples
 
 
 
@@ -723,7 +731,7 @@ def preprocess_dataset_autocot(dataset_name):
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
     config:DatasetConfig = wrapper.dataset_configs[dataset_name]
     
-    train_ds = dataset['train']
+    train_ds:Dataset = dataset['train']
     
     # 先预处理第一个样本试试看 
     print("\nTesting preprocess_func_autocot with first example...")  
@@ -749,7 +757,7 @@ def preprocess_dataset_autocot(dataset_name):
         batched=True,
         batch_size= Config['batch_size'],
         num_proc=NUM_CPU_PROCESSES,
-        remove_columns= [col for col in train_ds.column_names if col not in [config.question_key, config.label_key]],  
+        remove_columns= [config.article_key, config.options_key],      #[col for col in train_ds.column_names if col not in [config.question_key, config.label_key]],  
         load_from_cache_file=False,
         desc=f"Running tokenizer on dataset {dataset_name}, when doing Auto-CoT",
     )
@@ -1390,7 +1398,7 @@ class McqDatasetWrapper:
         
         return processed_dataset
     
-    def load_mcq_dataset(self, dataset_name: str, split = None) -> Tuple[Union[DatasetDict, Dataset], List[str]]:  
+    def load_mcq_dataset(self, dataset_name: str, split = None, train_size=22000) -> Tuple[Union[DatasetDict, Dataset], List[str]]:  
         """  
         load a complete dataset [train, valid] 
         
@@ -1438,7 +1446,7 @@ class McqDatasetWrapper:
                 
                 
         else:  # huggingface格式  
-            dataset = load_dataset_from_huggingface(config.local_path, config.subset, split=split)
+            dataset = load_dataset_from_huggingface(config.local_path, config.subset, split=split, train_size=train_size)
             # print("dataset['train][0]:\n", dataset['train'][0])
             if dataset_name.lower() == 'sciq':
                 dataset = self._process_sciq(dataset, config)

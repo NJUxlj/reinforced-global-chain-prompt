@@ -10,10 +10,7 @@ from torch.utils.data import (
     DataLoader,
 )
 
-from transformers import default_data_collator
-from sklearn.cluster import KMeans 
-from sentence_transformers import SentenceTransformer 
-from collections import defaultdict  
+
 
 # 获取当前文件所在目录的父目录  
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
@@ -23,6 +20,11 @@ sys.path.insert(0, parent_directory)
 current_directory = os.path.dirname(os.path.abspath(__file__)) 
 # 将当前目录添加到sys.path  
 sys.path.insert(0, current_directory) 
+
+# from transformers import default_data_collator
+from sklearn.cluster import KMeans 
+from sentence_transformers import SentenceTransformer 
+from collections import defaultdict  
 
 from load import *
 
