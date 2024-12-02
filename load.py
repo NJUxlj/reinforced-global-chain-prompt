@@ -433,7 +433,7 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
     return results
 
 def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
-                               dataset_name = 'dream', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+                               dataset_name = 'dream', max_length = 512, tokenizer = None, model_config=None)->Dict[str,Union[List,List[List]]]:
     """  
     预处理 dream 数据集的样本，准备用于模型输入  
     
@@ -459,9 +459,14 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
     results = {
         "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
-        "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+        # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     } 
+    
+    if model_config.model_type == "bert":
+        results["token_type_ids"]=list()
+    else:
+        pass
     
     # 处理每个样本  
     for i in range(batch_size):  
@@ -507,7 +512,7 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
 
 
 def preprocess_function_commonsense_qa(examples, first_four_columns = ["article", "question", "options", "answer"], 
-                               dataset_name = 'commonsense_qa', max_length = 512, tokenizer = None)->Dict[str,Union[List,List[List]]]:
+                               dataset_name = 'commonsense_qa', max_length = 512, tokenizer = None, model_config=None)->Dict[str,Union[List,List[List]]]:
     """  
     预处理commonsense_qa数据集的样本，准备用于模型输入  
     
@@ -533,12 +538,13 @@ def preprocess_function_commonsense_qa(examples, first_four_columns = ["article"
     results = {
         "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
-        "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
+        # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     }
-    # 初始化结果列表  
-    # input_texts = []  
-    # labels = []  
+    if model_config.model_type == "bert":
+        results["token_type_ids"]=list()
+    else:
+        pass
     
 
     # 处理每个样本  

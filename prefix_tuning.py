@@ -207,7 +207,7 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path=model_path, max_length=max_length)
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
@@ -246,8 +246,6 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
             sampler = eval_sampler
         )
     
-    # 初始化模型  
-    device = Config['device'] 
     
     
     # Prefix-tuning
@@ -483,7 +481,7 @@ if __name__ == "__main__":
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
     
     model_name = get_model_name_using_model(model)
-    dataset_name = 'race'
+    dataset_name = 'commonsense_qa'
     
     max_seq_length = get_max_length_from_model(model)
     
@@ -494,7 +492,7 @@ if __name__ == "__main__":
         model_path = model_path,
         dataset_name=dataset_name,
         max_seq_length= max_seq_length,
-        num_epochs=10,
+        num_epochs=5,
         num_labels=2,
         prefix_length=10,
         prefix_hidden_size=hidden_size,
