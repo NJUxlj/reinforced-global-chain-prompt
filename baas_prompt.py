@@ -1729,13 +1729,13 @@ def train_baas_prompt(config:BaasPromptConfig):
                 })  
         
         # 记录到swanlab的logger， 用于可视化
-        accelerator.log(
-            {
-                'epoch': epoch, 
-                # 'avg_loss': avg_loss,
-                **eval_results
-            }
-        )
+        # accelerator.log(
+        #     {
+        #         'epoch': epoch, 
+        #         # 'avg_loss': avg_loss,
+        #         **eval_results
+        #     }
+        # )
 
         model.train()  
 
@@ -1878,7 +1878,7 @@ if __name__ == "__main__":
         model_path = model_path,
         dataset_name=dataset_name,
         max_seq_length=max_seq_length,
-        num_epochs=5,
+        num_epochs=10,
         num_labels=2,
         all_layers=False,
         is_prefix=False,

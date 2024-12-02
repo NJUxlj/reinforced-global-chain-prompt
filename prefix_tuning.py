@@ -67,6 +67,8 @@ from accelerate import (
     Accelerator
 )
 
+from swanlab.integration.accelerate import SwanLabTracker
+
 from tqdm import tqdm
 
 
@@ -86,9 +88,9 @@ class PrefixTuningTrainerConfig:
     auto_model_class:type = AutoModelForSequenceClassification # 对于类类型的字段，使用 type 作为类型注解
     dataset_name:str = "race" 
     prefix_length: int = 10                        # prefix-tuning的默认前缀长度  
-    num_labels: int = 4                           # MCQA的选项数量 (A,B,C,D)  
+    num_labels: int = 2                           # MCQA的选项数量 (A,B,C,D)  
     batch_size:int = 5
-    num_epochs:int = 2
+    num_epochs:int = 5
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                         # 最大序列长度  
     learning_rate: float = 5e-5                   # 前缀参数的学习率  
@@ -96,8 +98,8 @@ class PrefixTuningTrainerConfig:
     
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768               # MLP中的P_theta'  即，MLP输入的隐单元维度  huggingface 默认它==encoder_hidden_size
-    prefix_projection_hidden_size:int = 4*prefix_hidden_size  # 论文中重参数化用的MLP层的中间维度是hidden_size的4倍 
-    encoder_hidden_size:int = prefix_hidden_size  # 编码器的隐藏层大小
+    prefix_projection_hidden_size:int = 4*768  # 论文中重参数化用的MLP层的中间维度是hidden_size的4倍 
+    encoder_hidden_size:int = 768  # 编码器的隐藏层大小
     
     warmup_steps: int = 500  # 添加预热步骤  
     weight_decay: float = 1e-5  # 添加权重衰减 
@@ -108,7 +110,7 @@ class PrefixTuningTrainerConfig:
     optimizer_class:type = AdamW 
     
     
-    
+    seed:int=42
     
     
 def verify_peft_config(model, peft_config:PrefixTuningConfig, prefix_trainer_config:PrefixTuningTrainerConfig):
@@ -187,6 +189,24 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     dataset_name = config.dataset_name
     dataset_path = get_dataset_path_by_name(dataset_name)
     
+    
+    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
+    tracker = SwanLabTracker("PROMPT_TUNING_TRAING", experiment_name=exp_name)  # 训练可视化
+    accelerator = Accelerator(
+        # gradient_accumulation_steps=500,  
+        # mixed_precision=config.mixed_precision,
+        log_with=[tracker]
+    )
+    tracker_config = {
+        "num_epoch": config.num_epochs,
+        "batch_num": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "seed": config.seed,
+    }
+    accelerator.init_trackers("PROMPT_TUNING_TRAING", config=tracker_config)
+    
+    
+    
     processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
     
     train_ds = processed_ds["train"]
@@ -211,17 +231,19 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     
     train_dataloader = DataLoader(
             train_ds, 
-            shuffle=True, 
+            # shuffle=True, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler=train_sampler
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True
+            pin_memory=True,
+            sampler = eval_sampler
         )
     
     # 初始化模型  
@@ -235,8 +257,8 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
         num_virtual_tokens=prefix_length, 
         token_dim = config.prefix_hidden_size,      
         num_transformer_submodules=2,   # 论文中只对transformer block 中的 K, V 使用了prefix，所以是2而不是1  
-        num_attention_heads=12,
-        num_layers=12,
+        # num_attention_heads=12,
+        # num_layers=12,
         encoder_hidden_size=config.encoder_hidden_size,  # bert隐藏层维度
         prefix_projection=config.prefix_projection, # # 论文中使用了MLP进行prefix投影
     )
@@ -247,6 +269,7 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     
     # 使用 get_peft_model 包装模型时，PEFT 库通常会自动冻结基础模型的参数，并将 PEFT 参数设置为可训练。
     model = get_peft_model(model, peft_config)
+    model.to(accelerator.device)
     
     verify_peft_config(model, peft_config, config)
     
@@ -265,7 +288,6 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
 
 
     # make sure that the fine-tuning will only update virual tokens
-    # optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()), 
         lr=lr
@@ -273,36 +295,44 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=config.warmup_steps,
+        num_warmup_steps=0,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
-    accelerator = Accelerator(
-        # gradient_accumulation_steps=1,  
-        # mixed_precision='fp16', 
-    )
     
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader= accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
         logger = get_logger(name="log_eval", logging_dir=logging_dir, log_level="INFO")
     
     
+    if accelerator.is_main_process:  
+        accelerator.init_trackers("training")
     
-    
-    device = Config['device']
     global_step = 0
+    optimizer.zero_grad()
+    param_monitor = {}
     
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
+        if train_sampler is not None:  # 每轮训练都打乱顺序
+            train_sampler.set_epoch(epoch) 
+        
+        # 记录每个epoch开始时的参数状态  
+        if accelerator.is_main_process:
+            record_epoch_param_state(model, param_monitor)
+        
         for step, batch in enumerate(tqdm(train_dataloader)):
+            batch = {k: v.to(accelerator.device) for k, v in batch.items()}
+            
             labels = batch["labels"]  
             
             outputs = model(**batch)
@@ -312,58 +342,68 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
             logits = outputs.logits
             
             loss = criterion(logits, labels.long())
-            total_loss += loss.detach().float()
+            total_loss += loss.detach().float().item() 
+            accelerator.wait_for_everyone()
             
-            accelerator.backward(loss)
+            accelerator.backward(loss, retain_graph=True)
             
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
+            should_update = accelerator.sync_gradients
+            if should_update:
+                if step % 300 == 0 and step!=0 and accelerator.is_main_process:
+                    # 确保梯度确实在更新  
+                    detect_param_grad_updates(model,epoch,step)
+                    monitor_gradients(model, step)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
             
-            if step == len(train_dataloader)-1:  
-                model.eval()  
-                all_preds = []  
-                all_labels = []  
-                with torch.no_grad():  
-                    for val_batch in eval_dataloader:  
-                        val_input_ids = val_batch['input_ids']
-                        val_attention_mask = val_batch['attention_mask']
-                        val_labels = val_batch['labels']
-                        val_outputs = model(input_ids=val_input_ids, attention_mask=val_attention_mask)  
-                        logits = val_outputs['logits']  # batch_size x num_labels
-                        preds = torch.argmax(logits, dim=1)
-                        
-                        accelerator.wait_for_everyone()
-                        preds = accelerator.gather_for_metrics(preds)  
-                        val_labels = accelerator.gather_for_metrics(val_labels)  
-                        
-                        labels_cpu = val_labels.cpu().numpy()  
-                        preds_cpu = preds.cpu().numpy()
-                        all_preds.extend(preds_cpu)  
-                        all_labels.extend(labels_cpu)  
-                # 计算评价指标  
-                accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
-                print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
-                
-                if accelerator.is_main_process:
-                    logger.info({'epoch': epoch, 'loss': loss.item(), 'accuracy':accuracy, "precision": precision, "recall": recall, "f1": f1 })  
-                    # print()
+            del outputs
+            del loss
+            torch.cuda.empty_cache()
+        
+        global_step+=1
+        
+        accelerator.wait_for_everyone()
+            
+        # 在每个epoch结束后检查参数变化  
+        if accelerator.is_main_process and epoch > 0:  
+            check_param_after_epoch(model,param_monitor,epoch)
+        
+        if accelerator.is_main_process:
+            print(f"begin epoch {epoch} evaluating...")   
+        eval_results = evaluate_prefix_tuning(model, eval_dataloader, accelerator)
+        accelerator.wait_for_everyone()
+        # 记录自定义的logger
+        if accelerator.is_main_process and logger is not None:
+            avg_loss = total_loss / len(train_dataloader)   
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
+            logger.info({
+                'epoch': epoch, 
+                'avg_loss': avg_loss, 
+                **eval_results
+                })  
+        
+            # 记录到swanlab的logger， 用于可视化
+            accelerator.log(
+                {
+                    'epoch': epoch, 
+                    # 'avg_loss': avg_loss,
+                    **eval_results
+                }
+            )
 
-                model.train()  
-            global_step+=1
-
-        avg_loss = total_loss / len(train_dataloader)   
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")  
+        model.train()
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
             
 
 
     # 保存权重
     print("model name = ", model_name)
-    save_path = Config['save_model_dir'][model_name][config.peft_method][dataset_name]
+    # save_path = Config['save_model_dir'][model_name][config.peft_method][dataset_name]
     
 
-def evaluate_prompt_tuning(
+def evaluate_prefix_tuning(
         model, 
         eval_dataloader, 
         accelerator:Accelerator, 
@@ -447,12 +487,19 @@ if __name__ == "__main__":
     
     max_seq_length = get_max_length_from_model(model)
     
+    hidden_size = get_hidden_size_using_model(model)
+    
     config = PrefixTuningTrainerConfig(
         model_name = model_name,
         model_path = model_path,
         dataset_name=dataset_name,
         max_seq_length= max_seq_length,
-        num_epochs=5,
-        num_labels=2,  
+        num_epochs=10,
+        num_labels=2,
+        prefix_length=10,
+        prefix_hidden_size=hidden_size,
+        prefix_projection_hidden_size=4*hidden_size,
+        encoder_hidden_size=hidden_size,
+        
     )
     train_prefix_tuning(config)

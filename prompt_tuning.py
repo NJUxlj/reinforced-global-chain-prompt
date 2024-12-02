@@ -246,7 +246,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=config.warmup_steps,
+        num_warmup_steps=0,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
@@ -295,8 +295,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             batch = {k: v.to(accelerator.device) for k, v in batch.items()}
             labels = batch["labels"]  
             
-            print("batch.keys = \n",batch.keys())
-            print("+++++++++++++++++++++++++++++++++++++++++++++++++")
+            # print("batch.keys = \n",batch.keys())
+            # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
             
             outputs = model(**batch)
             
