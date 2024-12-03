@@ -185,6 +185,8 @@ def get_reformated_dataset(args)->Tuple[Dataset, DatasetConfig]:
         
         print(f"Dataset after loading: type:{type(dataset)}; features:{dataset.features}") 
         print(f"Dataset size after loading: {len(dataset) if dataset is not None else 'None'}")  
+        print("*****************************")
+        print(f"first example of the auto-cot dataset {args.dataset} is:\n", dataset[0])
     
     else:
         raise ValueError("dataset is not properly defined ... Please select from [ race, dream, sciq, commonsense_qa]")
@@ -192,7 +194,7 @@ def get_reformated_dataset(args)->Tuple[Dataset, DatasetConfig]:
     return dataset, config
 
 
-def setup_data_loader(args):
+def setup_data_loader(args, debug=False):
     '''
      return a huggingface dataset wrapped by a DataLoader
      
@@ -222,13 +224,6 @@ def setup_data_loader(args):
     print(f"Dataset size = {dataset_size}") 
     if dataset_size == 0:  
         raise ValueError("Dataset is empty! Please check get_reformated_dataset function.") 
-
-    
-    # print("Dataset info:")  
-    # print(f"Dataset type: {type(dataset)}")  
-    # if hasattr(dataset, 'features'):  
-    #     print(f"Dataset features: {dataset.features}")  
-    
     # collate_fn可能返回了空字典
     def collate_fn(batch):
         '''
@@ -238,16 +233,31 @@ def setup_data_loader(args):
             如果batch_size>1, 那这么做实际上舍弃了其余的batch-1个样本！！！
         
         '''
+    
         
         # 确保batch不为空  
         if not batch:  
             raise ValueError("Empty batch received") 
-        # 返回单个样本，但确保包含所需的键  
-        sample = batch[0]  
-        if not (config.question_key in sample and config.label_key in sample):  
-            raise KeyError(f"Required keys {config.question_key} and {config.label_key} not found in sample: {sample}")  
         
-        return sample  
+        if debug:
+            print("===============In set up dataloader =============")
+            print("batch = \n", batch)
+            print("================================")
+            print("batch[0][config.question_key] = \n", batch[0][config.question_key])
+            print("==============================================")
+        
+        
+        result = [{
+            config.question_key: batch[0][config.question_key],
+            config.label_key: batch[0][config.label_key]    
+        }]
+        # 返回单个样本，但确保包含所需的键  
+        # sample = batch[0]  
+        # if not (config.question_key in sample and config.label_key in sample):  
+        #     raise KeyError(f"Required keys {config.question_key} and {config.label_key} not found in sample: {sample}")  
+        
+        # return sample
+        return result  
     
     dataloader = DataLoader(
         dataset=dataset,
@@ -264,6 +274,13 @@ def setup_data_loader(args):
     # - 已经tokenize过的数据  
     # - 包含input_ids, attention_mask等字段  
     # - 或者是可以直接转换为tensor的数据 
+    
+    first_batch = next(iter(dataloader))  
+    print("第一个batch中的第一个样本：")  
+    # print(f"{config.question_key}:", first_batch[config.question_key][0])  
+    # print(f"{config.label_key}:", first_batch[config.label_key][0])  
+    print("first_batch = \n", first_batch)
+    print("\n" + "="*50 + "\n\n")  
     
     return dataloader, config
 
@@ -334,18 +351,26 @@ def cluster_dataloader(
     steps = 0
     stop = False
     for batch in dataloader: 
-        """batch
-        {
-            "question": ["What is the capital of France?","xxxxx", "yyyyy"]
-            "answer": ["Paris", "xxx", "yyy"]
-        }
+        """batch  由于上一步setup_dataloader中的处理，此处的batch仅仅是一个包含单个样本的字典
+            {
+                "question": "What is the capital of France?"
+                "answer": "Paris"
+            },
         """ 
         # 如果batch是元组（比如同时包含数据和标签），只取第一个元素（数据）  
         # (data, label) = (tensor(batch_size, seq_len), tensor(batch_size,))
         if isinstance(batch, (tuple, list)):  
             batch = batch[0]  
+            
+        # print("batch = ", batch)
+        
         # 将数据移到CPU并转换为numpy数组
-        questions = batch[config.question_key]  # List[str]
+        questions:List[str] = []
+        # for i, item in enumerate(batch):
+        #     questions.append(item[config.question_key])
+        questions.append(batch[config.question_key])
+            
+        # questions = batch[config.question_key]  # List[str]
         for question in questions:
             if steps < begin_example:
                 steps+=1
@@ -361,7 +386,7 @@ def cluster_dataloader(
         if stop:
             break
             
-    print("len(texts) ==", len(texts))
+    print("len(questions) ==", len(texts))
     
     
     embeddings, texts= get_text_embeddings(texts, args.encoder)
@@ -389,7 +414,7 @@ def cluster_dataloader(
         clusters[label].append((text, distance))
     
     # 对每个簇内的文本按距离排序  
-    sorted_clusters = {}  
+    sorted_clusters: Dict[int, List[Tuple[str, float]]] = {}  
     for label in clusters:  
         # 按距离从近到远排序  
         sorted_texts = sorted(clusters[label], key=lambda x: x[1])  
@@ -425,9 +450,14 @@ def get_k_questions_dataloader_from_clusters(
     '''
     k_questions:List[str] = []
     for label in sorted_clusters:
-        sorted_text = sorted_clusters[label]
+        sorted_text:List[Tuple[str, float]] = sorted_clusters[label]
         k_questions.append(sorted_text[0][0])
     
+    print("len(k_questions) ==", len(k_questions))
+    print("type(k_questions) ==", type(k_questions))
+    
+    print("k questions = \n", k_questions)
+
     
     # 将k个questions转为只有一个quesiton字段的dataloader
     dataset = SingleQuestionDataset(k_questions, config.question_key) 

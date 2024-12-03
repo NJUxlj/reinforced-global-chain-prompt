@@ -734,7 +734,7 @@ def preprocess_dataset_autocot(dataset_name):
     :param return:   处理后的数据集 [训练集] , 字段只有两个 : {question, answer}
     """ 
     wrapper = McqDatasetWrapper()
-    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
+    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=22000)
     config:DatasetConfig = wrapper.dataset_configs[dataset_name]
     
     train_ds:Dataset = dataset['train']
