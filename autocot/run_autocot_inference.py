@@ -16,19 +16,22 @@ python run_autocot_inference.py \
 --dataset sciq \
 --demo_path demos/sciq \
 --output_dir experiment/sciq \
---method auto_cot
+--method auto_cot \
+--max_length_cot 2048
 
 python run_autocot_inference.py \
 --dataset dream \
 --demo_path demos/dream \
 --output_dir experiment/dream \
---method auto_cot
+--method auto_cot \
+--max_length_cot 2048
 
 python run_autocot_inference.py \
 --dataset commonsense_qa \
 --demo_path demos/commonsense_qa \
 --output_dir experiment/commonsense_qa \
---method auto_cot
+--method auto_cot \
+--max_length_cot 2048
 
 '''
 
