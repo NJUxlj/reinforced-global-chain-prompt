@@ -259,6 +259,34 @@ def get_max_length_from_model(model):
         raise ValueError("Error model object, please check your config, it should have either [max_position_embeddings | max_sequence_length]") 
 
 
+
+def print_model_info(model:AutoModelForSequenceClassification):  
+    """打印模型的详细信息"""  
+    
+    
+    print("\n=== Model Classification Head Information ===")  
+    
+    # 1. 打印分类器的结构  
+    print("\nClassifier Architecture:")  
+    print(model.classifier)  
+    
+    # 2. 打印分类器中dense层的权重形状  
+    dense_weight = model.classifier.dense.weight  
+    print("\nDense Layer Weight Shape:", dense_weight.shape)  
+    
+    # 3. 打印分类器中out_proj层的权重形状  
+    out_proj_weight = model.classifier.out_proj.weight  
+    print("Output Projection Weight Shape:", out_proj_weight.shape)  
+    
+    # 4. 打印整个模型的参数数量  
+    total_params = sum(p.numel() for p in model.parameters())  
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
+    print(f"\nTotal Parameters: {total_params:,}")  
+    print(f"Trainable Parameters: {trainable_params:,}")  
+    print(f"Percentage of Trainable Parameters: {100 * trainable_params / total_params:.2f}%") 
+
+
+
 def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
     '''
      model is a pretrained model

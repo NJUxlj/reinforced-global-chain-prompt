@@ -259,6 +259,17 @@ def preprocess_function_race(
         results["token_type_ids"]=list()
     else:
         pass
+    
+    # 初始化结果列表  
+    all_input_ids = []  
+    all_attention_masks = []  
+    all_labels = []
+    
+    if model_config.model_type == "bert":
+        all_token_type_ids = []
+    else:
+        pass
+    
     # 初始化结果列表  
     # input_texts = []  
     # labels = [] 
@@ -283,9 +294,14 @@ def preprocess_function_race(
         # 将选项转换为字典格式，方便后续处理  
         # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
         
-        input_ids:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
-        attention_mask = []
-        token_type_ids = []  # if tokenizer.model_type == "bert" else None
+        input_ids_list:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
+        attention_mask_list = []
+        label_list = []
+        
+        if model_config.model_type == "bert":
+            token_type_ids_list = []  # if tokenizer.model_type == "bert" else None
+        else:
+            pass
         
         for i, option in enumerate(options):
             # 拼接question和option
@@ -299,30 +315,59 @@ def preprocess_function_race(
                     padding="max_length", 
                     max_length=max_length, 
                     truncation=True,
-                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                    # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                    return_tensors="pt"
                 )
 
-            # input_ids.append(result["input_ids"])
-            # attention_mask.append(result["attention_mask"])
-            # if "token_type_ids" in result: token_type_ids.append(result["token_type_ids"])
+            input_ids_list.append(result["input_ids"].squeeze(0))  
+            attention_mask_list.append(result["attention_mask"].squeeze(0))  
+            if model_config.model_type == "bert":
+                token_type_ids_list.append(result["token_type_ids"].squeeze(0))
+            # label_list.append(label)
+            label_list.append(1 if i == label else 0) 
+        
+        # 将所有选项的张量堆叠  
+        input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
+        attention_mask = torch.stack(attention_mask_list)  # shape: (num_choices, seq_len) 
+        if model_config.model_type == "bert":
+            token_type_ids = torch.stack(token_type_ids_list)
+        # labels = torch.tensor(label_list, dtype=torch.long)  # shape: (num_choices,)
+        
+        all_input_ids.append(input_ids)  
+        all_attention_masks.append(attention_mask)  
+        if model_config.model_type == "bert":
+            all_token_type_ids.append(token_type_ids)
+        all_labels.extend(label_list)  # 使用extend而不是append  
+        
+    # 将所有样本堆叠成批次  
+    batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
+    batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
+    batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
+    if model_config.model_type == "bert":
+        batched_token_type_ids = torch.stack(all_token_type_ids)
+        
+    # 重塑张量以适应PEFT的要求  
+    batch_size, num_choices, seq_len = batched_input_ids.shape  
+    
+    results = {  
+        "input_ids": batched_input_ids.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "attention_mask": batched_attention_masks.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "labels": batched_labels  
+    }  
+    
+    if model_config.model_type == "bert":
+        results["token_type_ids"]=batched_token_type_ids.view(-1, seq_len)
 
-            results["input_ids"].append(result["input_ids"])
-            results["attention_mask"].append(result["attention_mask"])
-            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
-            # 标签：正确选项为1，其他为0  
-            results['labels'].append(1 if i == label else 0) 
+            # # 之前的实现
+            # results["input_ids"].append(result["input_ids"].squeeze(0))
+            # results["attention_mask"].append(result["attention_mask"].squeeze(0))
+            # if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"].squeeze(0))
+            # # 标签：正确选项为1，其他为0  
+            # results['labels'].append(1 if i == label else 0) 
             
-        # results["input_ids"].append(input_ids)
-        # results["attention_mask"].append(attention_mask)
-        # if len(token_type_ids) > 0: results["token_type_ids"].append(token_type_ids)
-        # results["labels"].append(label)
+
         
     
-
-
-    # print("labels = ", labels)
-    # labels = torch.tensor(labels, dtype=torch.long)
-    # model_inputs['labels'] = labels  # 保持为整数列表  
 
     
     return results  
@@ -1606,9 +1651,9 @@ def preprocess_dataset_peft(dataset_name, model_path, max_length=512)->Dataset:
         
         preprocessed_dataset: 处理后的数据集，包含train, test, validation(dev) 3个部分 
     """ 
-    wrapper = McqDatasetWrapper(model_name_or_path=model_path)
+    wrapper = McqDatasetWrapper(model_name_or_path=model_path, max_seq_length=max_length)
     dataset_configs = wrapper.dataset_configs
-    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name)
+    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=22000)
     processed_dataset:DatasetDict = dataset.map(
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length),
         batched=True,

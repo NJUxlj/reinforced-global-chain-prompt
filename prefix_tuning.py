@@ -172,6 +172,9 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path, config.num_labels)
     
+    # print("model.classifier.shape = ", model.classifier.shape)
+    print_model_info(model)
+    
     num_labels = config.num_labels
     prefix_length = config.prefix_length
     batch_size = config.batch_size
@@ -254,7 +257,7 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
         task_type=TaskType.SEQ_CLS, 
         num_virtual_tokens=prefix_length, 
         token_dim = config.prefix_hidden_size,      
-        num_transformer_submodules=2,   # 论文中只对transformer block 中的 K, V 使用了prefix，所以是2而不是1  
+        # num_transformer_submodules=2,   # 论文中只对transformer block 中的 K, V 使用了prefix，所以是2而不是1  
         # num_attention_heads=12,
         # num_layers=12,
         encoder_hidden_size=config.encoder_hidden_size,  # bert隐藏层维度
@@ -483,12 +486,12 @@ if __name__ == "__main__":
     '''
     
     '''
-    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    model_path = Config["models"]["roberta-large"]["model_path"]
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
     
     model_name = get_model_name_using_model(model)
-    dataset_name = 'commonsense_qa'
+    dataset_name = 'race'
     
     max_seq_length = get_max_length_from_model(model)
     
