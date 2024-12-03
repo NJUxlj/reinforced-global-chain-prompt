@@ -661,7 +661,7 @@ if __name__ == '__main__':
     # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
     # model_name = 'Qwen2.5-1.5B'
     
-    dataset_name = "commonsense_qa"
+    dataset_name = "race"
     
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
 
