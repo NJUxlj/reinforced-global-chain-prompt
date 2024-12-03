@@ -646,6 +646,13 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
 
         model.train()
     accelerator.wait_for_everyone()
+    
+    if accelerator.is_main_process:
+        finish_words= f'A training for {model_name}_{config.peft_method}_{dataset_name} is done.'
+        print("********************** ", finish_words, " ***************************")
+        print("*******************************************************************")
+        print("*******************************************************************")
+
     accelerator.end_training()
 
     # 保存模型

@@ -392,6 +392,13 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
 
         model.train()
     accelerator.wait_for_everyone()
+    
+    if accelerator.is_main_process:
+        finish_words= f'A training for {model_name}_{config.peft_method}_{dataset_name} is done.'
+        print("********************** ", finish_words, " ***************************")
+        print("*******************************************************************")
+        print("*******************************************************************")
+
     accelerator.end_training()
             
 
