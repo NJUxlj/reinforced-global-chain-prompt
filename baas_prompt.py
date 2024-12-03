@@ -1900,9 +1900,9 @@ if __name__ == "__main__":
     args=ChainEncodingArguments(
         dataset=config.dataset_name,
         hidden_size=config.prefix_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
-        output_dir="./autocot/experiment/race",
-        embedding_dir = "./autocot/embeddings/race",
-        context_dir = "./autocot/context/race",
+        output_dir=f"./autocot/experiment/{dataset_name}",
+        embedding_dir = f"./autocot/embeddings/{dataset_name}",
+        context_dir = f"./autocot/context/{dataset_name}",
         temperature=0.7
     )
     train_baas_prompt(config, args)
