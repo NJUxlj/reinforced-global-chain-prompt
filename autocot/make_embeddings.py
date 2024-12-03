@@ -45,7 +45,34 @@ python make_embeddings.py \
 --method auto_cot \
 --output_dir experiment/race \
 --max_length_cot 2048 \
---embedding_dir ./embeddings/race   
+--embedding_dir ./embeddings/race 
+
+python make_embeddings.py \
+--dataset sciq \
+--encoder all-mpnet-base-v2 \
+--hidden_size 768 \
+--method auto_cot \
+--output_dir experiment/sciq \
+--max_length_cot 2048 \
+--embedding_dir ./embeddings/sciq  
+
+python make_embeddings.py \
+--dataset dream \
+--encoder all-mpnet-base-v2 \
+--hidden_size 768 \
+--method auto_cot \
+--output_dir experiment/dream \
+--max_length_cot 2048 \
+--embedding_dir ./embeddings/dream 
+
+python make_embeddings.py \
+--dataset commonsense_qa \
+--encoder all-mpnet-base-v2 \
+--hidden_size 768 \
+--method auto_cot \
+--output_dir experiment/commonsense_qa \
+--max_length_cot 2048 \
+--embedding_dir ./embeddings/commonsense_qa 
 
 '''
 
@@ -594,7 +621,12 @@ def generate_new_step(context: torch.Tensor,
 if __name__ == '__main__':
     # context = get_cot_context()
     args = ChainEncodingArguments(
-        hidden_size=768
+        dataset='sciq',
+        hidden_size=768,
+        output_dir='experiment/sciq',
+        embedding_dir="./embeddings/sciq",
+        context_dir="./context/sciq",
+        
     )
     context = rollback_one_step_extend(20,args)
     print("context.shape = ", context.shape)

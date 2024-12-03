@@ -1493,7 +1493,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
 
 
 
-def train_baas_prompt(config:BaasPromptConfig):
+def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments):
     setup_distributed()
     
     fix_seed(config.seed)
@@ -1587,7 +1587,7 @@ def train_baas_prompt(config:BaasPromptConfig):
         model=model,
         tokenizer=tokenizer,
         config=config,
-        chain_encode_args=None,
+        chain_encode_args=chain_encode_args,
         device = accelerator.device,
         debug=False
     )
@@ -1896,7 +1896,16 @@ if __name__ == "__main__":
         suffix_length=suffix_length,
         
     )
-    train_baas_prompt(config)
+    
+    args=ChainEncodingArguments(
+        dataset=config.dataset_name,
+        hidden_size=config.prefix_hidden_size, # 这个hidden_size最终会传给encode cot chain用到的 sentence transformer
+        output_dir="./autocot/experiment/race",
+        embedding_dir = "./autocot/embeddings/race",
+        context_dir = "./autocot/context/race",
+        temperature=0.7
+    )
+    train_baas_prompt(config, args)
     
     
     
