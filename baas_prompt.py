@@ -1869,7 +1869,7 @@ if __name__ == "__main__":
 
     
     # 加载数据集
-    dataset_name = "sciq"
+    dataset_name = "commonsense_qa"
 
     dataset_path = Config["datasets"][dataset_name]
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification)
@@ -1886,7 +1886,7 @@ if __name__ == "__main__":
         model_path = model_path,
         dataset_name=dataset_name,
         max_seq_length=max_seq_length,
-        num_epochs=10,
+        num_epochs=5,
         num_labels=2,
         all_layers=False,
         is_prefix=False,
