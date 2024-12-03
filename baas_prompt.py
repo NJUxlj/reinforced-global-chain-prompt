@@ -253,7 +253,7 @@ class BaasPromptEncoder(nn.Module):
         
         prefix_embeds = None
         suffix_embeds = None
-        # 1. 扩展batch维度  
+        # 扩展batch维度  
         if prefix_embeddings.dim()==2:
             prefix_embeds = prefix_embeddings.unsqueeze(0).expand(config.batch_size, -1, -1).to(self.device)
         else:
@@ -289,11 +289,11 @@ class BaasPromptEncoder(nn.Module):
                 dim=1
             )
         
-        # 2. 添加位置编码  
+        # 添加位置编码  
         prefix_embeds = self.prefix_pos_embedding(prefix_embeds)  
         suffix_embeds = self.suffix_pos_embedding(suffix_embeds)  
         
-        # 3. 双向LSTM编码  
+        # 双向LSTM编码  
         # 前向处理  
         prefix_forward, _ = self.forward_lstm(prefix_embeds)  
         suffix_forward, _ = self.forward_lstm(suffix_embeds)  
@@ -308,7 +308,7 @@ class BaasPromptEncoder(nn.Module):
         prefix_bidirectional = self.prefix_gate(prefix_forward, prefix_backward)  
         suffix_bidirectional = self.suffix_gate(suffix_forward, suffix_backward)  
         
-        # 4. 交互注意力  
+        # 交互注意力  
         prefix_attended,_ = self.prefix_to_suffix_attention(  
             prefix_bidirectional, suffix_bidirectional, suffix_bidirectional  
         )  
@@ -316,11 +316,11 @@ class BaasPromptEncoder(nn.Module):
             suffix_bidirectional, prefix_bidirectional, prefix_bidirectional  
         )  
         
-        # 5. 残差连接和归一化  
+        # 残差连接和归一化  
         prefix_output = self.layer_norm(prefix_bidirectional + prefix_attended)  
         suffix_output = self.layer_norm(suffix_bidirectional + suffix_attended)  
         
-        # 6. 最终转换  
+        # 最终转换  
         prefix_output = self.prefix_output_layer(prefix_output)  
         suffix_output = self.suffix_output_layer(suffix_output)  
         
@@ -1224,7 +1224,8 @@ def get_classes_by_clustering(
                 
         if all(cached_final_metadata[k] == final_metadata[k] for k in final_metadata.keys() if k != 'max_length'):  
             print(f"Loading final label embeddings from {final_label_embeddings_path}")
-            cluster_label_embeddings = torch.load(final_label_embeddings_path)  
+            device,local_rank = setup_distributed()
+            cluster_label_embeddings = torch.load(final_label_embeddings_path, map_location=device)  
             print(f"Loaded final label embeddings shape: {cluster_label_embeddings.shape}")
             return cluster_label_embeddings
         else:  
@@ -1868,7 +1869,7 @@ if __name__ == "__main__":
 
     
     # 加载数据集
-    dataset_name = "race"
+    dataset_name = "sciq"
 
     dataset_path = Config["datasets"][dataset_name]
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification)
@@ -1894,6 +1895,7 @@ if __name__ == "__main__":
         encoder_hidden_size=hidden_size,
         prefix_length=prefix_length,
         suffix_length=suffix_length,
+        batch_size=4,
         
     )
     
