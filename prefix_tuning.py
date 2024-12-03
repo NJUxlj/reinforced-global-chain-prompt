@@ -108,7 +108,7 @@ class PrefixTuningTrainerConfig:
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
     optimizer_class:type = AdamW 
-    
+     
     
     seed:int=42
     
