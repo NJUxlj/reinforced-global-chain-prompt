@@ -139,7 +139,7 @@ def train_p_tuning(config:PtuningConfig):
     accelerator.init_trackers("P_TUNING_TRAING", config=tracker_config)
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path=model_path, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length)
     
     
     train_ds = processed_ds["train"]
