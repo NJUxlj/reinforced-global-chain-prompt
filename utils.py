@@ -338,7 +338,7 @@ def get_word_embeddings_from_model(model):
         raise AttributeError(f"Can not find the word_embeddings in the model. Please check the model type {type(model).__name__}.")
 
 
-def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_path = None, num_labels = 4):
+def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_path = None, num_labels = 2):
     '''
      return model, tokenizer
     '''

@@ -440,8 +440,8 @@ class Racedataset(Dataset):
         
         
 def train_p_tuning_v2(config: PtuningV2Config=None):
-    # fix_seed(config.seed)
-    # setup_distributed()
+    fix_seed(config.seed)
+    setup_distributed()
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
     # 初始化参数  
@@ -480,7 +480,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path=model_path, max_length=max_length)
     
     
     train_ds = processed_ds["train"]
@@ -809,7 +809,7 @@ if __name__ == "__main__":
     hidden_size = get_hidden_size_using_model(model)
 
     config = PtuningV2Config(
-        model_name = "bert-base-uncased",
+        model_name = model_name,
         model_path=model_path,
         auto_model_class = AutoModelForSequenceClassification,
         dataset_name=dataset_name,
