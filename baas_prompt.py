@@ -1635,6 +1635,9 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         
     global_step = 0
     optimizer.zero_grad()
+    
+    print("\n\n**************************************************************************************")
+    print(f"************* Start training model {model_name} on {dataset_name} using {config.peft_method} ... ************\n\n")
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
