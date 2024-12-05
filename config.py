@@ -682,6 +682,14 @@ Config = {
                 "model_type": "t5",
                 "model_path": f"{MODEL_BASE_PATH}flan-t5-large"
           },  
+          "t5-large":{
+                "model_name": "t5-large",
+                "max_length": 512,
+                "num_labels": 1,
+                "hidden_dim": 1024,
+                "model_type": "t5",
+                "model_path": f"{MODEL_BASE_PATH}t5-large"
+          },
         },
         
         "llama":{

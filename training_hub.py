@@ -60,7 +60,7 @@ def train_all():
     
     model_names = ["bert-base-uncased"]
     # pt_names = ["p_tuning_v2", "prompt_tuning", "prefix_tuning", "p_tuning"]
-    pt_names = ["prompt_tuning", "p_tuning", "p_tuning_v2", "baas_prompt"]
+    pt_names = ["prompt_tuning", "baas_prompt"]
     
     dataset_names = ['race', 'sciq', 'dream', 'commonsense_qa']
     # dataset_names = ['race']
@@ -151,6 +151,8 @@ def train_all():
                             peft_dict[method](config)
                             
                         elif method == "prompt_tuning":
+                            if dataset_name=='race':
+                                continue
                             model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
 
                             max_seq_length = get_max_length_from_model(model)

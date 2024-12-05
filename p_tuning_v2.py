@@ -316,10 +316,11 @@ class PTuningV2ForSequenceClassification(nn.Module):
             past_key_values=past_key_values, # shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
         )   # last_hidden_state, pooled_output = model(input_ids)
         
-        pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+        # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+        cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
 
-        pooled_output = self.dropout(pooled_output)
-        logits = self.classifier(pooled_output) # shape = (batch_size, num_labels)
+        cls_token = self.dropout(cls_token)
+        logits = self.classifier(cls_token) # shape = (batch_size, num_labels)
         # logits = logits.reshape(-1, config.num_labels)
         
         loss = None
@@ -480,7 +481,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path=model_path, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length)
     
     
     train_ds = processed_ds["train"]
@@ -653,7 +654,16 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
         print("*******************************************************************")
         print("*******************************************************************")
 
-    accelerator.end_training()
+    try:
+        accelerator.end_training()
+    except:
+        print("****************************** End Training *******************************************")
+        print("****************************** Clean Cuda cache *******************************************")
+        print("****************************** destroy process group *******************************************")
+        
+        torch.cuda.empty_cache()  
+        if torch.distributed.is_initialized():  
+            torch.distributed.destroy_process_group()  
 
     # 保存模型
     
@@ -797,11 +807,15 @@ if __name__ == "__main__":
     '''
     
     
-    model_name = "bert-base-uncased"
-    dataset_name = "race"
-    model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    # model_name = "bert-base-uncased"
+    # dataset_name = "race"
+    # model_path = Config["models"]["bert-base-uncased"]["model_path"]
     # hidden_size = Config["models"]["bert-base-uncased"]["hidden_dim"]
 
+    args = parse_training_arguments()
+    dataset_name =args.dataset_name
+    model_name = args.model_name
+    model_path = get_model_path_by_model_name(model_name)
     
     model, tokenizer = prepare_model_tokenizer(model_path,AutoModelForSequenceClassification, model_path)
 

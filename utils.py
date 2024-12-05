@@ -3,6 +3,7 @@ import torch
 import logging
 import evaluate
 import random
+import argparse
 import numpy as np
 from itertools import product
 from config import Config
@@ -27,6 +28,10 @@ from datasets import (
 from transformers import (
     AutoModel,
     AutoTokenizer,
+    RobertaTokenizerFast,
+    BertTokenizerFast,
+    T5TokenizerFast,
+    Qwen2TokenizerFast,
     AutoConfig,
     BertTokenizerFast,
     AutoModelForSequenceClassification,
@@ -346,10 +351,25 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     
     model = auto_model_class.from_pretrained(model_path, config=config)
     
-    if tokenizer_path is not None:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
+    model_type = model.config.model_type
+    
+    tokenizer_class = AutoTokenizer
+    if model_type == 'roberta':
+        tokenizer_class = RobertaTokenizerFast
+    elif model_type == 'bert':
+        tokenizer_class = BertTokenizerFast
+    elif model_type == 'qwen2':
+        tokenizer_class = Qwen2TokenizerFast
+    elif model_type == 't5':
+        tokenizer_class = T5TokenizerFast
     else:
-        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast = True)
+        print(f"The Fast Tokenizer of this model type {model_type} is not supported, We use the default AutoTokenzier")
+    
+    
+    # if tokenizer_path is not None:
+    #     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
+    # else:
+    #     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast = True)
         
     print(f"Model's current num_labels: {model.config.num_labels}") 
      
@@ -364,7 +384,7 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     
     print("padding_side = ", padding_side)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=padding_side, use_fast=True)
+    tokenizer = tokenizer_class.from_pretrained(model_path, padding_side=padding_side)    # , use_fast=True)
     
     return model, tokenizer
 
@@ -721,6 +741,45 @@ def check_param_after_epoch(model,param_monitor:Dict, epoch:int):
 
     print("*******************************************************************\n\n")
 
+
+
+def get_model_path_by_model_name(model_name:str):
+    '''
+        根据模型名称获取模型路径
+    '''
+    path=None
+    if "bert" in model_name.lower():
+        path = Config['models'][model_name]['model_path']
+    elif "SentenceTransformer" in model_name or "all-MiniLM-L6-v2" in model_name:
+        path = Config['models'][model_name]['model_path'] 
+    elif "qwen" in model_name.lower():
+        path = Config['models']['qwen'][model_name]['model_path']
+    elif "t5" in model_name.lower():
+        path = Config['models']['t5'][model_name]['model_path']
+    elif "llama" in model_name.lower():
+        path = Config['models']['llama'][model_name]['model_path']
+    else:
+        raise ValueError(f"model_name:{model_name} not supported, can not be found in `Config` dict")
+    
+    return path
+
+
+def parse_training_arguments(config=None):
+    parser = argparse.ArgumentParser(description="peft training")
+
+    parser.add_argument(
+        "--model_name", type=str, default="bert-base-uncased", help="model used for training. Please select from [bert-base, bert-large, roberta-large, t5, qwen2.5]"
+    )
+    
+    parser.add_argument(
+        "--dataset_name", type=str, default="race", help="select a dataset from ['race','sciq','dream','commonsense_qa']"
+    )
+    
+    
+    args = parser.parse_args()
+
+
+    return args
 
 
 

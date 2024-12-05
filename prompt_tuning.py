@@ -102,8 +102,8 @@ class PromptTuningTrainerConfig:
 
 def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
-    # fix_seed(config.seed)
-    # setup_distributed()
+    fix_seed(config.seed)
+    setup_distributed()
     # 初始化参数  
     model_name = config.model_name
     
@@ -145,7 +145,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, config.model_path, max_length=max_length)
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
@@ -377,7 +377,16 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         print("*******************************************************************")
         print("*******************************************************************")
 
-    accelerator.end_training()
+    try:
+        accelerator.end_training()
+    except:
+        print("****************************** End Training *******************************************")
+        print("****************************** Clean Cuda cache *******************************************")
+        print("****************************** destroy process group *******************************************")
+        
+        torch.cuda.empty_cache()  
+        if torch.distributed.is_initialized():  
+            torch.distributed.destroy_process_group() 
         
             # if step % 100 ==0 and step !=0:
             #     if accelerator.is_local_main_process: 
@@ -655,13 +664,17 @@ if __name__ == '__main__':
     '''
 
     '''
-    model_path = Config["models"]["bert-large-uncased"]["model_path"]
-    model_name = "bert-large-uncased"
+    # model_path = Config["models"]["bert-large-uncased"]["model_path"]
+    # model_name = "bert-large-uncased"
     
     # model_path = Config['models']['qwen']['Qwen2.5-1.5B']["model_path"]
     # model_name = 'Qwen2.5-1.5B'
     
-    dataset_name = "race"
+    # dataset_name = "race"
+    args = parse_training_arguments()
+    dataset_name =args.dataset_name
+    model_name = args.model_name
+    model_path = get_model_path_by_model_name(model_name)
     
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
 

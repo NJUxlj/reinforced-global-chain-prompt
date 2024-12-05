@@ -100,8 +100,8 @@ class PtuningConfig:
 
 
 def train_p_tuning(config:PtuningConfig):
-    # fix_seed(config.seed)
-    # setup_distributed()
+    fix_seed(config.seed)
+    setup_distributed()
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
     # 初始化参数  
@@ -332,7 +332,16 @@ def train_p_tuning(config:PtuningConfig):
         print("*******************************************************************")
         print("*******************************************************************")
 
-    accelerator.end_training()
+    try:
+        accelerator.end_training()
+    except:
+        print("****************************** End Training *******************************************")
+        print("****************************** Clean Cuda cache *******************************************")
+        print("****************************** destroy process group *******************************************")
+        
+        torch.cuda.empty_cache()  
+        if torch.distributed.is_initialized():  
+            torch.distributed.destroy_process_group() 
             
     
     # 保存模型
@@ -438,10 +447,15 @@ if __name__ == '__main__':
     '''
     
     '''
-    model_path = Config["models"]["bert-base-uncased"]["model_path"]
-    model_name = "bert-base-uncased"
+    # model_path = Config["models"]["bert-base-uncased"]["model_path"]
+    # model_name = "bert-base-uncased"
     
-    dataset_name = "race"
+    # dataset_name = "race"
+    
+    args = parse_training_arguments()
+    dataset_name =args.dataset_name
+    model_name = args.model_name
+    model_path = get_model_path_by_model_name(model_name)
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path)
 

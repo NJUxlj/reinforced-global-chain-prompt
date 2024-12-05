@@ -560,9 +560,10 @@ class BassPromptModel(torch.nn.Module):
                 # past_key_values=past_key_values if config.all_layers else None, 
             )   
             
-            pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+            # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+            cls_token = outputs.last_hidden_states[:, 0, :] # shape = (batch_size, hidden_size)
             
-            logits:torch.Tensor = self.classifier(pooled_output) # shape = (batch_size, num_labels)
+            logits:torch.Tensor = self.classifier(cls_token) # shape = (batch_size, num_labels)
             
             if self.debug:
                 print("************* BaasPromptModel 中的 base_model 输出：*************")
@@ -1748,8 +1749,16 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         print("*******************************************************************")
         print("*******************************************************************")
 
-    accelerator.end_training()
-
+    try:
+        accelerator.end_training()
+    except:
+        print("****************************** End Training *******************************************")
+        print("****************************** Clean Cuda cache *******************************************")
+        print("****************************** destroy process group *******************************************")
+        
+        torch.cuda.empty_cache()  
+        if torch.distributed.is_initialized():  
+            torch.distributed.destroy_process_group() 
     
     # 判断模型名称
     
@@ -1864,12 +1873,17 @@ def evaluate_baas_prompt(
 
 
 if __name__ == "__main__":
-    model_name = "bert-large-uncased"
-    model_path = Config["models"]["bert-large-uncased"]["model_path"]
+    # model_name = "bert-large-uncased"
+    # model_path = Config["models"]["bert-large-uncased"]["model_path"]
 
     
-    # 加载数据集
-    dataset_name = "commonsense_qa"
+    # # 加载数据集
+    # dataset_name = "commonsense_qa"
+    
+    args = parse_training_arguments()
+    dataset_name =args.dataset_name
+    model_name = args.model_name
+    model_path = get_model_path_by_model_name(model_name)
 
     dataset_path = Config["datasets"][dataset_name]
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification)
@@ -1911,16 +1925,3 @@ if __name__ == "__main__":
     
     
     
-    
-   
-    # ds = load_dataset_from_huggingface(dataset_path,"high")
-    
-    
-    # classes= get_classes_for_dataset(dataset_path)
-    # initialize_prefix_prompts(ds, tokenizer,20, 768, classes)
-    
-    # classes = get_classes_for_dataset(dataset_path,model, tokenizer)
-    # classes = get_classes_by_lda(dataset_path, model, tokenizer)
-    # classes = get_classes_by_clustering(dataset_path, model, tokenizer, num_topics=5, K=5, max_length=512)
-    
-    # print("classes = ", classes)

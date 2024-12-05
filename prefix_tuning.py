@@ -168,6 +168,8 @@ def verify_peft_config(model, peft_config:PrefixTuningConfig, prefix_trainer_con
     
 
 def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
+    fix_seed(config.seed)
+    setup_distributed()
     # 初始化参数  
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path, config.num_labels)
@@ -402,7 +404,16 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
         print("*******************************************************************")
         print("*******************************************************************")
 
-    accelerator.end_training()
+    try:
+        accelerator.end_training()
+    except:
+        print("****************************** End Training *******************************************")
+        print("****************************** Clean Cuda cache *******************************************")
+        print("****************************** destroy process group *******************************************")
+        
+        torch.cuda.empty_cache()  
+        if torch.distributed.is_initialized():  
+            torch.distributed.destroy_process_group() 
             
 
 
@@ -486,12 +497,19 @@ if __name__ == "__main__":
     '''
     
     '''
-    model_path = Config["models"]["roberta-large"]["model_path"]
+    
+    args = parse_training_arguments()
+    dataset_name =args.dataset_name
+    model_name = args.model_name
+    model_path = get_model_path_by_model_name(model_name)
+    
+    # model_name = get_model_name_using_model(model)
+    # dataset_name = 'race'
+    # model_path = Config["models"]["roberta-large"]["model_path"]
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
     
-    model_name = get_model_name_using_model(model)
-    dataset_name = 'race'
+
     
     max_seq_length = get_max_length_from_model(model)
     
