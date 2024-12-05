@@ -561,7 +561,9 @@ class BassPromptModel(torch.nn.Module):
             )   
             
             # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
-            cls_token = outputs.last_hidden_states[:, 0, :] # shape = (batch_size, hidden_size)
+            # cls_token = outputs.hidden_states[-1][:, 0, :] # shape = (batch_size, hidden_size)
+            cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
+
             
             logits:torch.Tensor = self.classifier(cls_token) # shape = (batch_size, num_labels)
             
