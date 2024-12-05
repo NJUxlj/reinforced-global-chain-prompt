@@ -227,6 +227,7 @@ def preprocess_function_race(
         max_length = 512, 
         tokenizer = None,
         model_config=None,
+        seq_cls_type:Optional[str]="binary", # ['binary','multiple']
     )->Dict[str,Union[List,List[List]]]:
     
     ''' 
@@ -324,7 +325,12 @@ def preprocess_function_race(
             if model_config.model_type == "bert":
                 token_type_ids_list.append(result["token_type_ids"].squeeze(0))
             # label_list.append(label)
-            label_list.append(1 if i == label else 0) 
+            if seq_cls_type=='binary':
+                label_list.append(1 if i == label else 0) 
+            elif seq_cls_type=='multiple':
+                label_list.append(label)
+            else:
+                raise ValueError("incorret seq_cls_type in preprocess_function_race")
         
         # 将所有选项的张量堆叠  
         input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
@@ -1599,7 +1605,7 @@ class McqDatasetWrapper:
 
 
 
-def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, first_four_columns: List[str], max_length)->Dict[str,Union[List,List[List]]]:
+def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, first_four_columns: List[str], max_length=None, seq_cls_type='binary')->Dict[str,Union[List,List[List]]]:
     '''
     预处理函数：将article、question和options字段合并成新的question字段  
            [use tokenization]
@@ -1615,8 +1621,9 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
         # model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
         #                                  dataset_name = 'race', max_length = max_length)
         
+        # seq_cls_type = 'binary' or 'multiple'
         model_inputs = preprocess_function_race(examples, first_four_columns = first_four_columns, 
-                                    dataset_name = 'race', max_length = max_length, tokenizer = wrapper.tokenizer, model_config = wrapper.model_config)
+                                    dataset_name = 'race', max_length = max_length, tokenizer = wrapper.tokenizer, model_config = wrapper.model_config, seq_cls_type=seq_cls_type)
     elif dataset_name == 'multirc':
         model_inputs = preprocess_function_multirc(examples, text_column = "article", label_column  ="answer", 
                                          dataset_name = 'multirc', max_length = max_length)
@@ -1640,13 +1647,16 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
 
 
 
-def preprocess_dataset_peft(dataset_name, model_path, max_length=512)->Dataset:
+def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_type='binary')->Dataset:
     """  
     处理整个数据集  [dataset必须同时包含train, test, validation(dev)] [针对PEFT任务]
                     # train and validation will be put to dataloader for training and evaluation
     Args:  
         dataset: 原始的训练集 (split = None)  
         dataset_name: 数据集名称，用于选择预处理函数
+        
+        seq_cls_type: str, default='binary' or 'multiple'
+            - 
     Returns:  
         
         preprocessed_dataset: 处理后的数据集，包含train, test, validation(dev) 3个部分 
@@ -1655,7 +1665,7 @@ def preprocess_dataset_peft(dataset_name, model_path, max_length=512)->Dataset:
     dataset_configs = wrapper.dataset_configs
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=22000)
     processed_dataset:DatasetDict = dataset.map(
-        function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length),
+        function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length, seq_cls_type=seq_cls_type),
         batched=True,
         batch_size=Config['batch_size'],
         num_proc=NUM_PROCESSES,
@@ -1686,38 +1696,6 @@ if __name__ == "__main__":
     # train_testvalid = dataset.train_test_split(test_size=0.2)  
     # train_dataset = train_testvalid['train']  
     # valid_dataset = train_testvalid['test']  
-    
-    
-    # print("=============================")
-    # dataset_path = Config["datasets"]["race"]
-    # ds=load_dataset_from_huggingface(dataset_path, "high")
-    
-    # print("ds['train'][0]  = \n", ds['train'][0])
-    # print("answer = ", ds["train"].features)
-    
-    # ds_builder = load_dataset_builder(dataset_path, "high")
-    
-    # print("====================")
-    # print(ds_builder.info.dataset_name) 
-    
-    
-    # print("====================") 
- 
-    # preprocess_race(ds)
-    # preprocess_pipeline_pt(ds)
-    
-    
-    # dataset_name = "multirc"
-    # train_data_path = Config['datasets']['multirc']['train']
-    # validation_data_path = Config['datasets']['multirc']['validation']
-    # ds = load_dataset_from_json(train_data_path=train_data_path, validation_data_path=validation_data_path, split="train")
-    
-    # print(ds[0])
-    # print("=====================================")
-    # print('len(ds[0]) = ',len(ds[0]))
-    
-    
-    # ds = choose_dataset("multirc")
     
     
     # mcqobj = McqDatasetWrapper()
