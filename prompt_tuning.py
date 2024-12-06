@@ -303,6 +303,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                 device=accelerator.device 
             ).expand(config.batch_size, -1) 
             
+            debug_cuda_sync("start model forward")
             outputs = model(**batch, position_ids=position_ids)
             criterion = nn.CrossEntropyLoss()
             

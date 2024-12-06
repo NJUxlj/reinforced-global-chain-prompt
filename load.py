@@ -256,7 +256,7 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
-    is_bert_like_model = model_config.model_type == "bert" or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    is_bert_like_model = model_config.model_type == "bert" # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
     if is_bert_like_model:
         results["token_type_ids"]=list()
