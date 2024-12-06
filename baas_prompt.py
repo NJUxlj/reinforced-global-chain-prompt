@@ -673,7 +673,8 @@ class BassPromptModel(torch.nn.Module):
             
         for name, param in self.named_parameters():  
             num_params = param.numel()  
-            if param.requires_grad and ("prompt_encoder" in name or 
+            if param.requires_grad and (
+                                        "prompt_encoder" in name or 
                                         "rollback_decoder" in name or 
                                         "classifier" in name or 
                                         "prefix_embeddings" in name or "suffix_embeddings" in name):  
