@@ -297,8 +297,13 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             
             # print("batch.keys = \n",batch.keys())
             # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
+            position_ids = torch.arange(  
+                0, config.max_seq_length,   
+                dtype=torch.long,   
+                device=accelerator.device 
+            ).expand(config.batch_size, -1) 
             
-            outputs = model(**batch)
+            outputs = model(**batch, position_ids=position_ids)
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
@@ -504,7 +509,6 @@ def evaluate_prompt_tuning(
     
     for batch in eval_dataloader:  
         with torch.no_grad():  
-
             outputs = model(**batch)
             preds = outputs.logits.argmax(dim=-1) 
             labels = batch['labels']
