@@ -40,7 +40,7 @@ from components import (
     BaasAttention
 )
 
-
+import time
 import sys  
 import os  
 # 添加项目根目录到 Python 路径  
@@ -151,6 +151,8 @@ class BaasPromptConfig:
     norm_type:float = 2.0   # # 2.0表示L2范数，1.0表示L1范数
     
     seed:int=42
+    
+    debug:bool=False
     
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
@@ -364,7 +366,7 @@ class BassPromptModel(torch.nn.Module):
             d_model=self.hidden_size,
             d_ff=d_ff,
             num_heads=8,
-            debug = self.debug,
+            debug = False,
             device = self.device
         ).to(self.device)
         
@@ -459,9 +461,33 @@ class BassPromptModel(torch.nn.Module):
         # 原始输入嵌入
         if self.debug:
             print(f"input_ids.shape = {input_ids.shape}")  # List[List[int]]
-        # input_ids = input_ids.squeeze(1) 
-        
-        
+            print(f"attention_mask.shape = {attention_mask.shape}")  # List[List[int]]
+            print(f"max position embedding: {self.config.max_seq_length}") 
+            
+        sequence_length = self.num_prefix_tokens + attention_mask.size(1) + self.num_suffix_tokens  
+        if sequence_length > self.config.max_seq_length:  
+            raise ValueError(  
+                f"Combined sequence length ({sequence_length}) exceeds model's maximum "  
+                f"position embeddings ({self.base_model.config.max_position_embeddings})\n"  
+                f"Components: prefix({self.num_prefix_tokens}) + "  
+                f"input({attention_mask.size(1)}) + "  
+                f"suffix({self.num_suffix_tokens})"  
+            )  
+        '''
+        RoBERTa 是支持直接使用 inputs_embeds 的，问题在于位置编码（position embeddings）。
+
+            看错误堆栈，问题出在 position_embeddings 这一层，这说明：
+
+            当使用 inputs_embeds 时，我们还需要正确处理 position_ids
+            默认的 position_ids 可能超出了范围限制
+        '''
+        if position_ids==None:
+            position_ids = torch.arange(  
+                0, sequence_length,   
+                dtype=torch.long,   
+                device=self.device  
+            ).expand(self.config.batch_size, -1)  # [batch_size, seq_length]  
+            
         # 确保不会重复计算或重用张量
         with torch.set_grad_enabled(True):
             inputs_embeds:torch.Tensor = self.embedding_layer(input_ids)  
@@ -480,6 +506,7 @@ class BassPromptModel(torch.nn.Module):
             
             
             batch_size = inputs_embeds.size(0)  
+            input_size = inputs_embeds.size(1)
             
             assert batch_size == self.config.batch_size, "input embedding's batch_size must be equal to config.batch_size"
             
@@ -515,14 +542,50 @@ class BassPromptModel(torch.nn.Module):
                 prefix_mask = torch.ones(batch_size, self.num_prefix_tokens, device=self.device)  
                 suffix_mask = torch.ones(batch_size, self.num_suffix_tokens, device=self.device)  
 
-                # print(f"attention_mask.shape = {attention_mask.shape}")
-                # print(f"prefix_mask.shape = {prefix_mask.shape}")
-                # print(f"suffix_mask.shape = {suffix_mask.shape}")
                 
-                attention_mask = attention_mask.squeeze(1)
-                attention_mask = torch.cat([prefix_mask, attention_mask, suffix_mask], dim=1)  # (4, 522)
+                prefix_mask = prefix_mask.to(self.device)  
+                attention_mask = attention_mask.to(self.device)  
+                suffix_mask = suffix_mask.to(self.device) 
+                 
+                if self.debug:  
+                    debug_cuda_sync("Attention Mask Device transfer in function `forward`")  
+
+                if self.debug:
+                    print("********************* attention_mask.shape ******************************")
+                    print(f"attention_mask.shape = {attention_mask.shape}")
+                    print(f"prefix_mask.shape = {prefix_mask.shape}")
+                    print(f"suffix_mask.shape = {suffix_mask.shape}")
+                    
+                # # 如果attention_mask是4D，保持原样  
+                # # 如果是2D或3D，扩展到4D  
+                # if attention_mask.dim() == 2:  
+                #     attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  
+                # elif attention_mask.dim() == 3:  
+                #     attention_mask = attention_mask.unsqueeze(1)  
+
+                # # 同样扩展prefix和suffix mask的维度  
+                # prefix_mask = prefix_mask.unsqueeze(1).unsqueeze(2)  
+                # suffix_mask = suffix_mask.unsqueeze(1).unsqueeze(2)  
                 
-                # print(f"attention_mask.shape after concat = {attention_mask.shape}") 
+                # attention_mask = attention_mask.squeeze(1)
+                attention_mask = torch.cat([prefix_mask, attention_mask, suffix_mask], dim=-1)  # (4, 522)
+                
+                if self.debug:  
+                    debug_cuda_sync("attention_mask Concatenation")  
+                
+                if self.debug:
+                    print("\n************* after unsqueeze, the attention mask shape become:***************")
+                    print(f"prefix_mask.shape after unsqueeze = {prefix_mask.shape}")
+                    print(f"suffix_mask.shape after unsqueeze = {suffix_mask.shape}")
+                    print(f"attention_mask.shape after concat = {attention_mask.shape}") 
+                    
+                expected_seq_length = self.num_prefix_tokens + input_size + self.num_suffix_tokens  
+                assert attention_mask.size(-1) == expected_seq_length, \
+                    f"Attention mask sequence length {attention_mask.size(-1)} " \
+                    f"doesn't match expected length {expected_seq_length}"  
+                    
+                if self.debug:
+                    debug_cuda_sync("Final validation for attention mask")  
             
             if token_type_ids is not None:  
                 prefix_type_ids = torch.zeros(batch_size, self.num_prefix_tokens, device=self.device)
@@ -534,7 +597,7 @@ class BassPromptModel(torch.nn.Module):
                     print(f"prefix_type_ids.shape = {prefix_type_ids.shape}")
                     print(f"suffix_type_ids.shape = {suffix_type_ids.shape}")
                 
-                token_type_ids = token_type_ids.squeeze(1)
+                # token_type_ids = token_type_ids.squeeze(1)
                 token_type_ids = torch.cat([prefix_type_ids, token_type_ids, suffix_type_ids], dim=1)
                 
                 token_type_ids = token_type_ids.long() # (4, 522)
@@ -543,14 +606,15 @@ class BassPromptModel(torch.nn.Module):
                     print(f"token_type_ids.shape after concat = {token_type_ids.shape}")
                     print("**************************************************************************\n")
 
+            # time.sleep(10000)
             
             # 调用原始模型的forward方法  
             outputs = self.base_model(  
                 # input_ids=input_ids,                 
                 inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
                 attention_mask=attention_mask,  
-                token_type_ids=token_type_ids if self.model_type == "bert" else None,  
-                position_ids=position_ids if self.model_type == "bert" else None,
+                token_type_ids=token_type_ids if self.model_type == "bert" or self.model_type == "roberta" else None,  
+                position_ids=position_ids if self.model_type == "bert" or self.model_type == "roberta" else None,
                 # labels=labels,
                 head_mask=head_mask,
                 output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
@@ -562,10 +626,10 @@ class BassPromptModel(torch.nn.Module):
             
             # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
             # cls_token = outputs.hidden_states[-1][:, 0, :] # shape = (batch_size, hidden_size)
-            cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
+            # cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
 
             
-            logits:torch.Tensor = self.classifier(cls_token) # shape = (batch_size, num_labels)
+            logits:torch.Tensor = self.classifier(outputs.last_hidden_state) # shape = (batch_size, num_labels)
             
             if self.debug:
                 print("************* BaasPromptModel 中的 base_model 输出：*************")
@@ -1281,47 +1345,47 @@ def get_classes_by_clustering(
                 raise RuntimeError("Sentence embedding's cache metadata mismatch, recomputing embeddings for clustering...") 
 
         except (json.JSONDecodeError, FileNotFoundError, RuntimeError) as e:
-            raise RuntimeError(f"Error, when loading cache: {e}. Recomputing embeddings...")
+            print(f"Error, when loading cache: {e}, meta data = {metadata}. Recomputing embeddings...")
 
 
         # embeddings = torch.load(cache_path)  
         
-    else:
-        train_ds, input_key = reformat_input(config, tokenizer, reformat_type = 'cluster')
-        train_ds: Dict[str,List[str]]
+    # else:
+    train_ds, input_key = reformat_input(config, tokenizer, reformat_type = 'cluster')
+    train_ds: Dict[str,List[str]]
+    
+    # 验证列名是否存在  
+    if input_key not in train_ds.column_names:  
+        available_columns = train_ds.column_names  
+        raise KeyError(  
+            f"Column '{input_key}' not found in dataset. "  
+            f"Available columns are: {available_columns}. "  
+            f"Please check your dataset structure or specify the correct input_key."  
+        )  
+    
+    sentences = train_ds[input_key]
+    
+    print(f"The training data is reformated to only one column {input_key}, now we get each example's embedding using the SentenceTransformer~~~")
+    
+    encoder = SentenceEncoder(
+        hidden_size=embedding_size
+    ).to(device)
+    
+    embeddings = encoder.encode(
+        sentences=sentences
+    ) # shape = (dataset_size, hidden_size)
+            
+    
+    print("all_embeddings.shape = ", embeddings.shape)
         
-        # 验证列名是否存在  
-        if input_key not in train_ds.column_names:  
-            available_columns = train_ds.column_names  
-            raise KeyError(  
-                f"Column '{input_key}' not found in dataset. "  
-                f"Available columns are: {available_columns}. "  
-                f"Please check your dataset structure or specify the correct input_key."  
-            )  
-        
-        sentences = train_ds[input_key]
-        
-        print(f"The training data is reformated to only one column {input_key}, now we get each example's embedding using the SentenceTransformer~~~")
-        
-        encoder = SentenceEncoder(
-            hidden_size=embedding_size
-        ).to(device)
-        
-        embeddings = encoder.encode(
-            sentences=sentences
-        ) # shape = (dataset_size, hidden_size)
-                
-        
-        print("all_embeddings.shape = ", embeddings.shape)
-         
-        
-        # 保存embeddings到缓存  
-        print(f"Saving new embeddings to {cache_path}")  
-        torch.save(embeddings, cache_path)  
-        
-        # 保存metadata  
-        with open(metadata_path, 'w') as f:  
-            json.dump(metadata, f) 
+    
+    # 保存embeddings到缓存  
+    print(f"Saving new embeddings to {cache_path}")  
+    torch.save(embeddings, cache_path)  
+    
+    # 保存metadata  
+    with open(metadata_path, 'w') as f:  
+        json.dump(metadata, f) 
     
     
     if embeddings ==None:
@@ -1593,7 +1657,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         config=config,
         chain_encode_args=chain_encode_args,
         device = accelerator.device,
-        debug=False
+        debug=config.debug
     )
     
     baas_model.to(accelerator.device)
@@ -1624,7 +1688,8 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader)
     
     if accelerator.is_main_process:
-        logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
+        logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
@@ -1915,6 +1980,7 @@ if __name__ == "__main__":
         prefix_length=prefix_length,
         suffix_length=suffix_length,
         batch_size=4,
+        debug=False,
         
     )
     
