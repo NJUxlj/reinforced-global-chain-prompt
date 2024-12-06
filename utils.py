@@ -55,6 +55,112 @@ def debug_cuda_sync(name="operation"):
     except RuntimeError as e:  
         print(f"CUDA error detected at {name}: {e}")  
         raise  
+    
+def create_position_ids_safe(attention_mask, model_max_length=512, padding_idx=1):  
+    """  
+    安全地创建position_ids，确保所有索引都在有效范围内  
+    
+    Args:  
+        attention_mask: [batch_size, seq_length]  
+        model_max_length: 模型支持的最大序列长度  
+        padding_idx: padding token的position id值  
+    """  
+    batch_size, seq_length = attention_mask.shape  
+    device = attention_mask.device  
+    
+    # 确保序列长度不超过模型最大长度  
+    effective_length = min(seq_length, model_max_length)  
+    
+    # 创建基础position_ids (从padding_idx + 1开始)  
+    position_ids = torch.arange(  
+        padding_idx + 1,  
+        padding_idx + 1 + effective_length,  
+        dtype=torch.long,  
+        device=device  
+    )  
+    
+    # 扩展到batch维度  
+    position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)  
+    
+    # 处理padding位置  
+    attention_mask_truncated = attention_mask[:, :effective_length] 
+    
+    # 根据 attention_mask_truncated 来处理 position_ids，
+    # 如果对应位置是 1（非 padding），则使用原来的 position_ids，如果是 0（padding），则使用 padding_idx。
+    position_ids = position_ids * attention_mask_truncated + padding_idx * (1 - attention_mask_truncated)  
+    
+    # 如果序列长度小于预期长度，进行padding 
+    # 如果原序列长度大于有效长度，需要补充padding 
+    if seq_length > effective_length:  
+        padding = torch.full(  
+            (batch_size, seq_length - effective_length),  
+            padding_idx,  
+            dtype=torch.long,  
+            device=device  
+        )  
+        position_ids = torch.cat([position_ids, padding], dim=1)  
+    
+    return position_ids  
+
+
+def forward_with_safe_position_ids(model, batch, debug=False):  
+    """  
+    使用安全的position_ids进行前向传播  
+    """  
+    try:  
+        # 获取模型的配置  
+        max_position_embeddings = get_max_length_from_model(model)
+        
+        # 确保所有输入在同一设备上  
+        device = next(model.parameters()).device  
+        batch = {k: v.to(device) for k, v in batch.items()}  
+        
+        # 获取attention_mask  
+        attention_mask = batch.get('attention_mask')  
+        if attention_mask is None:  
+            raise ValueError("Batch must contain attention_mask")  
+        
+        # 创建安全的position_ids  
+        position_ids = create_position_ids_safe(  
+            attention_mask,  
+            model_max_length=max_position_embeddings  
+        )  
+        
+        if debug:  
+            print("\n=== Debug Information ===")  
+            print(f"Attention mask shape: {attention_mask.shape}")  
+            print(f"Position IDs shape: {position_ids.shape}")  
+            print(f"Position IDs range: [{position_ids.min()}, {position_ids.max()}]")  
+            print(f"Max position embeddings: {max_position_embeddings}")  
+        
+        # 验证position_ids  
+        assert position_ids.max() < max_position_embeddings, \
+            f"Position IDs max value ({position_ids.max()}) exceeds model limit ({max_position_embeddings})"  
+        assert position_ids.min() >= 0, \
+            f"Position IDs contain negative values: {position_ids.min()}"  
+        
+        # 前向传播  
+        outputs = model(**batch, position_ids=position_ids)  
+        return outputs  
+        
+    except Exception as e:  
+        print("\n=== Error Information ===")  
+        print(f"Error type: {type(e).__name__}")  
+        print(f"Error message: {str(e)}")  
+        
+        if 'attention_mask' in locals():  
+            print(f"\nAttention mask info:")  
+            print(f"Shape: {attention_mask.shape}")  
+            print(f"Device: {attention_mask.device}")  
+            print(f"Values range: [{attention_mask.min()}, {attention_mask.max()}]")  
+        
+        if 'position_ids' in locals():  
+            print(f"\nPosition IDs info:")  
+            print(f"Shape: {position_ids.shape}")  
+            print(f"Device: {position_ids.device}")  
+            print(f"Values range: [{position_ids.min()}, {position_ids.max()}]")  
+        
+        raise  
 
 def get_dataset_path_by_name(dataset_name='race'):
     
