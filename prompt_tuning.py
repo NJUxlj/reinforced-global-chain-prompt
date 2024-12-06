@@ -297,11 +297,12 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             
             # print("batch.keys = \n",batch.keys())
             # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
+            bz, seq_length = batch["attention_mask"].shape
             position_ids = torch.arange(  
-                0, config.max_seq_length,   
+                2, seq_length+2,   
                 dtype=torch.long,   
                 device=accelerator.device 
-            ).expand(config.batch_size, -1) 
+            ).expand(bz, -1)   
             
             debug_cuda_sync("start model forward")
             outputs = model(**batch, position_ids=position_ids)
