@@ -628,8 +628,11 @@ class BassPromptModel(torch.nn.Module):
             # cls_token = outputs.hidden_states[-1][:, 0, :] # shape = (batch_size, hidden_size)
             # cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
 
-            
-            logits:torch.Tensor = self.classifier(outputs.last_hidden_state) # shape = (batch_size, num_labels)
+            if hasattr(self.classifier, 'dense') or hasattr(self.classifier, 'out_proj'):
+                # it means that the classifier is a RobertaClassificationHead
+                logits:torch.Tensor = self.classifier(outputs.last_hidden_state) # shape = (batch_size, num_labels)
+            else:
+                logits = self.classifier(outputs.last_hidden_state[:,0,:]) # shape = (batch_size, num_labels)
             
             if self.debug:
                 print("************* BaasPromptModel 中的 base_model 输出：*************")

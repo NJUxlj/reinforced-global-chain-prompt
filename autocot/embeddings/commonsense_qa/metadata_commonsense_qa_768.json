@@ -1,0 +1,13 @@
+{
+  "timestamp": "20241206_172608",
+  "model_name": "/root/model/all-MiniLM-L6-v2",
+  "hidden_size": 768,
+  "num_chains": 8,
+  "min_ra_len": 7,
+  "shape": [
+    8,
+    7,
+    768
+  ],
+  "metadata": {}
+}
