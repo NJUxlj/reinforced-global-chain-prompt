@@ -256,7 +256,9 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
-    if model_config.model_type == "bert":
+    is_bert_like_model = model_config.model_type == "bert" or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    
+    if is_bert_like_model:
         results["token_type_ids"]=list()
     else:
         pass
@@ -266,7 +268,7 @@ def preprocess_function_race(
     all_attention_masks = []  
     all_labels = []
     
-    if model_config.model_type == "bert":
+    if is_bert_like_model:
         all_token_type_ids = []
     else:
         pass
@@ -299,7 +301,7 @@ def preprocess_function_race(
         attention_mask_list = []
         label_list = []
         
-        if model_config.model_type == "bert":
+        if is_bert_like_model:
             token_type_ids_list = []  # if tokenizer.model_type == "bert" else None
         else:
             pass
@@ -322,7 +324,7 @@ def preprocess_function_race(
 
             input_ids_list.append(result["input_ids"].squeeze(0))  
             attention_mask_list.append(result["attention_mask"].squeeze(0))  
-            if model_config.model_type == "bert":
+            if is_bert_like_model:
                 token_type_ids_list.append(result["token_type_ids"].squeeze(0))
             # label_list.append(label)
             if seq_cls_type=='binary':
@@ -335,13 +337,13 @@ def preprocess_function_race(
         # 将所有选项的张量堆叠  
         input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
         attention_mask = torch.stack(attention_mask_list)  # shape: (num_choices, seq_len) 
-        if model_config.model_type == "bert":
+        if is_bert_like_model:
             token_type_ids = torch.stack(token_type_ids_list)
         # labels = torch.tensor(label_list, dtype=torch.long)  # shape: (num_choices,)
         
         all_input_ids.append(input_ids)  
         all_attention_masks.append(attention_mask)  
-        if model_config.model_type == "bert":
+        if is_bert_like_model:
             all_token_type_ids.append(token_type_ids)
         all_labels.extend(label_list)  # 使用extend而不是append  
         
@@ -349,7 +351,7 @@ def preprocess_function_race(
     batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
     batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
     batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
-    if model_config.model_type == "bert":
+    if is_bert_like_model:
         batched_token_type_ids = torch.stack(all_token_type_ids)
         
     # 重塑张量以适应PEFT的要求  
@@ -361,7 +363,7 @@ def preprocess_function_race(
         "labels": batched_labels  
     }  
     
-    if model_config.model_type == "bert":
+    if is_bert_like_model:
         results["token_type_ids"]=batched_token_type_ids.view(-1, seq_len)
 
             # # 之前的实现
