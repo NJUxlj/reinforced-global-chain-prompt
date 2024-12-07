@@ -90,8 +90,7 @@ def create_position_ids_safe(attention_mask, model_max_length=512, prefix_length
     batch_size, seq_length = attention_mask.shape  
     device = attention_mask.device  
     
-    # 确保序列长度不超过模型最大长度  
-    effective_length = max(seq_length, model_max_length)  # 414
+    effective_length = model_max_length  # 414
     
     # 创建基础position_ids (从padding_idx + 1开始)  
     position_ids = torch.arange(  
@@ -102,7 +101,7 @@ def create_position_ids_safe(attention_mask, model_max_length=512, prefix_length
     )  
     
     # 扩展到batch维度  
-    position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)  
+    position_ids = position_ids.unsqueeze(0).expand(1, -1)  
     
     # 处理padding位置  
     attention_mask_truncated = attention_mask[:, :effective_length] 
@@ -113,14 +112,14 @@ def create_position_ids_safe(attention_mask, model_max_length=512, prefix_length
     
     # 如果序列长度小于预期长度，进行padding 
     # 如果原序列长度大于有效长度，需要补充padding 
-    if seq_length > effective_length:  
-        padding = torch.full(  
-            (batch_size, seq_length - effective_length),  
-            padding_idx,  
-            dtype=torch.long,  
-            device=device  
-        )  
-        position_ids = torch.cat([position_ids, padding], dim=1)  
+    # if seq_length > effective_length:  
+    #     padding = torch.full(  
+    #         (batch_size, seq_length - effective_length),  
+    #         padding_idx,  
+    #         dtype=torch.long,  
+    #         device=device  
+    #     )  
+    #     position_ids = torch.cat([position_ids, padding], dim=1)  
     
     return position_ids  
 
@@ -183,6 +182,42 @@ def forward_with_safe_position_ids(model, batch, debug=False):
             print(f"Values range: [{position_ids.min()}, {position_ids.max()}]")  
         
         raise  
+def print_training_info(config):
+    print("\n\n****************** 打印训练信息 ********************************")
+    print("********************** ----------- ********************************")
+    print(f"PEFT tuning method: {config.peft_method}")
+    print(f"model_name: {config.model_name}")
+    print(f"dataset_name: {config.dataset_name}")
+    print(f"model's max sequence length = {config.max_seq_length}")
+    
+    if hasattr(config,'prefix_length'):
+        print(f"prefix_length: {config.prefix_length}")
+        
+        
+    print("***********************************************************\n\n")
+
+
+def check_model_config(model, config):  
+    """检查模型配置是否合理"""  
+    print("\n=== Model Configuration Check ===")  
+    print(f"Model type: {model.config.model_type}")  
+    print(f"Max position embeddings: {model.config.max_position_embeddings}")  
+    print(f"Hidden size: {model.config.hidden_size}")  
+    print(f"Vocab size: {model.config.vocab_size}")  
+    print(f"Prefix length: {config.prefix_length}")  
+    print(f"Max sequence length: {config.max_seq_length}")  
+    print(f"Batch size: {config.batch_size}")  
+    
+    # 检查关键参数  
+    assert config.prefix_length < model.config.max_position_embeddings, \
+        f"Prefix length ({config.prefix_length}) too large for model max position embeddings ({model.config.max_position_embeddings})"  
+    
+    assert config.max_seq_length <= model.config.max_position_embeddings, \
+        f"Max sequence length ({config.max_seq_length}) exceeds model max position embeddings ({model.config.max_position_embeddings})"  
+    
+    assert config.prefix_hidden_size == model.config.hidden_size, \
+        f"Prefix hidden size ({config.prefix_hidden_size}) must match model hidden size ({model.config.hidden_size})"  
+
 
 def get_dataset_path_by_name(dataset_name='race'):
     

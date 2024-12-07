@@ -107,6 +107,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     fix_seed(config.seed)
     setup_distributed()
     setup_cuda_debug_environment()
+    
+    print_training_info(config)
     # 初始化参数  
     model_name = config.model_name
     
@@ -125,6 +127,9 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     max_length = max_length - prefix_length
     print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
+    
+    if model.config.model_type=='roberta':
+        max_length-=3
     
     # 加载数据集
     dataset_name = config.dataset_name
@@ -301,13 +306,15 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             
             # print("batch.keys = \n",batch.keys())
             # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
+            print("max_sequence_length = ", config.max_seq_length)
+            print("model.config.max_position_embeddings = ", model.module.config.max_position_embeddings)
             print("batch[\"input_ids\"].shape = ",batch["input_ids"].shape)
             print("batch[\"attention_mask\"].shape = ",batch["attention_mask"].shape)
             # time.sleep(10000)
             
             
             
-            # bz, seq_length = batch["attention_mask"].shape
+            bz, seq_length = batch["attention_mask"].shape
             # position_ids = torch.arange(  
             #     2, seq_length+2,   
             #     dtype=torch.long,   
@@ -323,13 +330,12 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             # time.sleep(10000)
             
             
-            batch['position_ids'] = position_ids
+            # batch['position_ids'] = position_ids
             debug_cuda_sync("start model forward")
             model: RobertaForSequenceClassification
-            outputs = model.forward(
-                    **batch, 
-                    # position_ids=position_ids
-                )
+            
+            outputs = model.forward(**batch)
+
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
