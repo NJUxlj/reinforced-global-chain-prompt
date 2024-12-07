@@ -1988,7 +1988,7 @@ if __name__ == "__main__":
         suffix_length=suffix_length,
         batch_size=4,
         debug=False,
-        seq_cls_type="multiple"
+        seq_cls_type="binary"
         
     )
     
