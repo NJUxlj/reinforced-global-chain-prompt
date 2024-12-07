@@ -154,6 +154,8 @@ class BaasPromptConfig:
     
     debug:bool=False
     
+    seq_cls_type:str='binary'
+    
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
         self,   
@@ -1597,7 +1599,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     
     # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length = max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length = max_length, seq_cls_type=config.seq_cls_type)
     
     
     train_ds = processed_ds["train"]
@@ -1694,10 +1696,11 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     if accelerator.is_main_process:
         # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
         logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
+        logger_name = f"{model_name}_{config.peft_method}_{dataset_name}_{config.seq_cls_type}"
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
-        logger = get_logger(name=__name__, logging_dir=logging_dir, log_level="INFO")
+        logger = get_logger(name=logger_name, logging_dir=logging_dir, log_level="INFO")
 
     if accelerator.is_main_process:  
         accelerator.init_trackers("training") 
@@ -1840,7 +1843,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     print("model name = ", model_name)
 
     # 保存权重
-    save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
+    # save_path = Config[SAVE_DIR][model_name][config.peft_method][dataset_name]
     # torch.save(model.state_dict(), save_path) 
 
     # wait every GPU processes to reach here
@@ -1975,7 +1978,7 @@ if __name__ == "__main__":
         dataset_name=dataset_name,
         max_seq_length=max_seq_length,
         num_epochs=5,
-        num_labels=2,
+        num_labels=4,
         all_layers=False,
         is_prefix=False,
         prefix_projection=True,
@@ -1985,6 +1988,7 @@ if __name__ == "__main__":
         suffix_length=suffix_length,
         batch_size=4,
         debug=False,
+        seq_cls_type="multiple"
         
     )
     

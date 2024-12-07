@@ -98,6 +98,8 @@ class PromptTuningTrainerConfig:
     optimizer_class:type = Adam
     
     seed:int=42
+    
+    debug:bool=False
 
 
 
@@ -306,10 +308,11 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             
             # print("batch.keys = \n",batch.keys())
             # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
-            print("max_sequence_length = ", config.max_seq_length)
-            print("model.config.max_position_embeddings = ", model.module.config.max_position_embeddings)
-            print("batch[\"input_ids\"].shape = ",batch["input_ids"].shape)
-            print("batch[\"attention_mask\"].shape = ",batch["attention_mask"].shape)
+            if config.debug:
+                print("max_sequence_length = ", config.max_seq_length)
+                print("model.config.max_position_embeddings = ", model.module.config.max_position_embeddings)
+                print("batch[\"input_ids\"].shape = ",batch["input_ids"].shape)
+                print("batch[\"attention_mask\"].shape = ",batch["attention_mask"].shape)
             # time.sleep(10000)
             
             
@@ -321,17 +324,20 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             #     device=accelerator.device 
             # ).unsqueeze(0).expand(bz, -1)   
             
-            position_ids = create_position_ids_safe(batch.get("attention_mask"), config.max_seq_length, padding_idx=1)
-            print("position_ids.shape = ",position_ids.shape)
-            print("position_ids.value = \n", position_ids)
-            # 1. 检查position_ids的范围  
-            print("Position IDs max:", position_ids.max())  
-            print("Position IDs min:", position_ids.min())  
+            # position_ids = create_position_ids_safe(batch.get("attention_mask"), config.max_seq_length, padding_idx=1)
+            # print("position_ids.shape = ",position_ids.shape)
+            # print("position_ids.value = \n", position_ids)
+            # # 1. 检查position_ids的范围  
+            # print("Position IDs max:", position_ids.max())  
+            # print("Position IDs min:", position_ids.min())  
+            
             # time.sleep(10000)
             
             
             # batch['position_ids'] = position_ids
-            debug_cuda_sync("start model forward")
+            
+            if config.debug:
+                debug_cuda_sync("start model forward")
             model: RobertaForSequenceClassification
             
             outputs = model.forward(**batch)
@@ -726,7 +732,8 @@ if __name__ == '__main__':
         num_labels=2,
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,
-        batch_size=4
+        batch_size=4,
+        debug=False
     )
 
 
