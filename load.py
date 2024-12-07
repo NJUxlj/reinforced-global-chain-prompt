@@ -256,7 +256,7 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
-    is_bert_like_model = model_config.model_type == "bert" # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    is_bert_like_model = model_config.model_type == "bert" or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
     if is_bert_like_model:
         results["token_type_ids"]=list()
@@ -319,7 +319,8 @@ def preprocess_function_race(
                     max_length=max_length, 
                     truncation=True,
                     # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
-                    return_tensors="pt"
+                    return_tensors="pt",
+                    return_token_type_ids=is_bert_like_model, 
                 )
 
             input_ids_list.append(result["input_ids"].squeeze(0))  
@@ -351,6 +352,7 @@ def preprocess_function_race(
     batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
     batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
     batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
+    
     if is_bert_like_model:
         batched_token_type_ids = torch.stack(all_token_type_ids)
         

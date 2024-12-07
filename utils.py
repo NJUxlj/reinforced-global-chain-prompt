@@ -46,7 +46,29 @@ from sklearn.metrics import precision_recall_fscore_support
 
 import os  
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  
+os.environ['TORCH_USE_CUDA_DSA'] = '1' 
 
+
+def setup_cuda_debug_environment():  
+    """设置调试环境"""  
+    import torch  
+    
+    torch.backends.cuda.matmul.allow_tf32 = False  # 禁用TF32以获得更精确的错误信息  
+    torch.backends.cudnn.deterministic = True      # 使用确定性算法  
+    torch.backends.cudnn.benchmark = False         # 禁用基准测试优化  
+    
+    import os  
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  
+    os.environ['TORCH_USE_CUDA_DSA'] = '1' 
+    
+    print("=== Debug Environment Setup ===")  
+    print(f"CUDA available: {torch.cuda.is_available()}")  
+    print(f"CUDA version: {torch.version.cuda}")  
+    print(f"PyTorch version: {torch.__version__}")  
+    print(f"TORCH_USE_CUDA_DSA: {os.getenv('TORCH_USE_CUDA_DSA')}")  
+    print(f"Current device: {torch.cuda.current_device()}")  
+    print(f"Device name: {torch.cuda.get_device_name()}")  
+    print("===========================")  
 # 在关键操作点添加同步检查  
 def debug_cuda_sync(name="operation"):  
     try:  
@@ -56,7 +78,7 @@ def debug_cuda_sync(name="operation"):
         print(f"CUDA error detected at {name}: {e}")  
         raise  
     
-def create_position_ids_safe(attention_mask, model_max_length=512, padding_idx=1):  
+def create_position_ids_safe(attention_mask, model_max_length=512, prefix_length:int=0,padding_idx=1):  
     """  
     安全地创建position_ids，确保所有索引都在有效范围内  
     
@@ -69,12 +91,12 @@ def create_position_ids_safe(attention_mask, model_max_length=512, padding_idx=1
     device = attention_mask.device  
     
     # 确保序列长度不超过模型最大长度  
-    effective_length = min(seq_length, model_max_length)  
+    effective_length = max(seq_length, model_max_length)  # 414
     
     # 创建基础position_ids (从padding_idx + 1开始)  
     position_ids = torch.arange(  
-        padding_idx + 1,  
-        padding_idx + 1 + effective_length,  
+        prefix_length,  
+        effective_length+prefix_length,  
         dtype=torch.long,  
         device=device  
     )  
@@ -87,7 +109,7 @@ def create_position_ids_safe(attention_mask, model_max_length=512, padding_idx=1
     
     # 根据 attention_mask_truncated 来处理 position_ids，
     # 如果对应位置是 1（非 padding），则使用原来的 position_ids，如果是 0（padding），则使用 padding_idx。
-    position_ids = position_ids * attention_mask_truncated + padding_idx * (1 - attention_mask_truncated)  
+    # position_ids = position_ids * attention_mask_truncated + padding_idx * (1 - attention_mask_truncated)  
     
     # 如果序列长度小于预期长度，进行padding 
     # 如果原序列长度大于有效长度，需要补充padding 

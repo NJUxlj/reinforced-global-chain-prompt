@@ -7,6 +7,7 @@ import shutil
 from config import Config
 from dataclasses import dataclass
 from collections import Counter
+import time
 
 from load import *
 from utils import *
@@ -104,6 +105,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     fix_seed(config.seed)
     setup_distributed()
+    setup_cuda_debug_environment()
     # 初始化参数  
     model_name = config.model_name
     
@@ -295,8 +297,15 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             batch = {k: v.to(accelerator.device) for k, v in batch.items()}
             labels = batch["labels"]  
             
+            
             # print("batch.keys = \n",batch.keys())
             # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
+            print("batch[\"input_ids\"].shape = ",batch["input_ids"].shape)
+            print("batch[\"attention_mask\"].shape = ",batch["attention_mask"].shape)
+            # time.sleep(10000)
+            
+            
+            
             # bz, seq_length = batch["attention_mask"].shape
             # position_ids = torch.arange(  
             #     2, seq_length+2,   
@@ -304,10 +313,21 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             #     device=accelerator.device 
             # ).unsqueeze(0).expand(bz, -1)   
             
-            position_ids = create_position_ids_safe(batch.get("attention_mask"), config.max_seq_len,)
+            position_ids = create_position_ids_safe(batch.get("attention_mask"), config.max_seq_length, padding_idx=1)
+            print("position_ids.shape = ",position_ids.shape)
+            print("position_ids.value = \n", position_ids)
+            # 1. 检查position_ids的范围  
+            print("Position IDs max:", position_ids.max())  
+            print("Position IDs min:", position_ids.min())  
+            # time.sleep(10000)
             
+            
+            batch['position_ids'] = position_ids
             debug_cuda_sync("start model forward")
-            outputs = model(**batch, position_ids=position_ids)
+            outputs = model(
+                    **batch, 
+                    # position_ids=position_ids
+                )
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
