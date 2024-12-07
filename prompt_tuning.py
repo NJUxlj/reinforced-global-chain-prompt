@@ -28,6 +28,7 @@ from transformers import (
     AutoModelForCausalLM, 
     AutoTokenizer,
     AutoModelForSequenceClassification,
+    RobertaForSequenceClassification,
     AutoModelForMultipleChoice,
     get_linear_schedule_with_warmup
 )
@@ -324,7 +325,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             
             batch['position_ids'] = position_ids
             debug_cuda_sync("start model forward")
-            outputs = model(
+            model: RobertaForSequenceClassification
+            outputs = model.forward(
                     **batch, 
                     # position_ids=position_ids
                 )
