@@ -130,8 +130,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     max_length = max_length - prefix_length
     print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
     
-    if model.config.model_type=='roberta':
-        max_length-=3
+    # if model.config.model_type=='roberta':
+    #     max_length-=3
     
     # 加载数据集
     dataset_name = config.dataset_name

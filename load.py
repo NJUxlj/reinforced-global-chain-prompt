@@ -256,8 +256,18 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
-    is_bert_like_model = model_config.model_type == "bert" or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
+    is_roberta = model_config.model_type == "roberta"
+    
+    if is_roberta:
+        # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
+        effective_max_length = max_length - 3  
+        print(f"Original max_length: {max_length}")  
+        print(f"Effective max_length after reserving special tokens <s>, <\s>: {effective_max_length}")
+    else:
+        effective_max_length = max_length
+        
     if is_bert_like_model:
         results["token_type_ids"]=list()
     else:
@@ -306,22 +316,45 @@ def preprocess_function_race(
         else:
             pass
         
-        for i, option in enumerate(options):
-            # 拼接question和option
-            option_text = f"{question} {option.strip()}"
+        for j, option in enumerate(options):
             
-            # 将article, 拼接后的question 一起放入tokenizer转为input_ids
-             
-            result = tokenizer(
-                    article, 
-                    option_text, 
-                    padding="max_length", 
-                    max_length=max_length, 
-                    truncation=True,
-                    # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
-                    return_tensors="pt",
-                    return_token_type_ids=is_bert_like_model, 
-                )
+            if is_roberta:
+                # 拼接question和option
+                option_text = f"{question} {option.strip()}"
+                
+                # 将article, 拼接后的question 一起放入tokenizer转为input_ids
+                
+                result = tokenizer(
+                        article, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=effective_max_length, 
+                        truncation="longest_first",  # true
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",
+                        return_token_type_ids=False, 
+                    )
+                # 验证special tokens是否正确添加  
+                if i == 0 and j == 0:  # 只打印第一个样本的第一个选项  
+                    tokens = tokenizer.convert_ids_to_tokens(result['input_ids'][0])  
+                    print("\nFirst sample tokens:")  
+                    print(f"Start token: {tokens[0]}")  # 应该是<s>  
+                    print(f"First sep token position: {tokens.index('</s>')}")  
+                    print(f"Last token: {tokens[-1]}")  # 应该是</s>  
+                    print(f"Sequence length: {len(tokens)}")  
+                
+            else:
+                # BERT的处理保持不变  
+                option_text = f"{question} {option.strip()}"  
+                result = tokenizer(  
+                        article,  
+                        option_text,  
+                        padding="max_length",  
+                        max_length=max_length,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=True  
+                )  
 
             input_ids_list.append(result["input_ids"].squeeze(0))  
             attention_mask_list.append(result["attention_mask"].squeeze(0))  
@@ -329,7 +362,7 @@ def preprocess_function_race(
                 token_type_ids_list.append(result["token_type_ids"].squeeze(0))
             # label_list.append(label)
             if seq_cls_type=='binary':
-                label_list.append(1 if i == label else 0) 
+                label_list.append(1 if j == label else 0) 
             elif seq_cls_type=='multiple':
                 label_list.append(label)
             else:
@@ -429,8 +462,31 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
             # "token_type_ids": list() if model_config.model_type == "bert" else None, 
             "labels": list()    # List[int]
         }
-    if model_config.model_type == "bert":
+    is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    
+    is_roberta = model_config.model_type == "roberta"
+    
+    if is_roberta:
+        # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
+        effective_max_length = max_length - 3  
+        print(f"Original max_length: {max_length}")  
+        print(f"Effective max_length after reserving special tokens <s>, <\s>: {effective_max_length}")
+    else:
+        effective_max_length = max_length
+        
+    if is_bert_like_model:
         results["token_type_ids"]=list()
+    else:
+        pass
+    
+    
+    # 初始化结果列表  
+    all_input_ids = []  
+    all_attention_masks = []  
+    all_labels = []
+    
+    if is_bert_like_model:
+        all_token_type_ids = []
     else:
         pass
     
@@ -455,7 +511,7 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
         token_type_ids = []
         
         
-        for i, option in enumerate(options):
+        for j, option in enumerate(options):
             # 拼接question和option
             option_text = f"{question} {option.strip()}"
             
@@ -474,17 +530,10 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
             results["attention_mask"].append(result["attention_mask"])
             if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
             # 标签：正确选项为1，其他为0  
-            results['labels'].append(1 if i == label else 0) 
+            results['labels'].append(1 if j == label else 0) 
             # results['labels'].append(label) 
             
-    # 将结果转换为 PyTorch 张量并移动到 GPU  
-    # tensor_results = {  
-    #     key: torch.tensor(value, device=device) for key, value in results.items() if value  
-    # }  
-    
-    # if not result['token_type_ids']:
-    #     # 移除
-    #     results.pop('token_type_ids')
+
     return results
 
 def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
@@ -518,8 +567,31 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
         "labels": list()    # List[int]
     } 
     
-    if model_config.model_type == "bert":
+    is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    
+    is_roberta = model_config.model_type == "roberta"
+    
+    if is_roberta:
+        # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
+        effective_max_length = max_length - 3  
+        print(f"Original max_length: {max_length}")  
+        print(f"Effective max_length after reserving special tokens <s>, <\s>: {effective_max_length}")
+    else:
+        effective_max_length = max_length
+        
+    if is_bert_like_model:
         results["token_type_ids"]=list()
+    else:
+        pass
+    
+    
+    # 初始化结果列表  
+    all_input_ids = []  
+    all_attention_masks = []  
+    all_labels = []
+    
+    if is_bert_like_model:
+        all_token_type_ids = []
     else:
         pass
     
@@ -596,8 +668,31 @@ def preprocess_function_commonsense_qa(examples, first_four_columns = ["article"
         # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     }
-    if model_config.model_type == "bert":
+    is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
+    
+    is_roberta = model_config.model_type == "roberta"
+    
+    if is_roberta:
+        # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
+        effective_max_length = max_length - 3  
+        print(f"Original max_length: {max_length}")  
+        print(f"Effective max_length after reserving special tokens <s>, <\s>: {effective_max_length}")
+    else:
+        effective_max_length = max_length
+        
+    if is_bert_like_model:
         results["token_type_ids"]=list()
+    else:
+        pass
+    
+    
+    # 初始化结果列表  
+    all_input_ids = []  
+    all_attention_masks = []  
+    all_labels = []
+    
+    if is_bert_like_model:
+        all_token_type_ids = []
     else:
         pass
     
