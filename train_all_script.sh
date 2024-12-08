@@ -34,9 +34,9 @@
 
 
 
-accelerate launch --config_file default_config.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name race
+# accelerate launch --config_file default_config.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name race
 
-accelerate launch --config_file default_config.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name sciq
+# accelerate launch --config_file default_config.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name sciq
 
 accelerate launch --config_file default_config.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name dream
 
