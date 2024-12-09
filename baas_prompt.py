@@ -151,10 +151,9 @@ class BaasPromptConfig:
     norm_type:float = 2.0   # # 2.0表示L2范数，1.0表示L1范数
     
     seed:int=42
-    
     debug:bool=False
-    
     seq_cls_type:str='binary'
+    classes_initiate_method:str = 'cluster' # ['normal','lda','cluster']
     
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
@@ -360,6 +359,7 @@ class BassPromptModel(torch.nn.Module):
         self.is_prefix = config.is_prefix # 是前缀还是插入？
         self.num_layers = self.model_config.num_hidden_layers
         self.debug=debug
+        self.classes_initiate_method = config.classes_initiate_method
         
         
         d_ff = self.hidden_size*4
@@ -389,7 +389,7 @@ class BassPromptModel(torch.nn.Module):
             model=self.model,
             hidden_size = self.hidden_size,
             config = config,
-            classes_initiate_method = "cluster",
+            classes_initiate_method = self.classes_initiate_method,
             num_topics = self.num_prefix_tokens,
             max_length = config.max_seq_length
         )
@@ -803,17 +803,23 @@ class BassPromptModel(torch.nn.Module):
         """ 
         use the class labels to initialize the prefix tokens
         
+        classes_initiate_method:
+            "normal": use the tf-iqv-as to initialize the prefix tokens
+            "cluster": use the cluster method to initialize the prefix tokens
+            "lda": use the lda method to initialize the prefix tokens
+        
+        
         return tensor shape = (num_prefix_tokens, embedding_size)
         """
         # model = AutoModelForSequenceClassification.from_pretrained(BERT_PATH)
         
         class_embeddings = None
         if classes_initiate_method == "normal":
-            class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
+            class_embeddings = get_classes_for_dataset(dataset_path, model, tokenizer, config=config, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "cluster":
             class_embeddings:torch.Tensor = get_classes_by_clustering(dataset_path, model, tokenizer, config=config ,embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         elif classes_initiate_method == "lda":
-            class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
+            class_embeddings = get_classes_by_lda(dataset_path, model, tokenizer, config=config, embedding_size = hidden_size, num_topics=num_topics, max_length=max_length)
         else:
             raise ValueError("Invalid classes_initiate_method, Please choose from ['normal', 'cluster', 'lda']")
 
@@ -999,13 +1005,17 @@ def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal")
         
         
         if reformat_type == "normal": 
-            ds,_ = wrapper.load_mcq_dataset(config.dataset_name) 
-            # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
-            train_ds = ds["train"]
+            # ds,_ = wrapper.load_mcq_dataset(config.dataset_name, train_size=5000) 
+            # # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
+            # ds = ds["train"]
+            
+            ds = preprocess_dataset_peft(config.dataset_name,config.model_path,config.max_seq_length, seq_cls_type=config.seq_cls_type, train_size=500)
+
+            train_ds = ds['train']
             
         elif reformat_type == "lda":
-            ds,_ = wrapper.load_mcq_dataset(config.dataset_name)
-            
+            ds,_ = wrapper.load_mcq_dataset(config.dataset_name, train_size=5000)
+            ds = ds["train"]
             processed_ds = ds.map(
                 lambda examples: {
                     input_key: [f"{article_key}:{examples[article_key][index]}\n\n{question_key}:{examples[question_key][index]}\n\n \
@@ -1019,7 +1029,10 @@ def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal")
             )
             
             # transfer the dataset into List[str]
-            processed_ds = [text for text in processed_ds['train']['input']]  
+            processed_ds:List[str] = [text for text in processed_ds[input_key]]  
+            
+            print("processed_ds[:10] = \n", processed_ds[:10])
+            print("*******************************************")
             
             
             train_ds: List[List[str]] = []
@@ -1029,6 +1042,8 @@ def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal")
                 # remove stopwords and non-alphabetic characters
                 tokens = [token for token in tokens if token.isalpha() and token not in stop_words]
                 train_ds.append(tokens)
+                
+            print("train_ds[:10] = \n", train_ds[:10])
             
         elif reformat_type == "cluster":
             # processed_ds = preprocess_dataset_peft(dataset_name, max_length = max_length)
@@ -1069,7 +1084,7 @@ def reformat_input(config:BaasPromptConfig, tokenizer, reformat_type = "normal")
 
 
 
-def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
+def get_classes_for_dataset(dataset_path, model, tokenizer, config, embedding_size, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
     '''
     get the label collection of some specific dataset
         
@@ -1098,8 +1113,9 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
     print("get class labels by TF-IQF-AS (normal method) ~~~")
     
     classes = []
-    model = model.eval()
-    device = Config['device']
+    model:AutoModelForSequenceClassification = model.eval()
+    device = Config.device
+    
     model.to(device)
     
     vocab = tokenizer.get_vocab()
@@ -1112,12 +1128,19 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
     word_freq = {token_id:0 for token_id in range(vocab_size)}
     
     
-    train_ds = reformat_input(dataset_path, tokenizer, max_length=max_length)
+    train_ds,_ = reformat_input(config, tokenizer, reformat_type='normal')
+    print("len(train_ds) = ", len(train_ds))
+    print("vocab_size = ", vocab_size)
     
-    train_data_loader = DataLoader(train_ds, batch_size=1000, 
+    train_data_loader = DataLoader(
+                                   train_ds, 
+                                   batch_size=10, 
                                    collate_fn=default_data_collator, 
-                                   num_workers=0, # use as your need
-                                   shuffle=False)
+                                   num_workers=NUM_PROCESSES,
+                                   shuffle=False
+                                   )
+    
+    print("dataset {} loaded ~~".format(config.dataset_name))
     
     # record whether this token occurs in this example or not, 1 for yes, 0 for no
     word_occurence_per_example:Dict[int, Dict[int, int]] = {
@@ -1127,13 +1150,16 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
                                                                     } 
                                                                 for token_id in range(vocab_size)
                                                             }
-
+    print("calculate word frequency ~~~")
     
     with torch.no_grad():
         global_step = 0
         for index, batch in enumerate(tqdm(train_data_loader)):
             # get the average embedding of each batch
             batch = {k:v.to(device) for k, v in batch.items()}
+            
+            if index==0:
+                print("batch.keys() = ", batch.keys())
             
             input_ids = batch['input_ids']
             input_ids_np = input_ids.cpu().numpy()
@@ -1146,13 +1172,15 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
                 global_step += 1
             
             # outputs = model(**batch)
-            embeddings = model.embeddings(input_ids) # shape = (batch_size, seq_len, hidden_size)
+            # embeddings = model.embeddings(input_ids) # shape = (batch_size, seq_len, hidden_size)
+            embeddings= model.get_input_embeddings()(input_ids)
             # firstly, pooling on the seq_len dimension
             pooled_embedding = embeddings.mean(dim=1) # shape = (batch_size, hidden_size)
             # then, pooling on the batch_size dimension
             # all_pooled_embeddings.append(pooled_embedding.mean(dim=0).cpu()) # shape = (hidden_size)
             all_pooled_embeddings.append(pooled_embedding.mean(dim=0).unsqueeze(0)) # shape = (1, hidden_size)
             
+    print("all_pooled_embeddings loaded ~")
     
     # print("all_pooled_embeddings = ", all_pooled_embeddings)
     print("=================================")
@@ -1163,18 +1191,18 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
     
     print("all_pooled_embeddings.length = ", len(all_pooled_embeddings))
     print("len(train_data) = ", len(train_data_loader)) # 88
-    print("len(train_data)//1000 = ", len(train_data_loader)//1000) # 0
+    print("len(train_data)//1000 = ", len(train_data_loader)//10) # 0
     print("==================================")
     # vertically stack all the pooled embeddings into a matrix
     # "dim" points to the dimension of each pooled embedding
     pooled_embeddings_matrix = torch.cat(all_pooled_embeddings, dim=0) # shape = (len(train)//1000, hidden_size)
 
-    num_pooled = len(train_ds)//1000
+    num_pooled = len(train_ds)//10
     if num_pooled == 0:
         num_pooled = 1
         
     vocab_size =  tokenizer.vocab_size
-    token_embeddings = model.embeddings.word_embeddings.weight # [vocab_size, hidden_size]
+    token_embeddings = model.base_model.embeddings.word_embeddings.weight # [vocab_size, hidden_size]
     
     
     print("pooled embeddings matrix shape: ", pooled_embeddings_matrix.shape)
@@ -1183,14 +1211,14 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
     # 计算池化嵌入与词汇表中每个词嵌入的余弦相似度，并取平均值
     all_similarities_token_to_corpus = []
     for token_embedding in tqdm(token_embeddings):
-        pooled_embedding = pooled_embedding.squeeze(0) # shape = (hidden_size)
+        # pooled_embedding = pooled_embedding.squeeze(0) # shape = (hidden_size)
         cosine_similarities = F.cosine_similarity(
             x1=token_embedding,
             x2 =pooled_embeddings_matrix,
             dim=1 # 代表我们在行的维度上进行计算
         ) # shape = (num_pooled)
         
-        all_similarities_token_to_corpus.append(cosine_similarities.mean(dim=0).item())
+        all_similarities_token_to_corpus.append(cosine_similarities.mean(dim=0).item()) # shape = 
 
     all_similarities_token_to_corpus = torch.tensor(all_similarities_token_to_corpus)
     print("all_similarities_token_to_corpus.shape = ", all_similarities_token_to_corpus.shape)
@@ -1205,27 +1233,51 @@ def get_classes_for_dataset(dataset_path, model, tokenizer, embedding_size, num_
             freq_tensor[token_id] = freq  
     
     # store the total occurence number of each token on all examples
-    word_occurence_total = [0]*len(train_ds)
+    word_occurence_total = [0]*vocab_size
     
     # calculate the total occurence in all examples of each token
     for token_id in range(vocab_size):
         for example_id in range(len(train_ds)):
-            word_occurence_total[token_id] += word_occurence_per_example[token_id][example_id]
-    
+            tmp = word_occurence_per_example[token_id][example_id]
+            word_occurence_total[token_id] += tmp
+            
+    word_occurence_total_tensor = torch.tensor(word_occurence_total, dtype=torch.float)  
+    normalized_occurence = word_occurence_total_tensor / len(train_ds)  
     # calculate TF-IQF-VS score
-    tf_iqf_vs_scores:torch.Tensor = all_similarities_token_to_corpus * freq_tensor * torch.tensor(word_occurence_total/len(train_ds))
+    tf_iqf_vs_scores:torch.Tensor = all_similarities_token_to_corpus * freq_tensor * normalized_occurence # torch.tensor(word_occurence_total/len(train_ds))
     
     # filter special tokens
     filtered_scores = []
     for token_id, score in enumerate(tf_iqf_vs_scores):
         token = inverse_vocab[token_id]
         if token.strip() and not token.startswith("[") and token.isalpha() and token not in stop_words:
-            filtered_scores.append([token_id, score])
-    filtered_scores = torch.tensor(filtered_scores)
+            filtered_scores.append((token_id, score))
+    # filtered_scores = torch.tensor(filtered_scores) # shape = (num_tokens, 2)
+    
+    print("len(filtered_scores) = ", len(filtered_scores))
+    print("filtered_scores[:5] = ", filtered_scores[:5])
+    print("num_topics = ",num_topics)
     
     # choose Top-K as class labels
-    topk_scores, topk_indices = filtered_scores.topk(num_topics, dim=1)
+    # topk_scores, topk_indices = filtered_scores.topk(num_topics, dim=1)
+    # print("Top-k scores:", topk_scores)
+    # print("Top-k indices:", topk_indices)
+    filtered_scores.sort(key=lambda x: x[1], reverse=True)  
+    
+    
+    sorted_indices = []
+    sorted_scores = []
+    for idx, pair in enumerate(filtered_scores):
+        sorted_indices.append(pair[0])
+        sorted_scores.append(pair[1])
+    
+    print("sorted_indices = ",sorted_indices)
+    print("sorted_scores = ",sorted_scores)
+    
+    topk_indices = sorted_indices[:num_topics]  
+    
     for idx in topk_indices:    
+        idx = int(idx)
         classes.append((idx, inverse_vocab[idx]))  
     
     print("class labels are: ")
@@ -1481,7 +1533,7 @@ def get_classes_by_clustering(
         
     return cluster_label_embeddings
         
-def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topics = 5, K=5, max_length=512)->List[torch.Tensor]:
+def get_classes_by_lda(dataset_path, model, tokenizer, config, embedding_size, num_topics = 5, K=1, max_length=512)->torch.Tensor:
     '''
     use the LDA model to extract the class labels
     
@@ -1502,15 +1554,17 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
     word_freq = {token_id:0 for token_id in range(vocab_size)}
     
     
-    train_ds = reformat_input(dataset_path, tokenizer, max_length=max_length)
+    # train_ds = reformat_input(config, tokenizer, reformat_type="lda")
     
-    train_data_loader = DataLoader(train_ds, batch_size=1000, 
-                                   collate_fn=default_data_collator, 
-                                   num_workers=NUM_CPU_PROCESSES, # use as your need
-                                   shuffle=False)
+    # train_data_loader = DataLoader(train_ds, batch_size=1000, 
+    #                                collate_fn=default_data_collator, 
+    #                                num_workers=NUM_CPU_PROCESSES, # use as your need
+    #                                shuffle=False)
     
     
-    processed_questions: List[List[str]] = reformat_input(dataset_path, tokenizer, max_length=max_length, reformat_type = 'lda')
+    processed_questions,_ = reformat_input(config, tokenizer, reformat_type = 'lda')
+    processed_questions:List[List[str]]
+    print(f"processed question type = ", type(processed_questions))
 
     print("create dictionary and corpus...")  
     # 创建词典：词语到id的映射  
@@ -1523,7 +1577,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
     
     # train LDA model  
     print(f"Training LDA model, class label number = {K}...")  
-    lda_model = models.ldamodel.LdaModel(  
+    lda_model = gensim.models.LdaModel( 
         corpus=corpus,  
         id2word=dictionary,  
         num_topics=num_topics,  
@@ -1543,22 +1597,37 @@ def get_classes_by_lda(dataset_path, model, tokenizer, embedding_size, num_topic
     
     print("transfer class labels to label embeddings...")  
     topic_word_embeddings = []
+    
+    encoder = SentenceEncoder(
+        hidden_size=embedding_size
+    ).to(device)
+    
+    for id, word in enumerate(classes): 
+        encoded_topic = encoder.encode(
+            sentences=word,
+        )
+        topic_word_embeddings.append(encoded_topic)
+    
+    # 转为二维张量
+    topic_word_embeddings = torch.stack(topic_word_embeddings, dim=0)
 
-    with torch.no_grad():  
-        for id, word in enumerate(classes):  
+    
+
+    # with torch.no_grad():  
+    #     for id, word in enumerate(classes):  
         
-            encoded_input = tokenizer(
-                word, 
-                padding = "max_length",
-                truncation=True,  
-                max_length=5,  # we set that each label can be divided into 5 tokens
-                add_special_tokens=True,
-                return_tensors='pt').to(device)  
+    #         encoded_input = tokenizer(
+    #             word, 
+    #             padding = "max_length",
+    #             truncation=True,  
+    #             max_length=5,  # we set that each label can be divided into 5 tokens
+    #             add_special_tokens=True,
+    #             return_tensors='pt').to(device)  
             
-            model_output = model(**encoded_input)  
-            # 使用 [CLS] 标记的向量作为词嵌入  
-            word_embedding = model_output.last_hidden_state[:, 0, :].squeeze(0)  # [hidden_size]  
-            topic_word_embeddings.append(word_embedding)  
+    #         model_output = model(**encoded_input)  
+    #         # 使用 [CLS] 标记的向量作为词嵌入  
+    #         word_embedding = model_output.last_hidden_state[:, 0, :].squeeze(0)  # [hidden_size]  
+    #         topic_word_embeddings.append(word_embedding)  
 
 
         
@@ -1696,7 +1765,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     if accelerator.is_main_process:
         # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
         logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
-        logger_name = f"{model_name}_{config.peft_method}_{dataset_name}_{config.seq_cls_type}"
+        logger_name = f"{model_name}_{config.peft_method}_{dataset_name}_{config.seq_cls_type}_{config.classes_initiate_method}"
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
@@ -1709,7 +1778,8 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     optimizer.zero_grad()
     
     print("\n\n**************************************************************************************")
-    print(f"************* Start training model {model_name} on {dataset_name} using {config.peft_method} ... ************\n\n")
+    print(f"************* Start training model {model_name} on {dataset_name} using {config.peft_method} ... ************")
+    print(f"****************** Prefix topic labels retrived by {config.classes_initiate_method} ************\n\n")
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
@@ -1960,6 +2030,7 @@ if __name__ == "__main__":
     args = parse_training_arguments()
     dataset_name =args.dataset_name
     model_name = args.model_name
+    classes_initiate_method = args.classes_initiate_method
     model_path = get_model_path_by_model_name(model_name)
 
     dataset_path = Config["datasets"][dataset_name]
@@ -1988,7 +2059,8 @@ if __name__ == "__main__":
         suffix_length=suffix_length,
         batch_size=4,
         debug=False,
-        seq_cls_type="binary"
+        seq_cls_type="binary",
+        classes_initiate_method = classes_initiate_method
         
     )
     

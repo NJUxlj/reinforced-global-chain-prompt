@@ -1746,7 +1746,7 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
 
 
 
-def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_type='binary')->Dataset:
+def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_type='binary', train_size=22000)->Dataset:
     """  
     处理整个数据集  [dataset必须同时包含train, test, validation(dev)] [针对PEFT任务]
                     # train and validation will be put to dataloader for training and evaluation
@@ -1762,7 +1762,7 @@ def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_ty
     """ 
     wrapper = McqDatasetWrapper(model_name_or_path=model_path, max_seq_length=max_length)
     dataset_configs = wrapper.dataset_configs
-    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=22000)
+    dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=train_size)
     processed_dataset:DatasetDict = dataset.map(
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length, seq_cls_type=seq_cls_type),
         batched=True,

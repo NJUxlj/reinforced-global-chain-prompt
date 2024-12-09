@@ -967,6 +967,10 @@ def parse_training_arguments(config=None):
         "--dataset_name", type=str, default="race", help="select a dataset from ['race','sciq','dream','commonsense_qa']"
     )
     
+    parser.add_argument(
+        "--classes_initiate_method", type=str, default="cluster", help="select from ['normal','lda','cluster']"
+    )
+    
     
     args = parser.parse_args()
 

@@ -66,3 +66,9 @@ accelerate launch --config_file default_config.yaml prefix_tuning.py --model_nam
 accelerate launch --config_file default_config.yaml prefix_tuning.py --model_name roberta-large --dataset_name dream
 
 accelerate launch --config_file default_config.yaml prefix_tuning.py --model_name roberta-large --dataset_name commonsense_qa
+
+
+
+
+
+accelerate launch --config_file default_config.yaml baas_prompt.py --model_name roberta-large --dataset_name race --classes_initiate_method lda
