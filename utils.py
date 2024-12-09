@@ -971,6 +971,10 @@ def parse_training_arguments(config=None):
         "--classes_initiate_method", type=str, default="cluster", help="select from ['normal','lda','cluster']"
     )
     
+    parser.add_argument(
+        "--train_size", type=int, default=22000, help="size of the training set"
+    )
+    
     
     args = parser.parse_args()
 

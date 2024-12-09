@@ -98,8 +98,8 @@ class PromptTuningTrainerConfig:
     optimizer_class:type = Adam
     
     seed:int=42
-    
     debug:bool=False
+    train_size:int=22000
 
 
 
@@ -155,7 +155,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, config.model_path, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, config.model_path, max_length=max_length, train_size=config.train_size)
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
@@ -717,6 +717,7 @@ if __name__ == '__main__':
     dataset_name =args.dataset_name
     model_name = args.model_name
     model_path = get_model_path_by_model_name(model_name)
+    train_size = args.train_size
     
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
 
@@ -732,8 +733,9 @@ if __name__ == '__main__':
         num_labels=2,
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,
-        batch_size=4,
-        debug=False
+        batch_size=1,
+        debug=False,
+        train_size=train_size
     )
 
 

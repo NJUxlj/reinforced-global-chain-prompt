@@ -72,3 +72,8 @@ accelerate launch --config_file default_config.yaml prefix_tuning.py --model_nam
 
 
 accelerate launch --config_file default_config.yaml baas_prompt.py --model_name roberta-large --dataset_name race --classes_initiate_method lda
+
+
+
+
+accelerate launch --config_file default_config.yaml prompt_tuning.py --model_name Qwen2.5-1.5B --dataset_name race --train_size 5000

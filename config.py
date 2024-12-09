@@ -266,7 +266,7 @@ Config = {
     "num_layers": 4,
     "dropout": 0.5,
     "learning_rate": 1e-3,
-    "batch_size": 16,
+    "batch_size": 4,
     "num_epochs": 2,
     "num_workers": 4,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -645,7 +645,7 @@ Config = {
                 "num_labels": 4,
                 "hidden_dim": 1536,
                 "model_type": "qwen2",
-                "model_path": "models/qwen_model.pth"
+                "model_path": f"{MODEL_BASE_PATH}Qwen2.5-1.5B"
             },
             "Qwen2.5-3B":{
                 "model_name": "Qwen2.5-3B",

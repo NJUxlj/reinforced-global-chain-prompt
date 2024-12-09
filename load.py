@@ -260,6 +260,8 @@ def preprocess_function_race(
     
     is_roberta = model_config.model_type == "roberta"
     
+    is_qwen2 = model_config.model_type == "qwen2"
+    
     if is_roberta:
         # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
         effective_max_length = max_length - 3  
@@ -343,7 +345,7 @@ def preprocess_function_race(
                     print(f"Last token: {tokens[-1]}")  # 应该是</s>  
                     print(f"Sequence length: {len(tokens)}")  
                 
-            else:
+            elif is_bert_like_model:
                 # BERT的处理保持不变  
                 option_text = f"{question} {option.strip()}"  
                 result = tokenizer(  
@@ -355,6 +357,16 @@ def preprocess_function_race(
                         return_tensors="pt",  
                         return_token_type_ids=True  
                 )  
+            elif is_qwen2:
+                template = f"{article} {question} {option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length",  
+                        max_length=max_length,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
+                )
 
             input_ids_list.append(result["input_ids"].squeeze(0))  
             attention_mask_list.append(result["attention_mask"].squeeze(0))  
