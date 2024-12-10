@@ -78,3 +78,6 @@ accelerate launch --config_file default_config.yaml baas_prompt.py --model_name 
 
 
 accelerate launch --config_file default_config.yaml prompt_tuning.py --model_name Qwen2.5-1.5B --dataset_name race --train_size 5000
+
+
+accelerate launch --config_file three_gpu.yaml prompt_tuning.py --model_name Qwen2.5-1.5B --dataset_name race --train_size 5000 --batch_size 4

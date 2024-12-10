@@ -369,6 +369,11 @@ def preprocess_function_race(
                         return_token_type_ids=True  
                 )  
             elif is_qwen2:
+                # 如果tokenizer没有pad_token，设置为eos_token  
+                # if tokenizer.pad_token is None:  
+                #     tokenizer.pad_token = tokenizer.eos_token  
+                #     tokenizer.pad_token_id = tokenizer.eos_token_id  
+                    
                 template = f"{article} {question} {option.strip()}"  
                 result = tokenizer(  
                         template,  

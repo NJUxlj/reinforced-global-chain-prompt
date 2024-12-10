@@ -541,7 +541,10 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     '''
     config = AutoConfig.from_pretrained(model_path, output_hidden_states=True, num_labels=num_labels)
     
-    model = auto_model_class.from_pretrained(model_path, config=config)
+    model = auto_model_class.from_pretrained(
+        model_path, 
+        config=config,
+        )
     
     model_type = model.config.model_type
     
@@ -564,7 +567,7 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     #     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast = True)
         
     print(f"Model's current num_labels: {model.config.num_labels}") 
-     
+    
     model_config = model.config
     model_name_or_path = model_config.name_or_path
     print("model_name_or_path = ", model_name_or_path)
@@ -577,6 +580,11 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     print("padding_side = ", padding_side)
 
     tokenizer = tokenizer_class.from_pretrained(model_path, padding_side=padding_side)    # , use_fast=True)
+    if tokenizer.pad_token is None:  
+        tokenizer.pad_token = tokenizer.eos_token  
+        tokenizer.pad_token_id = tokenizer.eos_token_id  
+    
+    model.config.pad_token_id = tokenizer.pad_token_id  
     
     return model, tokenizer
 
@@ -974,6 +982,15 @@ def parse_training_arguments(config=None):
     parser.add_argument(
         "--train_size", type=int, default=22000, help="size of the training set"
     )
+    
+    parser.add_argument(
+        "--mixed_precision", type=bool, default=False, help="whether to use mixed precision training"
+    )
+    
+    parser.add_argument(
+        "--batch_size", type=int, default=4, help="batch size for training"
+    )
+    
     
     
     args = parser.parse_args()

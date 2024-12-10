@@ -100,6 +100,7 @@ class PromptTuningTrainerConfig:
     seed:int=42
     debug:bool=False
     train_size:int=22000
+    mixed_precision:bool = False
 
 
 
@@ -718,6 +719,8 @@ if __name__ == '__main__':
     model_name = args.model_name
     model_path = get_model_path_by_model_name(model_name)
     train_size = args.train_size
+    batch_size = args.batch_size
+    mixed_precision = args.mixed_precision
     
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path, num_labels=2)
 
@@ -733,7 +736,7 @@ if __name__ == '__main__':
         num_labels=2,
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,
-        batch_size=1,
+        batch_size=batch_size,
         debug=False,
         train_size=train_size
     )
