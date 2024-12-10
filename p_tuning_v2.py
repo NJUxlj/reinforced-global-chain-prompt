@@ -106,6 +106,8 @@ class PtuningV2Config:
     optimizer_class:type = Adam
     
     seed:int=42
+    train_size:int=22000
+    mixed_precision:bool=False
 
 class PrefixEncoder(nn.Module):  
     """前缀编码器"""  
@@ -443,6 +445,7 @@ class Racedataset(Dataset):
 def train_p_tuning_v2(config: PtuningV2Config=None):
     fix_seed(config.seed)
     setup_distributed()
+    print("\n\n",config,"\n\n")
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
     # 初始化参数  

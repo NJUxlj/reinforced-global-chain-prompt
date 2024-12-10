@@ -110,7 +110,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     fix_seed(config.seed)
     setup_distributed()
     setup_cuda_debug_environment()
-    
+    print("\n\n",config,"\n\n")
     print_training_info(config)
     # 初始化参数  
     model_name = config.model_name

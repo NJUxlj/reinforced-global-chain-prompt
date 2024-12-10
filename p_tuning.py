@@ -98,11 +98,13 @@ class PtuningConfig:
     
     seed:int=42
     train_size:int=22000
+    mixed_precision:bool=False
 
 
 def train_p_tuning(config:PtuningConfig):
     fix_seed(config.seed)
     setup_distributed()
+    print("\n\n",config,"\n\n")
     model_name = config.model_name
     model, tokenizer = prepare_model_tokenizer(config.model_path, AutoModelForSequenceClassification, config.model_path )
     # 初始化参数  
@@ -457,6 +459,7 @@ if __name__ == '__main__':
     dataset_name =args.dataset_name
     model_name = args.model_name
     train_size = args.train_size
+    batch_size = args.batch_size
     model_path = get_model_path_by_model_name(model_name)
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path)
@@ -475,7 +478,8 @@ if __name__ == '__main__':
         encoder_hidden_size=hidden_size,
         prefix_length=100,
         train_size = train_size,
-        batch_size=2,
+        batch_size=args.batch_size,
+        mixed_precision=args.mixed_precision,
         
     )
     

@@ -155,6 +155,8 @@ class BaasPromptConfig:
     debug:bool=False
     seq_cls_type:str='binary'
     classes_initiate_method:str = 'cluster' # ['normal','lda','cluster']
+    train_size:int = 22000
+    mixed_precision:bool=False
     
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
@@ -1641,7 +1643,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     setup_distributed()
     
     fix_seed(config.seed)
-    
+    print("\n\n",config,"\n\n")
     model_name = config.model_name
     dataset_name = config.dataset_name
     model_path = config.model_path
@@ -2067,10 +2069,13 @@ if __name__ == "__main__":
         encoder_hidden_size=hidden_size,
         prefix_length=prefix_length,
         suffix_length=suffix_length,
-        batch_size=4,
+        batch_size=args.batch_size,
         debug=False,
         seq_cls_type="binary",
-        classes_initiate_method = classes_initiate_method
+        classes_initiate_method = args.classes_initiate_method,
+        train_size = args.train_size,
+        mixed_precision=args.mixed_precision
+        
         
     )
     
