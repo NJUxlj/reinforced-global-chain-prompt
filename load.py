@@ -313,8 +313,8 @@ def preprocess_function_race(
         
         label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
         
-        balanced_options = [(j, opt) for j, opt in enumerate(options)]
-        balanced_options += (len(options)-2)*[(label, options[label])]
+        # balanced_options = [(j, opt) for j, opt in enumerate(options)]
+        # balanced_options += (len(options)-2)*[(label, options[label])]
         
         # 确保标签符合n_classes，不超范围  
         assert (0 <= label < 4), "There are labels out of range [0, 3]." 
@@ -332,7 +332,7 @@ def preprocess_function_race(
         else:
             pass
         
-        for j, option in balanced_options:
+        for j, option in enumerate(options):
             
             if is_roberta:
                 # 拼接question和option
