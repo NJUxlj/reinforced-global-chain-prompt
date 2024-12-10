@@ -249,6 +249,15 @@ def preprocess_function_race(
     
     batch_size = len(examples[first_four_columns[0]])
     
+    label_map = {  
+            0: "A",  
+            1: "B",
+            2: "C",
+            3: "D",
+            4: "E",    
+        }  
+    rev_label_map = {v: k for k, v in label_map.items()}  
+    
     results = {
         "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
@@ -256,6 +265,7 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
+    is_t5 = model_config.model_type == "t5"
     
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
@@ -368,6 +378,34 @@ def preprocess_function_race(
                         return_tensors="pt",  
                         return_token_type_ids=False  
                 )
+            
+            elif is_t5:
+                # 构建输入文本  
+                template = f"Determine whether an option is correct for the question: {article} {question} {option.strip()}"  
+                
+                # 构建标签文本  
+                # label = label_map[label]
+                
+                # 对输入文本进行编码  
+                result = tokenizer(  
+                    template,  
+                    max_length=512,  
+                    padding="max_length",  
+                    truncation=True,  
+                    return_tensors="pt"  
+                )  
+                
+                # 对标签进行编码  
+                with tokenizer.as_target_tokenizer():  
+                    encoded_label = tokenizer(  
+                        answer,  
+                        max_length=8,  
+                        padding="max_length",  
+                        truncation=True,  
+                        return_tensors="pt"  
+                    )  
+                
+                result["encoded_label"] = encoded_label["input_ids"]  
 
             input_ids_list.append(result["input_ids"].squeeze(0))  
             attention_mask_list.append(result["attention_mask"].squeeze(0))  
