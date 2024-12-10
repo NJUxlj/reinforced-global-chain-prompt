@@ -276,8 +276,8 @@ def preprocess_function_race(
     if is_roberta:
         # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
         effective_max_length = max_length - 3  
-        print(f"Original max_length: {max_length}")  
-        print(f"Effective max_length after reserving special tokens <s>, <\s>: {effective_max_length}")
+        # print(f"Original max_length: {max_length}")  
+        # print(f"Effective max_length after reserving special tokens <s>, <\s>: {effective_max_length}")
     else:
         effective_max_length = max_length
         
@@ -336,12 +336,13 @@ def preprocess_function_race(
             
             if is_roberta:
                 # 拼接question和option
-                option_text = f"{question} {option.strip()}"
+                article_text = f"{article} {question}"
+                option_text = f"{option.strip()}"
                 
                 # 将article, 拼接后的question 一起放入tokenizer转为input_ids
                 
                 result = tokenizer(
-                        article, 
+                        article_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=effective_max_length, 
@@ -351,19 +352,22 @@ def preprocess_function_race(
                         return_token_type_ids=False, 
                     )
                 # 验证special tokens是否正确添加  
-                if i == 0 and j == 0:  # 只打印第一个样本的第一个选项  
-                    tokens = tokenizer.convert_ids_to_tokens(result['input_ids'][0])  
-                    print("\nFirst sample tokens:")  
-                    print(f"Start token: {tokens[0]}")  # 应该是<s>  
-                    print(f"First sep token position: {tokens.index('</s>')}")  
-                    print(f"Last token: {tokens[-1]}")  # 应该是</s>  
-                    print(f"Sequence length: {len(tokens)}")  
+                # if i == 0 and j == 0:  # 只打印第一个样本的第一个选项  
+                #     tokens = tokenizer.convert_ids_to_tokens(result['input_ids'][0])  
+                #     print("\nFirst sample tokens:")  
+                #     print(f"Start token: {tokens[0]}")  # 应该是<s>  
+                #     print(f"First sep token position: {tokens.index('</s>')}")  
+                #     print(f"Last token: {tokens[-1]}")  # 应该是</s>  
+                #     print(f"Sequence length: {len(tokens)}")  
                 
             elif is_bert_like_model:
                 # BERT的处理保持不变  
-                option_text = f"{question} {option.strip()}"  
+                # option_text = f"{question} {option.strip()}"  
+                article_text = f"{article} {question}"
+                option_text = f"{option.strip()}"
+                
                 result = tokenizer(  
-                        article,  
+                        article_text,  
                         option_text,  
                         padding="max_length",  
                         max_length=max_length,  
