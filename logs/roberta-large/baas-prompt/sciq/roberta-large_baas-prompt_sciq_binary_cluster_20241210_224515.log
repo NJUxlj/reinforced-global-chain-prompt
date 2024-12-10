@@ -1,1 +1,3 @@
 2024-12-10 23:06:20,454 - roberta-large_baas-prompt_sciq_binary_cluster - INFO - {'epoch': 0, 'avg_loss': 1.7669397903727992, 'accuracy': 0.668, 'precision': 0.6162961623210054, 'recall': 0.668, 'f1': 0.6360377059836888}
+2024-12-10 23:27:17,885 - roberta-large_baas-prompt_sciq_binary_cluster - INFO - {'epoch': 1, 'avg_loss': 2.499547507918389, 'accuracy': 0.7425, 'precision': 0.5513062500000001, 'recall': 0.7425, 'f1': 0.6327761836441893}
+2024-12-10 23:48:19,393 - roberta-large_baas-prompt_sciq_binary_cluster - INFO - {'epoch': 2, 'avg_loss': 6.358869464027092, 'accuracy': 0.7425, 'precision': 0.5513062500000001, 'recall': 0.7425, 'f1': 0.6327761836441893}
