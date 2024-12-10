@@ -1,0 +1,1 @@
+2024-12-10 23:06:20,454 - roberta-large_baas-prompt_sciq_binary_cluster - INFO - {'epoch': 0, 'avg_loss': 1.7669397903727992, 'accuracy': 0.668, 'precision': 0.6162961623210054, 'recall': 0.668, 'f1': 0.6360377059836888}

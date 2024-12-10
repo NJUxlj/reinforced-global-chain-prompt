@@ -4,3 +4,5 @@
 /cached_embeddings/
 /class_label_cluster_embeddings/
 /__pycache__/
+/autocot/embeddings/
+/autocot/context/

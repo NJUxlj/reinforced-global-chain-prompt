@@ -313,6 +313,9 @@ def preprocess_function_race(
         
         label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
         
+        balanced_options = [(j, opt) for j, opt in enumerate(options)]
+        balanced_options += (len(options)-2)*[(label, options[label])]
+        
         # 确保标签符合n_classes，不超范围  
         assert (0 <= label < 4), "There are labels out of range [0, 3]." 
         
@@ -329,7 +332,7 @@ def preprocess_function_race(
         else:
             pass
         
-        for j, option in enumerate(options):
+        for j, option in balanced_options:
             
             if is_roberta:
                 # 拼接question和option
@@ -488,8 +491,15 @@ def preprocess_function_arc(examples, text_column = "article", label_column  ="a
 
 
 
-def preprocess_function_sciq(examples, first_four_columns = ["article", "question", "options", "answer"], 
-                               dataset_name = 'sciq', max_length = 512, tokenizer = None, model_config=None)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_sciq(
+    examples, 
+    first_four_columns = ["article", "question", "options", "answer"], 
+    dataset_name = 'sciq', 
+    max_length = 512, 
+    tokenizer = None, 
+    model_config=None,
+    seq_cls_type:Optional[str]="binary", # ['binary','multiple']
+    )->Dict[str,Union[List,List[List]]]:
     """  
     预处理SciQ数据集的样本，准备用于模型输入  
     
@@ -518,9 +528,13 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
             # "token_type_ids": list() if model_config.model_type == "bert" else None, 
             "labels": list()    # List[int]
         }
+    is_t5 = model_config.model_type == "t5"
+    
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
     is_roberta = model_config.model_type == "roberta"
+    
+    is_qwen2 = model_config.model_type == "qwen2"
     
     if is_roberta:
         # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
@@ -549,51 +563,160 @@ def preprocess_function_sciq(examples, first_four_columns = ["article", "questio
     # 处理每个样本  
     for i in range(batch_size):  
         # 获取当前样本的各个字段  
-        support = examples[first_four_columns[0]][i]  # article/support  
-        question = examples[first_four_columns[1]][i]  
+        support = examples[first_four_columns[0]][i].strip()  # article/support  
+        question = examples[first_four_columns[1]][i].strip()  
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
-        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        answer = examples[first_four_columns[3]][i].strip()   # 答案标签（A/B/C/D）  
         
         label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
 
         assert (0 <= label < 4), "There are labels out of range [0, 3]." 
 
+        input_ids_list:List[List[int]] = [] 
+        attention_mask_list = []
+        label_list = []
         
-        # 将选项转换为字典格式，方便后续处理  
-        # options_dict = {opt.split(". ")[0]: opt.split(". ")[1] for opt in options}  
-        
-        input_ids:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
-        attention_mask = []
-        token_type_ids = []
-        
+        if is_bert_like_model:
+            token_type_ids_list = []  # if tokenizer.model_type == "bert" else None
+        else:
+            pass
         
         for j, option in enumerate(options):
-            # 拼接question和option
-            option_text = f"{question} {option.strip()}"
             
-            # 将article, 拼接后的question 一起放入tokenizer转为input_ids
-             
-            result = tokenizer(
-                    support, 
-                    option_text, 
-                    padding="max_length", 
-                    max_length=max_length, 
-                    truncation=True,
-                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+            if is_roberta:
+                option_text = f"{question} {option.strip()}"
+                
+                result = tokenizer(
+                        support, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=effective_max_length, 
+                        truncation="longest_first",  # true
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",
+                        return_token_type_ids=False, 
+                    )
+            
+            elif is_bert_like_model:
+                # 拼接question和option
+                option_text = f"{question} {option.strip()}"
+                
+                # 将article, 拼接后的question 一起放入tokenizer转为input_ids
+                
+                result = tokenizer(
+                        support, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=max_length, 
+                        truncation=True,
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",  
+                        return_token_type_ids=True
+                    )
+                
+            elif is_qwen2:
+                template = f"{support} {question} {option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
                 )
             
-            results["input_ids"].append(result["input_ids"])
-            results["attention_mask"].append(result["attention_mask"])
-            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
-            # 标签：正确选项为1，其他为0  
-            results['labels'].append(1 if j == label else 0) 
-            # results['labels'].append(label) 
+            elif is_t5:
+                # 构建输入文本  
+                template = f"Determine whether an option is correct for the question: {support} {question} {option.strip()}"  
+                
+                # 构建标签文本  
+                # label = label_map[label]
+                
+                # 对输入文本进行编码  
+                result = tokenizer(  
+                    template,  
+                    max_length=512,  
+                    padding="max_length",  
+                    truncation=True,  
+                    return_tensors="pt"  
+                )  
+                
+                # 对标签进行编码  
+                with tokenizer.as_target_tokenizer():  
+                    encoded_label = tokenizer(  
+                        answer,  
+                        max_length=8,  
+                        padding="max_length",  
+                        truncation=True,  
+                        return_tensors="pt"  
+                    )  
+                
+                result["encoded_label"] = encoded_label["input_ids"]  
+                
+            input_ids_list.append(result["input_ids"].squeeze(0))  
+            attention_mask_list.append(result["attention_mask"].squeeze(0))  
+            if is_bert_like_model:
+                token_type_ids_list.append(result["token_type_ids"].squeeze(0))
+            if seq_cls_type=='binary':
+                label_list.append(1 if j == label else 0) 
+            elif seq_cls_type=='multiple':
+                label_list.append(label)
+            else:
+                raise ValueError("incorret seq_cls_type in preprocess_function_race")
+            
+        # 将所有选项的张量堆叠  
+        input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
+        attention_mask = torch.stack(attention_mask_list)  # shape: (num_choices, seq_len) 
+        if is_bert_like_model:
+            token_type_ids = torch.stack(token_type_ids_list)
+        # labels = torch.tensor(label_list, dtype=torch.long)  # shape: (num_choices,)
+        
+        all_input_ids.append(input_ids)  
+        all_attention_masks.append(attention_mask)  
+        if is_bert_like_model:
+            all_token_type_ids.append(token_type_ids)
+        all_labels.extend(label_list)  # 使用extend而不是append
+    
+    # 将所有样本堆叠成批次  
+    batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
+    batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
+    batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
+            
+    if is_bert_like_model:
+        batched_token_type_ids = torch.stack(all_token_type_ids)
+        
+    # 重塑张量以适应PEFT的要求  
+    batch_size, num_choices, seq_len = batched_input_ids.shape  
+    
+    results = {  
+        "input_ids": batched_input_ids.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "attention_mask": batched_attention_masks.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "labels": batched_labels  
+    }  
+    
+    if is_bert_like_model:
+        results["token_type_ids"]=batched_token_type_ids.view(-1, seq_len)
+            
+            
+            # results["input_ids"].append(result["input_ids"])
+            # results["attention_mask"].append(result["attention_mask"])
+            # if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # # 标签：正确选项为1，其他为0  
+            # results['labels'].append(1 if j == label else 0) 
+            # # results['labels'].append(label) 
             
 
     return results
 
-def preprocess_function_dream(examples, first_four_columns = ["article", "question", "options", "answer"],
-                               dataset_name = 'dream', max_length = 512, tokenizer = None, model_config=None)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_dream(
+    examples, 
+    first_four_columns = ["article", "question", "options", "answer"],
+    dataset_name = 'dream', 
+    max_length = 512, 
+    tokenizer = None, 
+    model_config=None,
+    seq_cls_type:Optional[str]="binary", # ['binary','multiple']
+    )->Dict[str,Union[List,List[List]]]:
     """  
     预处理 dream 数据集的样本，准备用于模型输入  
     
@@ -616,16 +739,27 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
     # 获取批次大小  
     batch_size = len(examples[first_four_columns[0]])  
     
+    label_map = {  
+            0: "A",  
+            1: "B",
+            2: "C",
+            3: "D",
+            4: "E",    
+        }  
+    rev_label_map = {v: k for k, v in label_map.items()}
+    
     results = {
         "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
         # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     } 
+    is_t5 = model_config.model_type == "t5"
     
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
     is_roberta = model_config.model_type == "roberta"
+    is_qwen2 = model_config.model_type == "qwen2"
     
     if is_roberta:
         # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
@@ -654,10 +788,10 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
     # 处理每个样本  
     for i in range(batch_size):  
         # 获取当前样本的各个字段  
-        dialogue = examples[first_four_columns[0]][i]  # article/support  
-        question = examples[first_four_columns[1]][i]  
+        dialogue = examples[first_four_columns[0]][i].strip()  # article/support  
+        question = examples[first_four_columns[1]][i].strip()  
         options = examples[first_four_columns[2]][i]  # 已经带有A/B/C/D标签的选项列表  
-        answer = examples[first_four_columns[3]][i]   # 答案标签（A/B/C/D）  
+        answer = examples[first_four_columns[3]][i].strip()   # 答案标签（A/B/C/D）  
         label = ord(answer) - ord('A')  # 每个question对应一个label 0, 1, 2, 3
         assert (0 <= label < 3), "There are labels out of range [0, 3]." 
 
@@ -671,31 +805,146 @@ def preprocess_function_dream(examples, first_four_columns = ["article", "questi
         #                 Answer:
         #                 '''
         
-        for i, option in enumerate(options):
-            # 拼接question和option
-            option_text = f"{question} {option.strip()}"
+        input_ids_list:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
+        attention_mask_list = []
+        label_list = []
+        
+        if is_bert_like_model:
+            token_type_ids_list = []  # if tokenizer.model_type == "bert" else None
+        else:
+            pass
+        
+        for j, option in enumerate(options):
             
-             
-            result = tokenizer(
-                    dialogue, 
-                    option_text, 
-                    padding="max_length", 
-                    max_length=max_length, 
-                    truncation=True,
-                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+            if is_roberta:
+                option_text = f"{question} {option.strip()}"
+                result = tokenizer(
+                        dialogue, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=effective_max_length, 
+                        truncation="longest_first",  # true
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",
+                        return_token_type_ids=False, 
+                    )
+            
+            elif is_bert_like_model:
+                # 拼接question和option
+                option_text = f"{question} {option.strip()}"
+                result = tokenizer(
+                        dialogue, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=max_length, 
+                        truncation=True,
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",  
+                        return_token_type_ids=True 
+                    )
+            
+            elif is_qwen2:
+                template = f"{dialogue} {question} {option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
                 )
+            
+            elif is_t5:
+                # 构建输入文本  
+                template = f"Determine whether an option is correct for the question: {dialogue} {question} {option.strip()}"  
+                
+                # 构建标签文本  
+                # label = label_map[label]
+                
+                # 对输入文本进行编码  
+                result = tokenizer(  
+                    template,  
+                    max_length=512,  
+                    padding="max_length",  
+                    truncation=True,  
+                    return_tensors="pt"  
+                )  
+                
+                # 对标签进行编码  
+                with tokenizer.as_target_tokenizer():  
+                    encoded_label = tokenizer(  
+                        answer,  
+                        max_length=8,  
+                        padding="max_length",  
+                        truncation=True,  
+                        return_tensors="pt"  
+                    )  
+                
+                result["encoded_label"] = encoded_label["input_ids"]  
+                
+            input_ids_list.append(result["input_ids"].squeeze(0))  
+            attention_mask_list.append(result["attention_mask"].squeeze(0))  
+            if is_bert_like_model:
+                token_type_ids_list.append(result["token_type_ids"].squeeze(0))
+            # label_list.append(label)
+            if seq_cls_type=='binary':
+                label_list.append(1 if j == label else 0) 
+            elif seq_cls_type=='multiple':
+                label_list.append(label)
+            else:
+                raise ValueError("incorret seq_cls_type in preprocess_function_race")
 
-            results["input_ids"].append(result["input_ids"])
-            results["attention_mask"].append(result["attention_mask"])
-            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
-            # 标签：正确选项为1，其他为0  
-            results['labels'].append(1 if i == label else 0) 
+        # 将所有选项的张量堆叠  
+        input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
+        attention_mask = torch.stack(attention_mask_list)  # shape: (num_choices, seq_len) 
+        if is_bert_like_model:
+            token_type_ids = torch.stack(token_type_ids_list)
+        # labels = torch.tensor(label_list, dtype=torch.long)  # shape: (num_choices,)
+        
+        all_input_ids.append(input_ids)  
+        all_attention_masks.append(attention_mask)  
+        if is_bert_like_model:
+            all_token_type_ids.append(token_type_ids)
+        all_labels.extend(label_list)  # 使用extend而不是append  
+        
+    # 将所有样本堆叠成批次  
+    batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
+    batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
+    batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
+    
+    if is_bert_like_model:
+        batched_token_type_ids = torch.stack(all_token_type_ids)
+        
+    # 重塑张量以适应PEFT的要求  
+    batch_size, num_choices, seq_len = batched_input_ids.shape  
+    
+    results = {  
+        "input_ids": batched_input_ids.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "attention_mask": batched_attention_masks.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "labels": batched_labels  
+    }  
+    
+    if is_bert_like_model:
+        results["token_type_ids"]=batched_token_type_ids.view(-1, seq_len)
+
+            # results["input_ids"].append(result["input_ids"])
+            # results["attention_mask"].append(result["attention_mask"])
+            # if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # # 标签：正确选项为1，其他为0  
+            # results['labels'].append(1 if j == label else 0) 
     
     return results
 
 
-def preprocess_function_commonsense_qa(examples, first_four_columns = ["article", "question", "options", "answer"], 
-                               dataset_name = 'commonsense_qa', max_length = 512, tokenizer = None, model_config=None)->Dict[str,Union[List,List[List]]]:
+def preprocess_function_commonsense_qa(
+    examples, 
+    first_four_columns = ["article", "question", "options", "answer"], 
+    dataset_name = 'commonsense_qa', 
+    max_length = 512, 
+    tokenizer = None, 
+    model_config=None,
+    seq_cls_type:Optional[str]="binary", # ['binary','multiple']
+    )->Dict[str,Union[List,List[List]]]:
     """  
     预处理commonsense_qa数据集的样本，准备用于模型输入  
     
@@ -718,15 +967,27 @@ def preprocess_function_commonsense_qa(examples, first_four_columns = ["article"
     # 获取批次大小  
     batch_size = len(examples[first_four_columns[0]])  
     
+    label_map = {  
+            0: "A",  
+            1: "B",
+            2: "C",
+            3: "D",
+            4: "E",    
+        }  
+    rev_label_map = {v: k for k, v in label_map.items()}  
+    
     results = {
         "input_ids": list(),   # List[List[List[int]]]
         "attention_mask": list(),
         # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     }
+    is_t5 = model_config.model_type == "t5"
+    
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
     is_roberta = model_config.model_type == "roberta"
+    is_qwen2 = model_config.model_type == "qwen2"
     
     if is_roberta:
         # 因为是句对输入（article + question_with_option），所以需要预留3个位置  
@@ -773,27 +1034,136 @@ def preprocess_function_commonsense_qa(examples, first_four_columns = ["article"
         #                 {options[3]} 
         #                 Answer:
         #                 '''
-        
-        for i, option in enumerate(options):
-            # 拼接question和option
-            option_text = f"{question} {option.strip()}"
-            
-            # 将article, 拼接后的question 一起放入tokenizer转为input_ids
-             
-            result = tokenizer(
-                    question_concept, 
-                    option_text, 
-                    padding="max_length", 
-                    max_length=max_length, 
-                    truncation=True,
-                    add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
-                )
 
-            results["input_ids"].append(result["input_ids"])
-            results["attention_mask"].append(result["attention_mask"])
-            if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
-            # 标签：正确选项为1，其他为0  
-            results['labels'].append(1 if i == label else 0) 
+        input_ids_list:List[List[int]] = [] # shape = ()  一个question对应着4个模型输入的token_ids
+        attention_mask_list = []
+        label_list = []
+        
+        if is_bert_like_model:
+            token_type_ids_list = []  # if tokenizer.model_type == "bert" else None
+        else:
+            pass
+        
+        for j, option in enumerate(options):
+            
+            if is_roberta:
+                option_text = f"{question} {option.strip()}"
+                result = tokenizer(
+                        question_concept, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=effective_max_length, 
+                        truncation="longest_first",  # true
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",
+                        return_token_type_ids=False, 
+                    )
+            
+            elif is_bert_like_model:
+                # 拼接question和option
+                option_text = f"{question} {option.strip()}"
+                
+                result = tokenizer(
+                        question_concept, 
+                        option_text, 
+                        padding="max_length", 
+                        max_length=max_length, 
+                        truncation=True,
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        return_tensors="pt",  
+                        return_token_type_ids=True  
+                    )
+            
+            elif is_qwen2:
+                template = f"{question_concept} {question} {option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
+                )
+                
+            elif is_t5:
+                # 构建输入文本  
+                template = f"Determine whether an option is correct for the question: {question_concept} {question} {option.strip()}"  
+                
+                # 构建标签文本  
+                # label = label_map[label]
+                
+                # 对输入文本进行编码  
+                result = tokenizer(  
+                    template,  
+                    max_length=512,  
+                    padding="max_length",  
+                    truncation=True,  
+                    return_tensors="pt"  
+                )  
+                
+                # 对标签进行编码  
+                with tokenizer.as_target_tokenizer():  
+                    encoded_label = tokenizer(  
+                        answer,  
+                        max_length=8,  
+                        padding="max_length",  
+                        truncation=True,  
+                        return_tensors="pt"  
+                    )  
+                
+                result["encoded_label"] = encoded_label["input_ids"]  
+
+            input_ids_list.append(result["input_ids"].squeeze(0))  
+            attention_mask_list.append(result["attention_mask"].squeeze(0))  
+            if is_bert_like_model:
+                token_type_ids_list.append(result["token_type_ids"].squeeze(0))
+            # label_list.append(label)
+            if seq_cls_type=='binary':
+                label_list.append(1 if j == label else 0) 
+            elif seq_cls_type=='multiple':
+                label_list.append(label)
+            else:
+                raise ValueError("incorret seq_cls_type in preprocess_function_race")
+        
+        # 将所有选项的张量堆叠  
+        input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
+        attention_mask = torch.stack(attention_mask_list)  # shape: (num_choices, seq_len) 
+        if is_bert_like_model:
+            token_type_ids = torch.stack(token_type_ids_list)
+        # labels = torch.tensor(label_list, dtype=torch.long)  # shape: (num_choices,)
+        
+        all_input_ids.append(input_ids)  
+        all_attention_masks.append(attention_mask)  
+        if is_bert_like_model:
+            all_token_type_ids.append(token_type_ids)
+        all_labels.extend(label_list)  # 使用extend而不是append  
+    
+    # 将所有样本堆叠成批次  
+    batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
+    batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
+    batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
+    
+    if is_bert_like_model:
+        batched_token_type_ids = torch.stack(all_token_type_ids)
+        
+    # 重塑张量以适应PEFT的要求  
+    batch_size, num_choices, seq_len = batched_input_ids.shape  
+    
+    results = {  
+        "input_ids": batched_input_ids.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "attention_mask": batched_attention_masks.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
+        "labels": batched_labels  
+    }  
+    
+    if is_bert_like_model:
+        results["token_type_ids"]=batched_token_type_ids.view(-1, seq_len)
+
+
+            # results["input_ids"].append(result["input_ids"])
+            # results["attention_mask"].append(result["attention_mask"])
+            # if "token_type_ids" in result: results["token_type_ids"].append(result["token_type_ids"])
+            # # 标签：正确选项为1，其他为0  
+            # results['labels'].append(1 if j == label else 0) 
             
         
 
