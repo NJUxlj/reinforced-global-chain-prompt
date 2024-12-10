@@ -1370,7 +1370,7 @@ class McqDatasetWrapper:
             process_examples,
             batch_size=Config['batch_size'],
             batched= True,
-            num_proc=NUM_CPU_PROCESSES, 
+            num_proc=NUM_PROCESSES, 
             remove_columns=["example_id"],
             desc="Processing Race dataset", 
         )  
@@ -1628,6 +1628,11 @@ class McqDatasetWrapper:
                 raise ValueError(f"Unsupported dataset: {dataset_name}, Please select from [race, sciq, commonsense_qa]")
 
         four_column_names = [config.article_key, config.question_key, config.options_key, config.label_key]
+        
+        print("***************************************")
+        print(f"Load MCQ dataset {dataset_name} successfully~~")
+        print("**************************************\n")
+        
         return dataset, four_column_names
 
     def _preprocess_multirc(self, dataset: DatasetDict, config: DatasetConfig) -> DatasetDict:  
@@ -1729,10 +1734,6 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
         examples after preprocessing       
     '''
     
-    print("************************")
-    print(f"\ncurrent model type is {wrapper.model_config.model_type}\n")
-    print("****************************************")
-    
     
     if dataset_name == 'race':
         # model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
@@ -1779,6 +1780,12 @@ def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_ty
         preprocessed_dataset: 处理后的数据集，包含train, test, validation(dev) 3个部分 
     """ 
     wrapper = McqDatasetWrapper(model_name_or_path=model_path, max_seq_length=max_length)
+    
+    
+    print("************************")
+    print(f"\ncurrent model type is {wrapper.model_config.model_type}\n")
+    print("****************************************")
+    
     dataset_configs = wrapper.dataset_configs
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=train_size)
     processed_dataset:DatasetDict = dataset.map(

@@ -97,6 +97,7 @@ class PtuningConfig:
     optimizer_class:type = Adam
     
     seed:int=42
+    train_size:int=22000
 
 
 def train_p_tuning(config:PtuningConfig):
@@ -139,7 +140,7 @@ def train_p_tuning(config:PtuningConfig):
     accelerator.init_trackers("P_TUNING_TRAING", config=tracker_config)
     
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length, train_size=config.train_size)
     
     
     train_ds = processed_ds["train"]
@@ -165,7 +166,7 @@ def train_p_tuning(config:PtuningConfig):
             # shuffle=True, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True,
+            pin_memory=False,
             sampler=train_sampler
         )
     
@@ -173,7 +174,7 @@ def train_p_tuning(config:PtuningConfig):
             eval_ds, 
             collate_fn=default_data_collator, 
             batch_size=batch_size,
-            pin_memory=True,
+            pin_memory=False,
             sampler = eval_sampler
         )
     
@@ -455,6 +456,7 @@ if __name__ == '__main__':
     args = parse_training_arguments()
     dataset_name =args.dataset_name
     model_name = args.model_name
+    train_size = args.train_size
     model_path = get_model_path_by_model_name(model_name)
 
     model, tokenizer = prepare_model_tokenizer(model_path, AutoModelForSequenceClassification, model_path)
@@ -472,6 +474,8 @@ if __name__ == '__main__':
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,
         prefix_length=100,
+        train_size = train_size,
+        batch_size=2,
         
     )
     
