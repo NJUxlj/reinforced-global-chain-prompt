@@ -1,0 +1,3 @@
+2024-12-10 12:36:13,169 - roberta-large_baas-prompt_race_binary_lda - INFO - {'epoch': 0, 'avg_loss': 10.58370700569563, 'accuracy': 0.7508103727714749, 'precision': 0.5637162158612411, 'recall': 0.7508103727714749, 'f1': 0.6439489103196218}
+2024-12-10 13:28:18,461 - roberta-large_baas-prompt_race_binary_lda - INFO - {'epoch': 1, 'avg_loss': 19.415015312338838, 'accuracy': 0.2491896272285251, 'precision': 0.0620954703182913, 'recall': 0.2491896272285251, 'f1': 0.09941720450570415}
+2024-12-10 14:20:21,721 - roberta-large_baas-prompt_race_binary_lda - INFO - {'epoch': 2, 'avg_loss': 24.263705046402603, 'accuracy': 0.7508103727714749, 'precision': 0.5637162158612411, 'recall': 0.7508103727714749, 'f1': 0.6439489103196218}
