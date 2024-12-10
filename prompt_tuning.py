@@ -367,7 +367,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
                 #     max_norm=config.max_grad_norm,
                 #     norm_type=config.norm_type
                 #     )
-                if step % 300 == 0 and step!=0 and accelerator.is_main_process:
+                if step % 1000 == 0 and step!=0 and accelerator.is_main_process:
                     # 确保梯度确实在更新  
                     detect_param_grad_updates(model,epoch,step)
                     monitor_gradients(model, step)

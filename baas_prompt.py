@@ -1,5 +1,6 @@
 from transformers import (
     default_data_collator,
+    DataCollatorWithPadding,
     get_linear_schedule_with_warmup,
     BertForSequenceClassification,
     AutoModel,
@@ -1693,11 +1694,20 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     ) if torch.distributed.is_initialized() else None 
     
     
+    data_collator=None
+    if model.config.model_type=='qwen2':
+        data_collator = DataCollatorWithPadding(  
+            tokenizer=tokenizer,  
+            padding=True,  
+            return_tensors="pt"  
+        )  
+    else:
+        data_collator = default_data_collator
     
     train_dataloader = DataLoader(
             train_ds, 
             # shuffle=True, # shuffle is not necessary when using DistributedSampler
-            collate_fn=default_data_collator, 
+            collate_fn=data_collator, 
             batch_size=batch_size,
             # pin_memory=True,
             sampler=train_sampler
@@ -1705,7 +1715,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     
     eval_dataloader = DataLoader(
             eval_ds, 
-            collate_fn=default_data_collator, 
+            collate_fn=data_collator, 
             batch_size=batch_size,
             # pin_memory=True,
             sampler=eval_sampler

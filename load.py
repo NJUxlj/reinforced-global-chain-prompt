@@ -256,6 +256,7 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
+    
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
     
     is_roberta = model_config.model_type == "roberta"
@@ -361,8 +362,8 @@ def preprocess_function_race(
                 template = f"{article} {question} {option.strip()}"  
                 result = tokenizer(  
                         template,  
-                        padding="max_length",  
-                        max_length=max_length,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=2048,  
                         truncation=True,  
                         return_tensors="pt",  
                         return_token_type_ids=False  
@@ -1728,6 +1729,11 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
         examples after preprocessing       
     '''
     
+    print("************************")
+    print(f"\ncurrent model type is {wrapper.model_config.model_type}\n")
+    print("****************************************")
+    
+    
     if dataset_name == 'race':
         # model_inputs = preprocess_function_race(examples, text_column = "article", label_column  ="answer", 
         #                                  dataset_name = 'race', max_length = max_length)
@@ -1779,7 +1785,7 @@ def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_ty
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length, seq_cls_type=seq_cls_type),
         batched=True,
         batch_size=Config['batch_size'],
-        num_proc=NUM_PROCESSES,
+        num_proc=1,
         remove_columns= dataset['train'].column_names,           # dataset.column_names,
         load_from_cache_file=True,
         desc=f"Running tokenizer on dataset {dataset_name}",
