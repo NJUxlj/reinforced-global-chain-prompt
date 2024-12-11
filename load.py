@@ -303,6 +303,7 @@ def preprocess_function_race(
     
     # print("labels =\n", labels)
     
+    
     # 处理每个样本  
     for i in range(batch_size):  
         # 获取当前样本的各个字段  
@@ -336,13 +337,13 @@ def preprocess_function_race(
             
             if is_roberta:
                 # 拼接question和option
-                article_text = f"{article} {question}"
-                option_text = f"{option.strip()}"
+                context_text = f"Context:{article}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 
                 # 将article, 拼接后的question 一起放入tokenizer转为input_ids
                 
                 result = tokenizer(
-                        article_text, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=effective_max_length, 
@@ -363,15 +364,15 @@ def preprocess_function_race(
             elif is_bert_like_model:
                 # BERT的处理保持不变  
                 # option_text = f"{question} {option.strip()}"  
-                article_text = f"{article} {question}"
-                option_text = f"{option.strip()}"
+                context_text = f"Context:{article}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 
                 result = tokenizer(  
-                        article_text,  
+                        context_text,  
                         option_text,  
                         padding="max_length",  
                         max_length=max_length,  
-                        truncation=True,  
+                        truncation="longest_first", # True,  
                         return_tensors="pt",  
                         return_token_type_ids=True  
                 )  
@@ -381,7 +382,7 @@ def preprocess_function_race(
                 #     tokenizer.pad_token = tokenizer.eos_token  
                 #     tokenizer.pad_token_id = tokenizer.eos_token_id  
                     
-                template = f"{article} {question} {option.strip()}"  
+                template = f"Context:{article}\nQuestion:{question}\nOption:{option.strip()}"  
                 result = tokenizer(  
                         template,  
                         padding="max_length", # 等同于 longest  
@@ -393,7 +394,7 @@ def preprocess_function_race(
             
             elif is_t5:
                 # 构建输入文本  
-                template = f"Determine whether an option is correct for the question: {article} {question} {option.strip()}"  
+                template = f"Determine whether an option is correct for the question:\nContext:{article} Question:{question} Option:{option.strip()}"  
                 
                 # 构建标签文本  
                 # label = label_map[label]
@@ -588,10 +589,12 @@ def preprocess_function_sciq(
         for j, option in enumerate(options):
             
             if is_roberta:
-                option_text = f"{question} {option.strip()}"
+                
+                context_text = f"Context:{support}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 
                 result = tokenizer(
-                        support, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=effective_max_length, 
@@ -603,23 +606,24 @@ def preprocess_function_sciq(
             
             elif is_bert_like_model:
                 # 拼接question和option
-                option_text = f"{question} {option.strip()}"
+                context_text = f"Context:{support}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 
                 # 将article, 拼接后的question 一起放入tokenizer转为input_ids
                 
                 result = tokenizer(
-                        support, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=max_length, 
-                        truncation=True,
-                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
+                        truncation="longest_first",
+                        # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP] 默认为True
                         return_tensors="pt",  
                         return_token_type_ids=True
                     )
                 
             elif is_qwen2:
-                template = f"{support} {question} {option.strip()}"  
+                template = f"Context:{support}\nQuestion:{question}\nOption:{option.strip()}"  
                 result = tokenizer(  
                         template,  
                         padding="max_length", # 等同于 longest  
@@ -631,7 +635,7 @@ def preprocess_function_sciq(
             
             elif is_t5:
                 # 构建输入文本  
-                template = f"Determine whether an option is correct for the question: {support} {question} {option.strip()}"  
+                template = f"Determine whether an option is correct for the question:\nContext:{support} Question:{question} Option:{option.strip()}"  
                 
                 # 构建标签文本  
                 # label = label_map[label]
@@ -821,9 +825,10 @@ def preprocess_function_dream(
         for j, option in enumerate(options):
             
             if is_roberta:
-                option_text = f"{question} {option.strip()}"
+                context_text = f"Context:{dialogue}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 result = tokenizer(
-                        dialogue, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=effective_max_length, 
@@ -835,20 +840,21 @@ def preprocess_function_dream(
             
             elif is_bert_like_model:
                 # 拼接question和option
-                option_text = f"{question} {option.strip()}"
+                context_text = f"Context:{dialogue}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 result = tokenizer(
-                        dialogue, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=max_length, 
-                        truncation=True,
+                        truncation="longest_first",
                         # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
                         return_tensors="pt",  
                         return_token_type_ids=True 
                     )
             
             elif is_qwen2:
-                template = f"{dialogue} {question} {option.strip()}"  
+                template = f"Context:{dialogue}\nQuestion:{question}\nOption:{option.strip()}"  
                 result = tokenizer(  
                         template,  
                         padding="max_length", # 等同于 longest  
@@ -860,7 +866,7 @@ def preprocess_function_dream(
             
             elif is_t5:
                 # 构建输入文本  
-                template = f"Determine whether an option is correct for the question: {dialogue} {question} {option.strip()}"  
+                template = f"Determine whether an option is correct for the question:\nContext:{dialogue} Question:{question} Option:{option.strip()}"  
                 
                 # 构建标签文本  
                 # label = label_map[label]
@@ -1051,9 +1057,10 @@ def preprocess_function_commonsense_qa(
         for j, option in enumerate(options):
             
             if is_roberta:
-                option_text = f"{question} {option.strip()}"
+                context_text = f"Context:{question_concept}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 result = tokenizer(
-                        question_concept, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=effective_max_length, 
@@ -1065,21 +1072,22 @@ def preprocess_function_commonsense_qa(
             
             elif is_bert_like_model:
                 # 拼接question和option
-                option_text = f"{question} {option.strip()}"
+                context_text = f"Context:{question_concept}\nQuestion:{question}"
+                option_text = f"Option:{option.strip()}"
                 
                 result = tokenizer(
-                        question_concept, 
+                        context_text, 
                         option_text, 
                         padding="max_length", 
                         max_length=max_length, 
-                        truncation=True,
+                        truncation="longest_first",
                         # add_special_tokens=True,  # 确保添加特殊标记  [CLS] [SEP]
                         return_tensors="pt",  
                         return_token_type_ids=True  
                     )
             
             elif is_qwen2:
-                template = f"{question_concept} {question} {option.strip()}"  
+                template = f"Context:{question_concept}\nQuestion:{question}\nOption:{option.strip()}"  
                 result = tokenizer(  
                         template,  
                         padding="max_length", # 等同于 longest  
@@ -1091,7 +1099,7 @@ def preprocess_function_commonsense_qa(
                 
             elif is_t5:
                 # 构建输入文本  
-                template = f"Determine whether an option is correct for the question: {question_concept} {question} {option.strip()}"  
+                template = f"Determine whether an option is correct for the question:\nContext:{question_concept} Question:{question} Option:{option.strip()}"  
                 
                 # 构建标签文本  
                 # label = label_map[label]
