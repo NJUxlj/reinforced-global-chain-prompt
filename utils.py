@@ -921,12 +921,29 @@ def record_epoch_param_state(model, param_monitor:Dict):
     
     return param_monitor
 
-def print_prediction_distribution(outputs,step,loss):
+def print_prediction_distribution(outputs,step,loss, num_options=2, logits=None, labels=None):
+    '''
+     logits: shape=(batch_size, num_options)
+    '''
     print("*************************** 打印训练过程中的预测分布 ***************************************")
     with torch.no_grad():  
-        preds = outputs.logits.argmax(dim=-1)  
-        print(f"\nStep {step} predictions distribution:",   
-                torch.bincount(preds).cpu().numpy())  
+        preds = logits.argmax(dim=-1)  
+        # print(f"\nStep {step} predictions distribution:",   
+        #         torch.bincount(preds).cpu().numpy())  
+        
+        print("\nStep {step} Prediction Distribution:")  
+        for i in range(num_options):  
+            count = (preds == i).sum()  
+            print(f"Option {i}: {count} ({count/len(preds):.2%})")  
+            
+        print("\n===============================================\n")
+            
+        print("\nStep {step} True Label Distribution:")  
+        for i in range(num_options):  
+            count = (labels == i).sum()  
+            print(f"Option {i}: {count} ({count/len(labels):.2%})")  
+            
+        print("\n===============================================\n")
         print(f"Current loss: {loss.item():.4f}")  
     print("******************************************************************************************\n\n")
 
@@ -997,6 +1014,31 @@ def parse_training_arguments(config=None):
 
 
     return args
+
+
+
+
+
+class EarlyStopping:  
+    def __init__(self, patience=5, threshold=1e-4):  
+        self.patience = patience  
+        self.threshold = threshold  
+        self.counter = 0  
+        self.best_loss = None  
+        self.early_stop = False  
+        
+    def __call__(self, val_loss):  
+        if self.best_loss is None:  
+            self.best_loss = val_loss  
+        elif val_loss > self.best_loss - self.threshold:  
+            self.counter += 1  
+            if self.counter >= self.patience:  
+                self.early_stop = True  
+        else:  
+            self.best_loss = val_loss  
+            self.counter = 0  
+        
+        return self.early_stop
 
 
 

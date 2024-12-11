@@ -93,17 +93,20 @@ class PtuningV2Config:
     num_epochs:int = 5
     dropout: float = 0.1                          # dropout率  
     max_seq_length: int = 512                     # 最大序列长度  
-    learning_rate: float = 0.3                   # 前缀参数的学习率  
+    learning_rate: float = 1e-3                   # 前缀参数的学习率  
+    classifier_learning_rate:float=1e-4
     model_learning_rate: float = 1e-5             # 模型参数的学习率（如果需要微调）  
     prefix_projection: bool = True               # 是否使用MLP投影前缀  
     prefix_hidden_size: int = 768                 # 前缀投影隐藏层大小  
     warmup_steps: int = 500  # 添加预热步骤  
-    weight_decay: float = 1e-5  # 添加权重衰减  
+    warmup_ratio:float=0.06
+    weight_decay: float = 0.01 #1e-5 # 添加权重衰减  
     beta1_decay:float = 0.9   #beta1: 一阶矩估计的指数衰减率（默认0.9）用于Adam优化器
-    beta2_decay:float = 0.8   # beta2: 二阶矩估计的指数衰减率（默认0.999）
-    total_training_steps = 30000  # 总的训练步数
+    beta2_decay:float = 0.999   # beta2: 二阶矩估计的指数衰减率（默认0.999）
+    adam_epsilon:float = 1e-8 
+    total_training_steps = 22000  # 总的训练步数
     early_stop_steps = 10
-    optimizer_class:type = Adam
+    optimizer_class:type = AdamW
     
     seed:int=42
     train_size:int=22000
@@ -266,12 +269,26 @@ class PTuningV2ForSequenceClassification(nn.Module):
         # for param in self.classifier.parameters():  
         #     param.requires_grad = False 
         
+        self._freeze_parameters()
+        
         self.print_total_params()
         
     def get_prompt(self, batch_size):  
         prefix_tokens = self.prefix_tokens.unsqueeze(0).expand(batch_size, -1).to(self.model.device)  
         past_key_values = self.prefix_encoder(prefix_tokens)  
         return past_key_values  
+    
+    def _freeze_parameters(self):  
+        # 冻结所有参数  
+        for param in self.base_model.parameters():  
+            param.requires_grad = False  
+            
+        for param in self.prefix_encoder.parameters():  
+            param.requires_grad = True  
+        
+        for param in self.classifier.parameters():  
+            param.requires_grad = True 
+            
 
     def forward(
         self, 
@@ -523,7 +540,13 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
         )
 
     # encapsulate the base model into a P-Tuning V2 model
-    model = PTuningV2ForSequenceClassification(model, num_labels, prefix_length, config=config, device=accelerator.device)  
+    model = PTuningV2ForSequenceClassification(
+            model, 
+            num_labels, 
+            prefix_length, 
+            config=config, 
+            device=accelerator.device
+        )  
     model.to(accelerator.device)  
     
     model.print_total_params()
@@ -542,13 +565,25 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     # 优化器现在需要同时优化前缀编码器和分类器的参数  
     optimizer = torch.optim.AdamW([  
-        {'params': model.prefix_encoder.parameters(), 'lr': config.learning_rate},  
-        {'params': model.classifier.parameters(), 'lr': config.learning_rate}  
-    ], weight_decay=config.weight_decay, betas=(config.beta1_decay, config.beta2_decay)) 
+        {
+            'params': model.prefix_encoder.parameters(), 
+            'lr': config.learning_rate,
+            'weight_decay': config.weight_decay
+        },  
+        {
+            'params': model.classifier.parameters(), 
+            'lr': config.classifier_learning_rate,
+            'weight_decay': config.weight_decay  
+        }  
+    ], weight_decay=config.weight_decay, betas=(config.beta1_decay, config.beta2_decay),eps=config.adam_epsilon) 
+    
+    
+    num_training_steps = len(train_dataloader) * config.num_epochs
+    num_warmup_steps = int(num_training_steps * config.warmup_ratio)  
     
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=num_warmup_steps,
         num_training_steps=(len(train_dataloader) * num_epochs),
     )
     
@@ -837,7 +872,11 @@ if __name__ == "__main__":
         # num_epochs = Config['num_epochs'],
         prefix_projection=True,
         prefix_hidden_size=hidden_size,
-        prefix_length=100
+        prefix_length=100,
+        train_size=args.train_size,
+        batch_size=args.batch_size,
+        
+        
     )
 
     # 这里传model进去只是为了符合其他fine-tuning的写法，实际上这里不需要model

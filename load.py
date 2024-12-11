@@ -45,6 +45,7 @@ class DatasetConfig:
     local_path: Optional[str] = None  # 添加本地路径  
     file_format: str = "huggingface"  # 文件格式：'huggingface' 或 'json'  
     subset: str = None  
+    num_options:int = None
 
 
 def load_dataset_from_huggingface(dataset_path, subset_name = None, split = None, cache_dir = None, train_size=22000):
@@ -459,7 +460,7 @@ def preprocess_function_race(
     results = {  
         "input_ids": batched_input_ids.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
         "attention_mask": batched_attention_masks.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
-        "labels": batched_labels  
+        "labels": batched_labels   # shape = (batch_size * num_choices, )
     }  
     
     if is_bert_like_model:
@@ -1423,6 +1424,7 @@ class McqDatasetWrapper:
                 local_path=Config['datasets']['race'],  
                 file_format="huggingface",
                 subset="all",
+                num_options = 4,
             ),  
             "arc": DatasetConfig(  
                 name="arc",  
@@ -1450,7 +1452,8 @@ class McqDatasetWrapper:
                 options_key="options",  
                 label_key="label",  
                 local_path=Config['datasets']['dream']['all'],  
-                file_format="json"  
+                file_format="json",
+                num_options=3,  
             ),
             "sciq": DatasetConfig(  
                 name="sciq",  
@@ -1459,7 +1462,8 @@ class McqDatasetWrapper:
                 options_key="options",  
                 label_key="answer",  
                 local_path=Config['datasets']['sciq'],  
-                file_format="huggingface"  
+                file_format="huggingface",
+                num_options=4,
             ),
             "commonsense_qa": DatasetConfig(  
                 name="commonsense_qa",  
@@ -1468,7 +1472,8 @@ class McqDatasetWrapper:
                 options_key="options",  
                 label_key="answer",  
                 local_path=Config['datasets']['commonsense_qa'],  
-                file_format="huggingface"  
+                file_format="huggingface",
+                num_options=5,
             )       
         }  
 

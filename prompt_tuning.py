@@ -61,7 +61,8 @@ from sklearn.metrics import (
     precision_score,  
     recall_score,  
     f1_score,  
-    classification_report  
+    classification_report,
+    confusion_matrix,
 )  
 
 import evaluate
@@ -153,9 +154,13 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     }
     accelerator.init_trackers("PROMPT_TUNING_TRAING", config=tracker_config)
     
+    wrapper = McqDatasetWrapper(
+        model_name_or_path=config.model_path,
+        max_seq_length=config.max_seq_length
+    )
     
-    
-    
+    dataset_configs = wrapper.dataset_configs
+    dataset_config = dataset_configs[config.dataset_name]
     processed_ds = preprocess_dataset_peft(dataset_name, config.model_path, max_length=max_length, train_size=config.train_size)
     
     train_ds = processed_ds["train"]
@@ -342,15 +347,23 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             model: RobertaForSequenceClassification
             
             outputs = model.forward(**batch)
-
+            # 不需要根据样本数量设置权重（因为1:3是必然的）  
+            # 但可以设置稍微高一点的正样本权重来增强学习信号  
+            # criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 1.5]).to(device))
             criterion = nn.CrossEntropyLoss()
             
+            
             logits = outputs.logits
+            # 可以添加对比损失  
+            # ---------------------------------
+            logits = logits.view(-1, dataset_config.num_options, 2)[:, :, 1]  # [batch_size, 4, 2] -> [batch_size, 4]  
+            labels = labels.view(-1, dataset_config.num_options).argmax(dim=1)  # [batch_size, 4] -> [batch_size, ]
+            # ---------------------------------
             loss = criterion(logits, labels.long())
             
             if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
                 # 打印训练过程中的预测分布
-                print_prediction_distribution(outputs,step,loss)
+                print_prediction_distribution(outputs,step,loss, dataset_config.num_options, logits, labels)
                 
             # loss= outputs.loss
             total_loss += loss.detach().float().item() 
@@ -391,7 +404,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         
         if accelerator.is_main_process:
             print(f"begin epoch {epoch} evaluating...")   
-        eval_results = evaluate_prompt_tuning(model, eval_dataloader, accelerator)
+        eval_results = evaluate_prompt_tuning(model, eval_dataloader, accelerator, dataset_config)
         accelerator.wait_for_everyone()
         # 记录自定义的logger
         if accelerator.is_main_process and logger is not None:
@@ -533,6 +546,7 @@ def evaluate_prompt_tuning(
         model, 
         eval_dataloader, 
         accelerator:Accelerator, 
+        dataset_config:DatasetConfig,
     )->Dict:  
     """  
     评估函数  
@@ -546,11 +560,35 @@ def evaluate_prompt_tuning(
     all_preds = []  
     all_labels = []  
     
+    # 添加更多指标统计  
+    total_questions = 0  
+    correct_questions = 0  
+    all_probs = []  # 保存原始概率分布  
+    
     for batch in eval_dataloader:  
         with torch.no_grad():  
             outputs = model(**batch)
-            preds = outputs.logits.argmax(dim=-1) 
-            labels = batch['labels']
+            # --------------------
+            logits = outputs.logits # [batch_size x 4, 2] 
+            probs = torch.softmax(logits, dim=1)[:, 1]  # 获取正类概率   # shape = (batch_size * 4, 1)
+            # 每4个样本为一组重塑  
+            probs = probs.view((-1, dataset_config.num_options))  # shape = (batch_size, 4)  每个问题对应4个选项，每个选项都有一个预测为1的概率 [0.2, 0.1, 0.5, 0.2]， 此时我们认为选项3是正确的
+            labels = batch['labels'].view((-1, dataset_config.num_options))  # shape = (batch_size, 4)
+            
+            all_probs.append(probs.cpu())  # 保存原始概率分布
+            
+            # 检查每道题是否预测正确  
+            pred_answers = probs.argmax(dim=1)  # 每道题预测的答案  比如 选项3 对应了 label = 2  shape = (batch_size, 1)
+            true_answers = labels.argmax(dim=1)  # 每道题的正确答案  比如[0, 0 ,1, 0] -> argmax -> 2  shape = (batch_size, 1)
+            preds = pred_answers
+            labels = true_answers
+            
+            # 统计正确题目数  
+            total_questions += batch_size  
+            correct_questions += (pred_answers == true_answers).sum().item()  
+            # --------------------------
+            # preds = outputs.logits.argmax(dim=-1) 
+            # labels = batch['labels']
             
             preds, labels = accelerator.gather_for_metrics(
                 (preds, labels)
@@ -563,18 +601,18 @@ def evaluate_prompt_tuning(
     
     all_preds = torch.cat(all_preds).numpy()  
     all_labels = torch.cat(all_labels).numpy() 
+    all_probs = torch.cat(all_probs).numpy()  # shape = (batch_size, 4)
             
     
-    
-    # 在主进程上计算指标  
-    metrics = None   
     
     # 计算评价指标  
     metrics = {  
         'accuracy': accuracy_score(all_labels, all_preds),  
         'precision': precision_score(all_labels, all_preds, average='weighted'),  
         'recall': recall_score(all_labels, all_preds, average='weighted'),  
-        'f1': f1_score(all_labels, all_preds, average='weighted')  
+        'f1': f1_score(all_labels, all_preds, average='weighted'),
+        "question accuracy": correct_questions/total_questions,
+        "mean_confidence": np.mean(all_probs.max(axis=1)), # 平均预测置信度
     }     
     
     accelerator.wait_for_everyone()     
@@ -583,13 +621,26 @@ def evaluate_prompt_tuning(
         
         # debug info
         print("\n****************** Evaluation Results:**************************")  
-        print(f"Total samples evaluated: {len(all_labels)}")  
-        print(f"Batch predictions distribution: {np.bincount(all_preds)}")  
-        print(f"Batch labels distribution: {np.bincount(all_labels)}")   
-        print("\n******************** Classification Report: ***********************")  
-        print(classification_report(all_labels, all_preds))         
+        print(f"Total questions evaluated: {total_questions}")  
+        print(f"Correct questions: {correct_questions}")  
+        print(f"Question-level accuracy: {correct_questions/total_questions:.4f}") 
+        print(f"Total questions evaluated: {len(all_labels)}")  
+        # print(f"Batch predictions distribution: {np.bincount(all_preds)}")  
+        # print(f"Batch labels distribution: {np.bincount(all_labels)}")       
         print("*****************************************************************\n")
         
+        # 预测分布分析  
+        print("\nPrediction Distribution:")  
+        for i in range(dataset_config.num_options):  
+            count = (all_preds == i).sum()  
+            print(f"Option {i}: {count} ({count/len(all_preds):.2%})")  
+        
+        # 混淆矩阵  
+        print("\nConfusion Matrix:")  
+        print(confusion_matrix(all_labels, all_preds))  
+        
+        print("\n******************** Classification Report: ***********************")  
+        print(classification_report(all_labels, all_preds))    
         
     
     # 恢复模型原始状态  
