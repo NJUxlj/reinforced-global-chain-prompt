@@ -344,7 +344,8 @@ class BassPromptModel(torch.nn.Module):
         config:BaasPromptConfig, 
         chain_encode_args:ChainEncodingArguments=None, 
         device = Config.device,
-        debug:bool=False
+        debug:bool=False,
+        num_options=None,
         ):  
         super(BassPromptModel, self).__init__()  
         self.device = device
@@ -365,6 +366,7 @@ class BassPromptModel(torch.nn.Module):
         self.num_layers = self.model_config.num_hidden_layers
         self.debug=debug
         self.classes_initiate_method = config.classes_initiate_method
+        self.num_options=num_options
         
         
         d_ff = self.hidden_size*4
@@ -489,11 +491,19 @@ class BassPromptModel(torch.nn.Module):
             默认的 position_ids 可能超出了范围限制
         '''
         if position_ids==None:
-            position_ids = torch.arange(  
-                0, sequence_length,   
-                dtype=torch.long,   
-                device=self.device  
-            ).expand(self.config.batch_size, -1)  # [batch_size, seq_length]  
+            if self.num_options:
+                position_ids = torch.arange(  
+                    0, sequence_length,   
+                    dtype=torch.long,   
+                    device=self.device  
+                ).expand(self.config.batch_size*self.num_options, -1)  # [batch_size, seq_length] 
+            else:
+                position_ids = torch.arange(  
+                    0, sequence_length,   
+                    dtype=torch.long,   
+                    device=self.device  
+                ).expand(self.config.batch_size, -1)  # [batch_size, seq_length] 
+
             
         # 确保不会重复计算或重用张量
         with torch.set_grad_enabled(True):
@@ -515,9 +525,11 @@ class BassPromptModel(torch.nn.Module):
             batch_size = inputs_embeds.size(0)  
             input_size = inputs_embeds.size(1)
             
-            assert batch_size == self.config.batch_size, "input embedding's batch_size must be equal to config.batch_size"
-            
-        
+            if self.num_options:
+                assert batch_size == self.config.batch_size*self.num_options, "input embedding's batch_size must be equal to config.batch_size*self.num_options"
+            else:
+                assert batch_size == self.config.batch_size, "input embedding's batch_size must be equal to config.batch_size"
+                
             # past_key_values = self.get_past_key_values(
             #     prefix_embeds,
             #     inputs_embeds,
@@ -541,6 +553,11 @@ class BassPromptModel(torch.nn.Module):
                 print("**************************************************")
                 print()
             # 拼接前缀、原始输入和后缀嵌入  
+            
+            
+            if self.num_options:
+                prefix_embeds=prefix_embeds.repeat(self.num_options, 1, 1)
+                suffix_embeds=suffix_embeds.repeat(self.num_options, 1, 1)
             
             inputs_embeds = torch.cat([prefix_embeds, inputs_embeds, suffix_embeds], dim=1)  # (4, 512, 768)
             
@@ -1779,7 +1796,8 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         config=config,
         chain_encode_args=chain_encode_args,
         device = accelerator.device,
-        debug=config.debug
+        debug=config.debug,
+        num_options=dataset_config.num_options
     )
     
     baas_model.to(accelerator.device)

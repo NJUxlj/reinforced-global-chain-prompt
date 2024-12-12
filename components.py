@@ -608,13 +608,13 @@ class BaasAttention(nn.Module):
         
         # 检查并扩展维度
         if self.suffix_embeddings.dim()==3:
-            suffix_embeddings = self.suffix_embeddings
+            suffix_embeddings = self.suffix_embeddings.repeat(batch_size, 1, 1)
         else:
             suffix_embeddings = self.suffix_embeddings.unsqueeze(0).expand(  
                 batch_size, -1, -1)  
         
         if self.prefix_embeddings.dim()==3:
-            prefix_embeddings = self.prefix_embeddings
+            prefix_embeddings = self.prefix_embeddings.repeat(batch_size, 1, 1)
         else:
             prefix_embeddings = self.prefix_embeddings.unsqueeze(0).expand(  
                 batch_size, -1, -1)  
