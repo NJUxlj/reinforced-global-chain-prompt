@@ -1711,7 +1711,14 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     dataset_configs = wrapper.dataset_configs
     dataset_config = dataset_configs[config.dataset_name]   
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length = max_length, seq_cls_type=config.seq_cls_type)
+    processed_ds = preprocess_dataset_peft(
+        dataset_name, 
+        model_path, 
+        max_length = max_length, 
+        seq_cls_type=config.seq_cls_type,
+        train_size=config.train_size,
+        batch_size =config.batch_size,
+        )
     
     
     train_ds = processed_ds["train"]
@@ -1725,7 +1732,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     # 使用DistributedSampler进行数据分布  
     train_sampler = DistributedSampler(  
         train_ds,  
-        shuffle=True,  
+        shuffle=False,  
         seed=42  
     ) if torch.distributed.is_initialized() else None 
     
@@ -1750,17 +1757,19 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
             train_ds, 
             # shuffle=True, # shuffle is not necessary when using DistributedSampler
             collate_fn=data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             # pin_memory=True,
-            sampler=train_sampler
+            sampler=train_sampler,
+            drop_last=True
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             # pin_memory=True,
-            sampler=eval_sampler
+            sampler=eval_sampler,
+            drop_last=True,
         )
     
     

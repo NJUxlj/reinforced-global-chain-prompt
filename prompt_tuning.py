@@ -163,7 +163,14 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     
     dataset_configs = wrapper.dataset_configs
     dataset_config = dataset_configs[config.dataset_name]
-    processed_ds = preprocess_dataset_peft(dataset_name, config.model_path, max_length=max_length, train_size=config.train_size)
+    
+    processed_ds = preprocess_dataset_peft(
+        dataset_name, 
+        config.model_path, 
+        max_length=max_length, 
+        train_size=config.train_size,
+        batch_size =config.batch_size,
+        )
     
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["test"]  
@@ -177,7 +184,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     # 使用DistributedSampler进行数据分布  
     train_sampler = DistributedSampler(  
         train_ds,  
-        shuffle=True,  
+        shuffle=False,  
         seed=42  
     ) if torch.distributed.is_initialized() else None 
     
@@ -191,17 +198,19 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             train_ds, 
             # shuffle=True, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             pin_memory=True,
-            sampler=train_sampler
+            sampler=train_sampler,
+            drop_last=True
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             pin_memory=True,
-            sampler = eval_sampler
+            sampler = eval_sampler,
+            drop_last=True,
         )
     
     

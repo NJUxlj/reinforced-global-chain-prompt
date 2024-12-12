@@ -750,6 +750,7 @@ def preprocess_function_dream(
     
     # 获取批次大小  
     batch_size = len(examples[first_four_columns[0]])  
+    print("batch_size = ", batch_size)
     
     label_map = {  
             0: "A",  
@@ -910,6 +911,7 @@ def preprocess_function_dream(
 
         # 将所有选项的张量堆叠  
         input_ids = torch.stack(input_ids_list)  # shape: (num_choices, seq_len)  
+        print(f"第{i}个样本的input_ids进行张量堆叠后：input_ids.shape: ", input_ids.shape) # shape = [3, 412]
         attention_mask = torch.stack(attention_mask_list)  # shape: (num_choices, seq_len) 
         if is_bert_like_model:
             token_type_ids = torch.stack(token_type_ids_list)
@@ -923,6 +925,8 @@ def preprocess_function_dream(
         
     # 将所有样本堆叠成批次  
     batched_input_ids = torch.stack(all_input_ids)  # shape: (batch_size, num_choices, seq_len)  
+    print("batched_input_ids.shape: ", batched_input_ids.shape) # shape = [2, 3, 412]
+    
     batched_attention_masks = torch.stack(all_attention_masks)  # shape: (batch_size, num_choices, seq_len)  
     batched_labels = torch.tensor(all_labels, dtype=torch.long) # # shape: (batch_size * num_choices, ) 
     
@@ -931,12 +935,14 @@ def preprocess_function_dream(
         
     # 重塑张量以适应PEFT的要求  
     batch_size, num_choices, seq_len = batched_input_ids.shape  
-    
+    print("batched_input_ids.view(-1, seq_len).shape = ",batched_input_ids.view(-1, seq_len).shape)
     results = {  
         "input_ids": batched_input_ids.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
         "attention_mask": batched_attention_masks.view(-1, seq_len),  # shape: (batch_size * num_choices, seq_len)  
         "labels": batched_labels  
     }  
+    # last_hidden_state.shape = [6, 412, 768]
+    # cls_token.shape = [6, 768]
     
     if is_bert_like_model:
         results["token_type_ids"]=batched_token_type_ids.view(-1, seq_len)
@@ -2198,7 +2204,7 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
 
 
 
-def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_type='binary', train_size=22000)->Dataset:
+def preprocess_dataset_peft(dataset_name, model_path, batch_size, max_length=512, seq_cls_type='binary', train_size=22000)->Dataset:
     """  
     处理整个数据集  [dataset必须同时包含train, test, validation(dev)] [针对PEFT任务]
                     # train and validation will be put to dataloader for training and evaluation
@@ -2221,10 +2227,11 @@ def preprocess_dataset_peft(dataset_name, model_path, max_length=512, seq_cls_ty
     
     dataset_configs = wrapper.dataset_configs
     dataset, first_four_columns = wrapper.load_mcq_dataset(dataset_name, split=None, train_size=train_size)
+    dataset['train'] = dataset['train'].shuffle(seed=42)
     processed_dataset:DatasetDict = dataset.map(
         function= lambda examples: preprocess_func_peft(dataset_name, examples, wrapper, first_four_columns, max_length, seq_cls_type=seq_cls_type),
         batched=True,
-        batch_size=Config['batch_size'],
+        batch_size=batch_size,
         num_proc=1,
         remove_columns= dataset['train'].column_names,           # dataset.column_names,
         load_from_cache_file=True,

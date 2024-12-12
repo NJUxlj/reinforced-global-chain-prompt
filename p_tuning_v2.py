@@ -518,7 +518,13 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     dataset_configs = wrapper.dataset_configs
     dataset_config = dataset_configs[config.dataset_name]
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length)
+    processed_ds = preprocess_dataset_peft(
+        dataset_name,
+        model_path=config.model_path, 
+        max_length=max_length,
+        train_size=config.train_size,
+        batch_size =config.batch_size,
+        )
     
     
     train_ds = processed_ds["train"]
@@ -529,7 +535,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     
     train_sampler = DistributedSampler(  
         train_ds,  
-        shuffle=True,  
+        shuffle=False,  
         seed=42  
     ) if torch.distributed.is_initialized() else None 
     
@@ -543,17 +549,19 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
             train_ds, 
             # shuffle=True, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             pin_memory=True,
-            sampler=train_sampler
+            sampler=train_sampler,
+            drop_last=True
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             pin_memory=True,
-            sampler=eval_sampler
+            sampler=eval_sampler,
+            drop_last=True,
         )
 
     # encapsulate the base model into a P-Tuning V2 model

@@ -150,10 +150,17 @@ def train_p_tuning(config:PtuningConfig):
     dataset_configs = wrapper.dataset_configs
     dataset_config = dataset_configs[config.dataset_name]
     
-    processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length, train_size=config.train_size)
+    processed_ds = preprocess_dataset_peft(
+        dataset_name, 
+        model_path=config.model_path, 
+        max_length=max_length, 
+        train_size=config.train_size,
+        batch_size =config.batch_size,
+        )
     
     
-    train_ds = processed_ds["train"]
+    train_ds:Dataset = processed_ds["train"]
+    # train_ds = train_ds.shuffle(seed=config.seed)
     eval_ds = processed_ds["test"]
 
     print("training set size = ", len(train_ds))
@@ -161,7 +168,7 @@ def train_p_tuning(config:PtuningConfig):
     
     train_sampler = DistributedSampler(  
         train_ds,  
-        shuffle=True,  
+        shuffle=False,  
         seed=42  
     ) if torch.distributed.is_initialized() else None 
     
@@ -175,17 +182,19 @@ def train_p_tuning(config:PtuningConfig):
             train_ds, 
             # shuffle=True, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             pin_memory=False,
-            sampler=train_sampler
+            sampler=train_sampler,
+            drop_last=True
         )
     
     eval_dataloader = DataLoader(
             eval_ds, 
             collate_fn=default_data_collator, 
-            batch_size=batch_size,
+            batch_size=batch_size*dataset_config.num_options,
             pin_memory=False,
-            sampler = eval_sampler
+            sampler = eval_sampler,
+            drop_last=True,
         )
     
     # Prompt-tuning
@@ -274,10 +283,13 @@ def train_p_tuning(config:PtuningConfig):
             batch = {k: v.to(accelerator.device) for k, v in batch.items()}
             
             labels = batch["labels"]  
+            input_ids = batch['input_ids']
+            # print("input_ids.shape = ", input_ids.shape)
             outputs = model(**batch)
             criterion = nn.CrossEntropyLoss()
             
-            logits = outputs.logits
+            logits = outputs.logits # shape = [batch_size * 4, 2]
+            # print(f"batch_size = {logits.size(0) // dataset_config.num_options }")
             # print(f"logits shape before view: {logits.shape}")  
             # print(f"labels shape before view: {labels.shape}")  
             # 可以添加对比损失  
