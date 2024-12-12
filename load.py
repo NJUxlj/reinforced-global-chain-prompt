@@ -400,6 +400,9 @@ def preprocess_function_race(
                 # 构建标签文本  
                 # label = label_map[label]
                 
+                # 将数字标签转换为文本标签  
+                label_text = "correct" if j == label else "incorrect"  
+                
                 # 对输入文本进行编码  
                 result = tokenizer(  
                     template,  
@@ -412,7 +415,7 @@ def preprocess_function_race(
                 # 对标签进行编码  
                 with tokenizer.as_target_tokenizer():  
                     encoded_label = tokenizer(  
-                        answer,  
+                        label_text,  
                         max_length=8,  
                         padding="max_length",  
                         truncation=True,  
