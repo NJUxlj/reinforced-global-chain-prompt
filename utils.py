@@ -931,14 +931,14 @@ def print_prediction_distribution(outputs,step,loss, num_options=2, logits=None,
         # print(f"\nStep {step} predictions distribution:",   
         #         torch.bincount(preds).cpu().numpy())  
         
-        print("\nStep {step} Prediction Distribution:")  
+        print(f"\nStep {step} Prediction Distribution:")  
         for i in range(num_options):  
             count = (preds == i).sum()  
             print(f"Option {i}: {count} ({count/len(preds):.2%})")  
             
         print("\n===============================================\n")
             
-        print("\nStep {step} True Label Distribution:")  
+        print(f"\nStep {step} True Label Distribution:")  
         for i in range(num_options):  
             count = (labels == i).sum()  
             print(f"Option {i}: {count} ({count/len(labels):.2%})")  
@@ -1006,6 +1006,10 @@ def parse_training_arguments(config=None):
     
     parser.add_argument(
         "--batch_size", type=int, default=4, help="batch size for training"
+    )
+    
+    parser.add_argument(
+        "--num_epochs", type=int, default=10, help="number of epochs for training"
     )
     
     

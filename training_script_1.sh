@@ -104,10 +104,54 @@
 
 
 
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 8
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 8
 
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 8
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 8
 
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 8
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 8
 
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 8
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 8
+
+
+
+
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+
+
+
+
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name race --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name sciq --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name dream --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name race --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 32 --num_epochs 20
+
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 32 --num_epochs 20

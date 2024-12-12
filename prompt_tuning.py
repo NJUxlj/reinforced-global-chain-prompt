@@ -19,6 +19,8 @@ from datasets import (
     load_dataset
 )
 
+from evaluation import ModelEvaluator
+
 from transformers import (
     set_seed,
     default_data_collator,
@@ -287,6 +289,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
     device = accelerator.device
     global_step = 0
     best_accuracy = 0 
+    evaluator = ModelEvaluator(accelerator, dataset_config)
     
     optimizer.zero_grad()
     # 添加参数状态监控  
@@ -312,14 +315,11 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             labels = batch["labels"]  
             
             
-            # print("batch.keys = \n",batch.keys())
-            # print("+++++++++++++++++++++++++++++++++++++++++++++++++")
             if config.debug:
                 print("max_sequence_length = ", config.max_seq_length)
                 print("model.config.max_position_embeddings = ", model.module.config.max_position_embeddings)
                 print("batch[\"input_ids\"].shape = ",batch["input_ids"].shape)
                 print("batch[\"attention_mask\"].shape = ",batch["attention_mask"].shape)
-            # time.sleep(10000)
             
             
             
@@ -331,16 +331,6 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
             # ).unsqueeze(0).expand(bz, -1)   
             
             # position_ids = create_position_ids_safe(batch.get("attention_mask"), config.max_seq_length, padding_idx=1)
-            # print("position_ids.shape = ",position_ids.shape)
-            # print("position_ids.value = \n", position_ids)
-            # # 1. 检查position_ids的范围  
-            # print("Position IDs max:", position_ids.max())  
-            # print("Position IDs min:", position_ids.min())  
-            
-            # time.sleep(10000)
-            
-            
-            # batch['position_ids'] = position_ids
             
             if config.debug:
                 debug_cuda_sync("start model forward")
@@ -404,7 +394,8 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         
         if accelerator.is_main_process:
             print(f"begin epoch {epoch} evaluating...")   
-        eval_results = evaluate_prompt_tuning(model, eval_dataloader, accelerator, dataset_config)
+        # eval_results = evaluate_prompt_tuning(model, eval_dataloader, accelerator, dataset_config)
+        eval_results = evaluator.evaluate(model,eval_dataloader)
         accelerator.wait_for_everyone()
         # 记录自定义的logger
         if accelerator.is_main_process and logger is not None:
@@ -783,7 +774,7 @@ if __name__ == '__main__':
         model_path = model_path,
         dataset_name= dataset_name,
         max_seq_length=max_seq_length,
-        num_epochs=5,
+        num_epochs=args.num_epochs,
         num_labels=2,
         prefix_hidden_size=hidden_size,
         encoder_hidden_size=hidden_size,

@@ -97,6 +97,8 @@ from dataclasses import dataclass
 from collections import Counter
 from swanlab.integration.accelerate import SwanLabTracker
 
+from evaluation import ModelEvaluator
+
 
 import nltk  
 # nltk.download('punkt') 
@@ -1645,7 +1647,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     fix_seed(config.seed)
     print("\n\n",config,"\n\n")
     model_name = config.model_name
-    dataset_name = config.dataset_name
+  
     model_path = config.model_path
     num_labels = config.num_labels
     batch_size = config.batch_size
@@ -1665,11 +1667,31 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     print(f"After inserting prompt tokens, {model_name}'s max length = {max_length}")
 
     
+    dataset_name = config.dataset_name
+    dataset_path = get_dataset_path_by_name(dataset_name)
     
+    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
+    tracker = SwanLabTracker("BAAS_PROMPT_TRAING", experiment_name=exp_name)  # 训练可视化
+    accelerator = Accelerator(
+        gradient_accumulation_steps=config.gradient_accumulation_steps,  
+        # mixed_precision=config.mixed_precision,
+        log_with=[tracker]
+    )
+    tracker_config = {
+        "num_epoch": config.num_epochs,
+        "batch_num": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "seed": config.seed,
+    }
+    accelerator.init_trackers("BAAS_PROMPT_TRAING", config=tracker_config)
     
-
+    wrapper = McqDatasetWrapper(
+        model_name_or_path=config.model_path,
+        max_seq_length=config.max_seq_length
+    )
     
-    # the preprocessed dataset only contains ["input_ids", "attention_mask", "labels"]
+    dataset_configs = wrapper.dataset_configs
+    dataset_config = dataset_configs[config.dataset_name]   
     
     processed_ds = preprocess_dataset_peft(dataset_name, model_path, max_length = max_length, seq_cls_type=config.seq_cls_type)
     
@@ -1696,15 +1718,15 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     ) if torch.distributed.is_initialized() else None 
     
     
-    data_collator=None
-    if model.config.model_type=='qwen2':
-        data_collator = DataCollatorWithPadding(  
-            tokenizer=tokenizer,  
-            padding=True,  
-            return_tensors="pt"  
-        )  
-    else:
-        data_collator = default_data_collator
+    data_collator=default_data_collator
+    # if model.config.model_type=='qwen2':
+    #     data_collator = DataCollatorWithPadding(  
+    #         tokenizer=tokenizer,  
+    #         padding=True,  
+    #         return_tensors="pt"  
+    #     )  
+    # else:
+    #     data_collator = default_data_collator
     
     train_dataloader = DataLoader(
             train_ds, 
@@ -1723,20 +1745,6 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
             sampler=eval_sampler
         )
     
-    exp_name = f"{config.peft_method}_{model_name}_{dataset_name}"
-    tracker = SwanLabTracker("BAAS_PROMPT_TRAING", experiment_name=exp_name)  # 训练可视化
-    accelerator = Accelerator(
-        gradient_accumulation_steps=config.gradient_accumulation_steps,  
-        # mixed_precision=config.mixed_precision,
-        log_with=[tracker]
-    )
-    tracker_config = {
-        "num_epoch": config.num_epochs,
-        "batch_num": config.batch_size,
-        "learning_rate": config.learning_rate,
-        "seed": config.seed,
-    }
-    accelerator.init_trackers("BAAS_PROMPT_TRAING", config=tracker_config)
     
     baas_model = BassPromptModel(  
         model=model,
@@ -1788,7 +1796,8 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         
     global_step = 0
     optimizer.zero_grad()
-    
+    param_monitor = {}
+    evaluator = ModelEvaluator(accelerator,dataset_config)
     print("\n\n**************************************************************************************")
     print(f"************* Start training model {model_name} on {dataset_name} using {config.peft_method} ... ************")
     print(f"****************** Prefix topic labels retrived by {config.classes_initiate_method} ************\n\n")
@@ -1797,6 +1806,10 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         total_loss = 0
         if train_sampler is not None:  # 每轮训练都打乱顺序
             train_sampler.set_epoch(epoch) 
+        # 记录每个epoch开始时的参数状态  
+        if accelerator.is_main_process:
+            record_epoch_param_state(model, param_monitor)
+        
         for step, batch in enumerate(tqdm(train_dataloader)):
 
             with accelerator.accumulate(model):
@@ -1818,10 +1831,21 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
                 
                 logits = outputs.logits
                 
+                # 可以添加对比损失  
+                # ---------------------------------
+                logits = logits.view(-1, dataset_config.num_options, 2)[:, :, 1]  # [batch_size, 4, 2] -> [batch_size, 4]  
+                labels = labels.view(-1, dataset_config.num_options).argmax(dim=1)  # [batch_size, 4] -> [batch_size, ]
+                # ---------------------------------
+                
                 loss:torch.Tensor = criterion(logits, labels.long())
+
+                if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
+                    # 打印训练过程中的预测分布
+                    print_prediction_distribution(outputs,step,loss, dataset_config.num_options, logits, labels)
                 total_loss += loss.detach().float().item() 
                 
-
+                accelerator.wait_for_everyone()
+                
                 # loss.backward()
                 accelerator.backward(loss, retain_graph=True)
                 
@@ -1859,26 +1883,20 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
 
                 torch.cuda.empty_cache()  # 可选，如果内存占用过高
             
-            global_step+=1
+        global_step+=1
+        accelerator.wait_for_everyone()
             
+        # 在每个epoch结束后检查参数变化  
+        if accelerator.is_main_process and epoch > 0:  
+            check_param_after_epoch(model,param_monitor,epoch)
             
-        if accelerator.is_local_main_process:
+        if accelerator.is_main_process:
             print(f"begin epoch {epoch} evaluating...")    
             
-            # if step == len(train_dataloader)-1:  
-        eval_results = evaluate_baas_prompt(model, accelerator, eval_dataloader)
+        # eval_results = evaluate_baas_prompt(model, accelerator, eval_dataloader)
+        eval_results = evaluator.evaluate(model, eval_dataloader)
         accelerator.wait_for_everyone()  
-
-                
-                
-                # # 计算评价指标  
-                # accuracy = np.mean(np.array(all_preds) == np.array(all_labels))  
-                # precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted')  
-
-                # accelerator.wait_for_everyone() 
-
-                # print(f"Step {global_step}, Validation Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")  
-                
+                        
         # 记录自定义的logger
         if accelerator.is_main_process and logger is not None:
             avg_loss = total_loss / len(train_dataloader)   
@@ -2060,7 +2078,7 @@ if __name__ == "__main__":
         model_path = model_path,
         dataset_name=dataset_name,
         max_seq_length=max_seq_length,
-        num_epochs=5,
+        num_epochs=args.num_epochs,
         num_labels=2,
         all_layers=False,
         is_prefix=False,

@@ -71,6 +71,8 @@ from swanlab.integration.accelerate import SwanLabTracker
 
 from tqdm import tqdm
 
+from evaluation import ModelEvaluator
+
 
 
 '''
@@ -108,10 +110,10 @@ class PrefixTuningTrainerConfig:
     total_training_steps = 30000  # 总的训练步数
     early_stop_steps = 10
     optimizer_class:type = AdamW 
-     
     
     seed:int=42
-    
+    train_size:int=22000
+    mixed_precision:bool = False
     
 def verify_peft_config(model, peft_config:PrefixTuningConfig, prefix_trainer_config:PrefixTuningTrainerConfig):
     """验证模型配置是否正确"""  
@@ -210,7 +212,13 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     }
     accelerator.init_trackers("PROMPT_TUNING_TRAING", config=tracker_config)
     
+    wrapper = McqDatasetWrapper(
+        model_name_or_path=config.model_path,
+        max_seq_length=config.max_seq_length
+    )
     
+    dataset_configs = wrapper.dataset_configs
+    dataset_config = dataset_configs[config.dataset_name]
     
     processed_ds = preprocess_dataset_peft(dataset_name, model_path=model_path, max_length=max_length)
     
@@ -322,6 +330,7 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     global_step = 0
     optimizer.zero_grad()
     param_monitor = {}
+    evaluator = ModelEvaluator(accelerator,dataset_config)
     
     for epoch in range(num_epochs):
         model.train()
@@ -343,8 +352,17 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
-            
+            # 可以添加对比损失  
+            # ---------------------------------
+            logits = logits.view(-1, dataset_config.num_options, 2)[:, :, 1]  # [batch_size, 4, 2] -> [batch_size, 4]  
+            labels = labels.view(-1, dataset_config.num_options).argmax(dim=1)  # [batch_size, 4] -> [batch_size, ]
+            # ---------------------------------
             loss = criterion(logits, labels.long())
+
+            if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
+                # 打印训练过程中的预测分布
+                print_prediction_distribution(outputs,step,loss, dataset_config.num_options, logits, labels)
+
             total_loss += loss.detach().float().item() 
             accelerator.wait_for_everyone()
             
@@ -374,7 +392,8 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
         
         if accelerator.is_main_process:
             print(f"begin epoch {epoch} evaluating...")   
-        eval_results = evaluate_prefix_tuning(model, eval_dataloader, accelerator)
+        # eval_results = evaluate_prefix_tuning(model, eval_dataloader, accelerator)
+        eval_results = evaluator.evaluate(model, eval_dataloader)
         accelerator.wait_for_everyone()
         # 记录自定义的logger
         if accelerator.is_main_process and logger is not None:
@@ -520,12 +539,13 @@ if __name__ == "__main__":
         model_path = model_path,
         dataset_name=dataset_name,
         max_seq_length= max_seq_length,
-        num_epochs=5,
+        num_epochs=args.num_epochs,
         num_labels=2,
-        prefix_length=10,
+        prefix_length=100,
         prefix_hidden_size=hidden_size,
         prefix_projection_hidden_size=4*hidden_size,
         encoder_hidden_size=hidden_size,
-        
+        train_size=args.train_size,
+        batch_size=args.batch_size,
     )
     train_prefix_tuning(config)

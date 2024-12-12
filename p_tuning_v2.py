@@ -77,6 +77,8 @@ from sklearn.metrics import (
     classification_report  
 ) 
 
+from evaluation import ModelEvaluator
+
 
 # we follow the setting of prompt-tuning (Lester et al., 2021)
 @dataclass  
@@ -499,7 +501,13 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     }
     accelerator.init_trackers("P_TUNING_V2_TRAING", config=tracker_config)
     
+    wrapper = McqDatasetWrapper(
+        model_name_or_path=config.model_path,
+        max_seq_length=config.max_seq_length
+    )
     
+    dataset_configs = wrapper.dataset_configs
+    dataset_config = dataset_configs[config.dataset_name]
     
     processed_ds = preprocess_dataset_peft(dataset_name, model_path=config.model_path, max_length=max_length)
     
@@ -612,6 +620,8 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
     optimizer.zero_grad()
     # 添加参数状态监控  
     param_monitor = {}
+    evaluator = ModelEvaluator(accelerator, dataset_config)
+    
     
     for epoch in range(num_epochs):  
         model.train() 
@@ -627,12 +637,20 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
             labels = batch["labels"]  
             
             outputs = model(**batch)
-            
+            criterion = nn.CrossEntropyLoss()
             logits = outputs.logits
-            loss = outputs.loss
-            # loss = criterion(logits, labels.long())
+            # 可以添加对比损失  
+            # ---------------------------------
+            logits = logits.view(-1, dataset_config.num_options, 2)[:, :, 1]  # [batch_size, 4, 2] -> [batch_size, 4]  
+            labels = labels.view(-1, dataset_config.num_options).argmax(dim=1)  # [batch_size, 4] -> [batch_size, ]
+            # ---------------------------------
+            # loss = outputs.loss
+            loss = criterion(logits, labels.long())
+            
+            if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
+                # 打印训练过程中的预测分布
+                print_prediction_distribution(outputs,step,loss, dataset_config.num_options, logits, labels)
             total_loss += loss.detach().float().item() 
-
             
             accelerator.wait_for_everyone()
             
@@ -662,7 +680,8 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
         
         if accelerator.is_main_process:
             print(f"begin epoch {epoch} evaluating...")   
-        eval_results = evaluate_ptuning_v2(model, eval_dataloader, accelerator)
+        # eval_results = evaluate_ptuning_v2(model, eval_dataloader, accelerator)
+        eval_results = evaluator.evaluate(model, eval_dataloader)
         accelerator.wait_for_everyone()
         # 记录自定义的logger
         if accelerator.is_main_process and logger is not None:
@@ -875,6 +894,7 @@ if __name__ == "__main__":
         prefix_length=100,
         train_size=args.train_size,
         batch_size=args.batch_size,
+        num_epochs=args.num_epochs
         
         
     )
