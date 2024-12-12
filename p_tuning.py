@@ -278,6 +278,8 @@ def train_p_tuning(config:PtuningConfig):
             criterion = nn.CrossEntropyLoss()
             
             logits = outputs.logits
+            # print(f"logits shape before view: {logits.shape}")  
+            # print(f"labels shape before view: {labels.shape}")  
             # 可以添加对比损失  
             # ---------------------------------
             logits = logits.view(-1, dataset_config.num_options, 2)[:, :, 1]  # [batch_size, 4, 2] -> [batch_size, 4]  
@@ -286,7 +288,7 @@ def train_p_tuning(config:PtuningConfig):
             loss = criterion(logits, labels.long())
             if step % 300 == 0 and step!=0 and accelerator.is_main_process:  
                 # 打印训练过程中的预测分布
-                print_prediction_distribution(outputs,step,loss)
+                print_prediction_distribution(outputs,step,loss, dataset_config.num_options,logits,labels)
                 
             total_loss += loss.detach().float().item() 
 

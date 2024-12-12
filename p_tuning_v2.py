@@ -325,7 +325,7 @@ class PTuningV2ForSequenceClassification(nn.Module):
         
         outputs = self.base_model(  
             input_ids=input_ids,  
-            attention_mask=attention_mask,  
+            attention_mask=attention_mask,  # shape = (batch_size, max_length)
             token_type_ids=token_type_ids if self.model_type == "bert" else None,  
             position_ids=position_ids if self.model_type == "bert" else None,
             # labels=labels,  
@@ -338,7 +338,16 @@ class PTuningV2ForSequenceClassification(nn.Module):
         )   # last_hidden_state, pooled_output = model(input_ids)
         
         # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
-        cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
+        
+        if self.model_type=='qwen2':
+            last_hidden_state = outputs.last_hidden_state  
+            sequence_lengths = attention_mask.sum(dim=1) - 1  # 减1获取最后一个非padding位置  shape = (batch_size,)
+            batch_size = input_ids.shape[0]  
+            # 在每个样本中锁定最后那个非padding位置
+            sequence_output = last_hidden_state[torch.arange(batch_size), sequence_lengths]  # shape = (batch_size, hidden_size)
+            cls_token = sequence_output
+        else:
+            cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
 
         cls_token = self.dropout(cls_token)
         logits = self.classifier(cls_token) # shape = (batch_size, num_labels)

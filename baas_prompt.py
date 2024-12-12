@@ -635,11 +635,29 @@ class BassPromptModel(torch.nn.Module):
             # cls_token = outputs.hidden_states[-1][:, 0, :] # shape = (batch_size, hidden_size)
             # cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
 
-            if hasattr(self.classifier, 'dense') or hasattr(self.classifier, 'out_proj'):
-                # it means that the classifier is a RobertaClassificationHead
-                logits:torch.Tensor = self.classifier(outputs.last_hidden_state) # shape = (batch_size, num_labels)
+            
+            if self.model_type == 'qwen2':
+                # 使用最后一个非padding token的隐藏状态  
+                last_hidden_state = outputs.last_hidden_state  
+                sequence_lengths = attention_mask.sum(dim=1) - 1  
+                sequence_length
+                batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0] 
+                
+                 
+                sequence_output = last_hidden_state[  
+                    torch.arange(batch_size, device=self.device),   
+                        sequence_lengths  
+                    ]  # shape = (batch_size, hidden_size)
+                
+                logits= self.classifier(sequence_output)
+            
             else:
-                logits = self.classifier(outputs.last_hidden_state[:,0,:]) # shape = (batch_size, num_labels)
+                if hasattr(self.classifier, 'dense') or hasattr(self.classifier, 'out_proj'):
+                    # it means that the classifier is a RobertaClassificationHead
+                    logits:torch.Tensor = self.classifier(outputs.last_hidden_state) # shape = (batch_size, num_labels)
+                else:
+                    # last_hidden_state[:,0,:].shape = (batch_size, hidden_size)
+                    logits = self.classifier(outputs.last_hidden_state[:,0,:]) # shape = (batch_size, num_labels)
             
             if self.debug:
                 print("************* BaasPromptModel 中的 base_model 输出：*************")

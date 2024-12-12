@@ -84,7 +84,9 @@ class ModelEvaluator:
         计算评估指标  
         """  
         metrics = {  
-            'accuracy': accuracy_score(all_labels, all_preds),  
+            'accuracy': accuracy_score(
+                all_labels, all_preds, 
+            ),  
             'precision': precision_score(  
                 all_labels, all_preds,   
                 average=self.metric_average  
@@ -96,6 +98,21 @@ class ModelEvaluator:
             'f1': f1_score(  
                 all_labels, all_preds,   
                 average=self.metric_average  
+            ),  
+            'macro_accuracy': accuracy_score(
+                all_labels, all_preds, 
+            ), 
+            'macro_precision': precision_score(  
+                all_labels, all_preds,   
+                average="macro"  
+            ),  
+            'macro_recall': recall_score(  
+                all_labels, all_preds,   
+                average="macro"  
+            ),  
+            'macro_f1': f1_score(  
+                all_labels, all_preds,   
+                average="macro"  
             ),  
             'question_accuracy': correct_questions / total_questions,  
             'mean_confidence': np.mean(all_probs.max(axis=1))  
