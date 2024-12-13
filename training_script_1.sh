@@ -117,49 +117,56 @@
 
 # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name race --classes_initiate_method cluster --batch_size 16 --num_epochs 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-
-
-
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-base-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
-
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
 
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name roberta-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
 
 
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+
+
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name roberta-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+
+
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name bert-base-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+
+
+
+
+
+# Qwen2.5-0.5B
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name Qwen2.5-0.5B --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10

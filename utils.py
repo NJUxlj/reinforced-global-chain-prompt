@@ -310,7 +310,7 @@ def get_base_model_using_model(model):
         elif isinstance(model, RobertaForSequenceClassification):
             model = model.roberta
         elif isinstance(model, Qwen2ForSequenceClassification):
-            model = model.qwen
+            model = model.model
          
         else:
             raise ValueError(f"the passed model object is not either SequenceClassification model or AutoModel \
@@ -507,6 +507,8 @@ def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
         return model.distilbert.embeddings(token_ids)   
     elif hasattr(model, 'base_model') and hasattr(model.base_model, 'embeddings'):  
         return model.base_model.embeddings(token_ids)  
+    elif hasattr(model, 'model') and hasattr(model.model, 'embed_tokens'):  # qwen2
+        return model.model.embed_tokens(token_ids)  
     else:  
         raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.") 
 
@@ -528,6 +530,8 @@ def get_word_embeddings_from_model(model):
             return model.distilbert.embeddings.word_embeddings 
         elif hasattr(model, 'base_model') and hasattr(model.base_model, 'embeddings'):  
             return model.base_model.embeddings.word_embeddings
+        elif hasattr(model, 'model') and hasattr(model.model, 'embed_tokens'): # qwen2
+            return model.model.embed_tokens
         else:  
             raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.") 
 

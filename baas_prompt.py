@@ -633,20 +633,35 @@ class BassPromptModel(torch.nn.Module):
             # time.sleep(10000)
             
             # 调用原始模型的forward方法  
-            outputs = self.base_model(  
-                # input_ids=input_ids,                 
-                inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
-                attention_mask=attention_mask,  
-                token_type_ids=token_type_ids if self.model_type == "bert" or self.model_type == "roberta" else None,  
-                position_ids=position_ids if self.model_type == "bert" or self.model_type == "roberta" else None,
-                # labels=labels,
-                head_mask=head_mask,
-                output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
-                output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
-                return_dict=return_dict,
-                # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
-                # past_key_values=past_key_values if config.all_layers else None, 
-            )   
+            
+            if self.model_type == "bert" or self.model_type == "roberta":
+                outputs = self.base_model(  
+                    # input_ids=input_ids,                 
+                    inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
+                    attention_mask=attention_mask,  
+                    token_type_ids=token_type_ids if self.model_type == "bert" or self.model_type == "roberta" else None,  
+                    position_ids=position_ids if self.model_type == "bert" or self.model_type == "roberta" else None,
+                    # labels=labels,
+                    head_mask=head_mask,
+                    output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                    output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                    return_dict=return_dict,
+                    # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+                    # past_key_values=past_key_values if config.all_layers else None, 
+                )   
+            else: # qwen2
+                outputs = self.base_model(  
+                    # input_ids=input_ids,                 
+                    inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
+                    attention_mask=attention_mask,  
+                    position_ids=position_ids if self.model_type == "bert" or self.model_type == "roberta" else None,
+                    # labels=labels,
+                    output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                    output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                    return_dict=return_dict,
+                    # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+                    # past_key_values=past_key_values if config.all_layers else None, 
+                )   
             
             # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
             # cls_token = outputs.hidden_states[-1][:, 0, :] # shape = (batch_size, hidden_size)
