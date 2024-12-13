@@ -159,6 +159,7 @@ class BaasPromptConfig:
     classes_initiate_method:str = 'cluster' # ['normal','lda','cluster']
     train_size:int = 22000
     mixed_precision:bool=False
+    suffix_ratio:int=10
     
 class BaasPromptEncoder(nn.Module):  
     def __init__(  
@@ -649,7 +650,33 @@ class BassPromptModel(torch.nn.Module):
                     # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
                     # past_key_values=past_key_values if config.all_layers else None, 
                 )   
-            else: # qwen2
+            elif self.model_type == "qwen2": # qwen2
+                outputs = self.base_model(  
+                    # input_ids=input_ids,                 
+                    inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
+                    attention_mask=attention_mask,  
+                    position_ids=position_ids if self.model_type == "bert" or self.model_type == "roberta" else None,
+                    # labels=labels,
+                    output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                    output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                    return_dict=return_dict,
+                    # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+                    # past_key_values=past_key_values if config.all_layers else None, 
+                )   
+            elif self.model_type == "gpt2": # qwen2
+                outputs = self.base_model(  
+                    # input_ids=input_ids,                 
+                    inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
+                    attention_mask=attention_mask,  
+                    position_ids=position_ids if self.model_type == "bert" or self.model_type == "roberta" else None,
+                    # labels=labels,
+                    output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                    output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                    return_dict=return_dict,
+                    # past_key_values.shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+                    # past_key_values=past_key_values if config.all_layers else None, 
+                )   
+            else: # 
                 outputs = self.base_model(  
                     # input_ids=input_ids,                 
                     inputs_embeds=inputs_embeds,  # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是从input_ids重新计算
@@ -668,20 +695,38 @@ class BassPromptModel(torch.nn.Module):
             # cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
 
             
-            if self.model_type == 'qwen2':
+            if self.model_type == 'qwen2' or self.model_type == 'gpt2':
                 # 使用最后一个非padding token的隐藏状态  
                 last_hidden_state = outputs.last_hidden_state  
-                sequence_lengths = attention_mask.sum(dim=1) - 1  
-                sequence_length
+                # sequence_lengths = attention_mask.sum(dim=1) - 1  
+                # sequence_length
                 batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0] 
                 
-                 
-                sequence_output = last_hidden_state[  
-                    torch.arange(batch_size, device=self.device),   
-                        sequence_lengths  
-                    ]  # shape = (batch_size, hidden_size)
+                # sequence_output = last_hidden_state[  
+                #     torch.arange(batch_size, device=self.device),   
+                #         sequence_lengths  
+                #     ]  # shape = (batch_size, hidden_size)
                 
-                logits= self.classifier(sequence_output)
+                # logits= self.classifier(sequence_output)
+                logits= self.classifier(last_hidden_state) # shape = (batch_size, seq_len, num_labels)
+                
+                # 处理填充token相关的逻辑  
+                if self.model_config.pad_token_id is None and batch_size != 1:  
+                    raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")  
+                if self.model_config.pad_token_id is None:  
+                    sequence_lengths = -1  
+                else:  
+                    if input_ids is not None:  
+                        # 找到每个序列中最后一个非填充token的位置  
+                        sequence_lengths = torch.eq(input_ids, self.model_config.pad_token_id).int().argmax(-1) - 1  
+                        sequence_lengths = sequence_lengths % input_ids.shape[-1]  
+                        sequence_lengths = sequence_lengths.to(logits.device)  
+                    else:  
+                        sequence_lengths = -1  
+                
+                # 获取每个序列最后一个非填充token的logits  
+                logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths] # shape = (batch_size, num_labels)
+                
             
             else:
                 if hasattr(self.classifier, 'dense') or hasattr(self.classifier, 'out_proj'):
@@ -1724,7 +1769,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     tracker = SwanLabTracker("BAAS_PROMPT_TRAING", experiment_name=exp_name)  # 训练可视化
     accelerator = Accelerator(
         gradient_accumulation_steps=config.gradient_accumulation_steps,  
-        # mixed_precision=config.mixed_precision,
+        mixed_precision=config.mixed_precision,
         log_with=[tracker]
     )
     tracker_config = {
@@ -1845,7 +1890,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     if accelerator.is_main_process:
         # logging_dir = Config['logging_dir'][model_name][config.peft_method][dataset_name]
         logging_dir = f'./logs/{model_name}/{config.peft_method}/{dataset_name}/'
-        logger_name = f"{model_name}_{config.peft_method}_{dataset_name}_{config.seq_cls_type}_{config.classes_initiate_method}"
+        logger_name = f"{model_name}_{config.peft_method}_{dataset_name}_{config.seq_cls_type}_{config.classes_initiate_method}_suffix_ratio_{config.suffix_ratio}"
         if not os.path.exists(logging_dir):
             os.makedirs(logging_dir)  
             print(f"已创建新的log存储路径: {logging_dir}") 
@@ -2129,7 +2174,10 @@ if __name__ == "__main__":
     max_seq_length = get_max_length_from_model(model)
     import math
     prefix_length = 10
-    suffix_length = math.floor(0.1 * max_seq_length)
+    
+    suffix_ratio = args.suffix_ratio
+    suffix_ratio/=100
+    suffix_length = math.floor(suffix_ratio * max_seq_length)
     
     hidden_size = get_hidden_size_using_model(model)
 
@@ -2152,7 +2200,8 @@ if __name__ == "__main__":
         seq_cls_type="binary",
         classes_initiate_method = args.classes_initiate_method,
         train_size = args.train_size,
-        mixed_precision=args.mixed_precision
+        mixed_precision=args.mixed_precision,
+        suffix_ratio=args.suffix_ratio
         
         
     )

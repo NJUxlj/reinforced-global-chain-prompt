@@ -29,12 +29,19 @@ from transformers import (
     AutoModel,
     AutoTokenizer,
     RobertaTokenizerFast,
+    GPT2TokenizerFast,
     BertTokenizerFast,
     T5TokenizerFast,
     Qwen2TokenizerFast,
     AutoConfig,
     BertTokenizerFast,
     AutoModelForSequenceClassification,
+    
+    BertForSequenceClassification,
+    Qwen2ForCausalLM,
+    Qwen2ForSequenceClassification,
+    RobertaForSequenceClassification,
+    GPT2ForSequenceClassification,
 )
 
 from wrapper import *
@@ -275,6 +282,15 @@ def get_model_name_using_model(model):
             return "Qwen2.5-3B"
         elif config.hidden_size == 3584:
             return "Qwen2.5-7B"
+    elif config.model_type == "gpt2":
+        if config.n_embd == 768:
+            return "gpt2"
+        elif config.n_embd == 1024:
+            return "gpt2-medium"
+        elif config.n_embd == 1280:
+            return "gpt2-large"
+        elif config.n_embd== 1600:
+            return "gpt2-xl"
     else:  
         # 无法匹配已知模型，返回未知模型提示  
         raise ValueError("unknown model, please check your config, it should be [bert | llama | qwen2]") 
@@ -311,6 +327,8 @@ def get_base_model_using_model(model):
             model = model.roberta
         elif isinstance(model, Qwen2ForSequenceClassification):
             model = model.model
+        elif isinstance(model, GPT2ForSequenceClassification):
+            model = model.transformer
          
         else:
             raise ValueError(f"the passed model object is not either SequenceClassification model or AutoModel \
@@ -345,13 +363,15 @@ def get_hidden_size_using_model(model):
     
     if hasattr(config,'hidden_size'):
         hidden_size = config.hidden_size
-    elif hasattr(config, 'd_model'):
+    elif hasattr(config, 'd_model'): # t5
         hidden_size = config.d_model
+    elif hasattr(config, 'n_embd'): # gpt2
+        hidden_size = config.n_embd
     else:
         raise ValueError(f"the passed model object does not have the attribute `hidden_size` \
             The current model type = {model_type}")
     print(f"model:{model_name}'s hidden_size = {hidden_size}")
-    return config.hidden_size
+    return hidden_size
 
 def get_classifier_from_model(model)-> nn.Module:  
     """  
@@ -375,7 +395,7 @@ def get_classifier_from_model(model)-> nn.Module:
         classifier = model.classifier  
         print(f"分类器类型: {type(classifier).__name__}")
         
-    elif hasattr(model, 'score'):  
+    elif hasattr(model, 'score'):   # qwen2, gpt2
         # 某些模型可能使用 score 作为分类器名称  
         classifier = model.score  
     else:  
@@ -452,6 +472,9 @@ def get_max_length_from_model(model):
     elif hasattr(config, 'n_positions'):  
         return config.n_positions
     
+    elif hasattr(config, 'n_ctx'):  
+        return config.n_ctx
+    
     else:
         raise ValueError("Error model object, please check your config, it should have either [max_position_embeddings | max_sequence_length]") 
 
@@ -509,6 +532,8 @@ def get_vocab_embeddings_from_model(model, token_ids:torch.LongTensor):
         return model.base_model.embeddings(token_ids)  
     elif hasattr(model, 'model') and hasattr(model.model, 'embed_tokens'):  # qwen2
         return model.model.embed_tokens(token_ids)  
+    elif hasattr(model, 'transformer') and hasattr(model.transformer, 'wte'):
+        return model.transformer.wte(token_ids)
     else:  
         raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.") 
 
@@ -532,6 +557,8 @@ def get_word_embeddings_from_model(model):
             return model.base_model.embeddings.word_embeddings
         elif hasattr(model, 'model') and hasattr(model.model, 'embed_tokens'): # qwen2
             return model.model.embed_tokens
+        elif hasattr(model, 'transformer') and hasattr(model.transformer, 'wte'):
+            return model.transformer.wte
         else:  
             raise AttributeError(f"Can not find the embedding layer in the model. Please check the model type {type(model).__name__}.") 
 
@@ -561,6 +588,8 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
         tokenizer_class = Qwen2TokenizerFast
     elif model_type == 't5':
         tokenizer_class = T5TokenizerFast
+    elif model_type == 'gpt2':
+        tokenizer_class = GPT2TokenizerFast
     else:
         print(f"The Fast Tokenizer of this model type {model_type} is not supported, We use the default AutoTokenzier")
     
@@ -570,11 +599,15 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     # else:
     #     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast = True)
         
-    print(f"Model's current num_labels: {model.config.num_labels}") 
+    
     
     model_config = model.config
     model_name_or_path = model_config.name_or_path
+    
+    print("\n********************** Model Information *********************")
     print("model_name_or_path = ", model_name_or_path)
+    print(f"Model's current num_labels: {model.config.num_labels}") 
+    print("model_type = ", model_type)
     
     if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
         padding_side = "left"
@@ -587,6 +620,12 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     if tokenizer.pad_token is None:  
         tokenizer.pad_token = tokenizer.eos_token  
         tokenizer.pad_token_id = tokenizer.eos_token_id  
+    
+    print("pad_token_id = ", tokenizer.pad_token_id)
+    # print("eos_token_id = ", tokenizer.eos_token_id)
+    # print("model's hidden_size = ", model.config.hidden_size)
+    # print("model's max_position_embeddings = ", model.config.max_position_embeddings)
+    print("***********************************************\n\n")
     
     model.config.pad_token_id = tokenizer.pad_token_id  
     
@@ -979,6 +1018,8 @@ def get_model_path_by_model_name(model_name:str):
         path = Config['models']['t5'][model_name]['model_path']
     elif "llama" in model_name.lower():
         path = Config['models']['llama'][model_name]['model_path']
+    elif "gpt2" in model_name.lower():
+        path = Config['models']['gpt2'][model_name]['model_path']
     else:
         raise ValueError(f"model_name:{model_name} not supported, can not be found in `Config` dict")
     
@@ -1005,7 +1046,7 @@ def parse_training_arguments(config=None):
     )
     
     parser.add_argument(
-        "--mixed_precision", type=bool, default=False, help="whether to use mixed precision training"
+        "--mixed_precision", type=str, default='no', help="whether to use mixed precision training"
     )
     
     parser.add_argument(
@@ -1014,6 +1055,10 @@ def parse_training_arguments(config=None):
     
     parser.add_argument(
         "--num_epochs", type=int, default=10, help="number of epochs for training"
+    )
+    
+    parser.add_argument(
+        "--suffix_ratio", type=int, default=10, help="the ratio that suffix occupies in the max sequence length"
     )
     
     

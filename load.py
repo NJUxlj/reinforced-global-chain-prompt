@@ -266,6 +266,8 @@ def preprocess_function_race(
         "labels": list()    # List[int]
     }
     
+    is_gpt2 = model_config.model_type == "gpt2"
+    
     is_t5 = model_config.model_type == "t5"
     
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
@@ -388,6 +390,17 @@ def preprocess_function_race(
                         template,  
                         padding="max_length", # 等同于 longest  
                         max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
+                )
+                
+            elif is_gpt2:
+                template = f"Context:{article}\nQuestion:{question}\nOption:{option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=max_length,  
                         truncation=True,  
                         return_tensors="pt",  
                         return_token_type_ids=False  
@@ -537,6 +550,8 @@ def preprocess_function_sciq(
             # "token_type_ids": list() if model_config.model_type == "bert" else None, 
             "labels": list()    # List[int]
         }
+    
+    is_gpt2 = model_config.model_type == 'gpt2'
     is_t5 = model_config.model_type == "t5"
     
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
@@ -632,6 +647,17 @@ def preprocess_function_sciq(
                         template,  
                         padding="max_length", # 等同于 longest  
                         max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
+                )
+            
+            elif is_gpt2:
+                template = f"Context:{support}\nQuestion:{question}\nOption:{option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=max_length,  
                         truncation=True,  
                         return_tensors="pt",  
                         return_token_type_ids=False  
@@ -767,6 +793,8 @@ def preprocess_function_dream(
         # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     } 
+    
+    is_gpt2 = model_config.model_type == 'gpt2'
     is_t5 = model_config.model_type == "t5"
     
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
@@ -864,6 +892,17 @@ def preprocess_function_dream(
                         template,  
                         padding="max_length", # 等同于 longest  
                         max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
+                )
+                
+            elif is_gpt2:
+                template = f"Context:{dialogue}\nQuestion:{question}\nOption:{option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=max_length,  
                         truncation=True,  
                         return_tensors="pt",  
                         return_token_type_ids=False  
@@ -1002,6 +1041,8 @@ def preprocess_function_commonsense_qa(
         # "token_type_ids": list(), # if tokenizer.model_type == "bert" else None, 
         "labels": list()    # List[int]
     }
+    
+    is_gpt2 = model_config.model_type == 'gpt2'
     is_t5 = model_config.model_type == "t5"
     
     is_bert_like_model = model_config.model_type == "bert"  # or model_config.model_type == "roberta" or model_config.model_type == "deberta"
@@ -1102,6 +1143,17 @@ def preprocess_function_commonsense_qa(
                         template,  
                         padding="max_length", # 等同于 longest  
                         max_length=2048,  
+                        truncation=True,  
+                        return_tensors="pt",  
+                        return_token_type_ids=False  
+                )
+            
+            elif is_gpt2:
+                template = f"Context:{question_concept}\nQuestion:{question}\nOption:{option.strip()}"  
+                result = tokenizer(  
+                        template,  
+                        padding="max_length", # 等同于 longest  
+                        max_length=max_length,  
                         truncation=True,  
                         return_tensors="pt",  
                         return_token_type_ids=False  

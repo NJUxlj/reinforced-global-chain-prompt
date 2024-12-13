@@ -692,6 +692,41 @@ Config = {
           },
         },
         
+        "gpt2":{
+            "gpt2":{
+                "model_name": "gpt2",
+                "max_length": 1024,
+                "num_labels": 1,
+                "hidden_dim": 768,
+                "model_type": "gpt2",
+                "model_path": f"{MODEL_BASE_PATH}gpt2"
+            },
+            "gpt2-medium":{
+                "model_name": "gpt2-medium",
+                "max_length": 1024,
+                "num_labels": 1,
+                "hidden_dim": 1024,
+                "model_type": "gpt2",
+                "model_path": f"{MODEL_BASE_PATH}gpt2-medium"
+            },
+            "gpt2-large":{
+                "model_name": "gpt2-large",
+                "max_length": 1024,
+                "num_labels": 1,
+                "hidden_dim": 1280,
+                "model_type": "gpt2",
+                "model_path": f"{MODEL_BASE_PATH}gpt2-large"
+            },
+            "gpt2-xl":{
+                "model_name": "gpt2-xl",
+                "max_length": 1024,
+                "num_labels": 1,
+                "hidden_dim": 1600,
+                "model_type": "gpt2",
+                "model_path": f"{MODEL_BASE_PATH}gpt2-xl"
+            }
+        },
+        
         "llama":{
             "MobiLlama-05B":{
                 "model_name": "MobiLlama-05B",

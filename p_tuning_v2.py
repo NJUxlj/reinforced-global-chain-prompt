@@ -339,7 +339,7 @@ class PTuningV2ForSequenceClassification(nn.Module):
         
         # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
         
-        if self.model_type=='qwen2':
+        if self.model_type=='qwen2' or self.model_type=='gpt2':
             last_hidden_state = outputs.last_hidden_state  
             sequence_lengths = attention_mask.sum(dim=1) - 1  # 减1获取最后一个非padding位置  shape = (batch_size,)
             batch_size = input_ids.shape[0]  
