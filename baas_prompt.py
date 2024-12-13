@@ -1795,6 +1795,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         seq_cls_type=config.seq_cls_type,
         train_size=config.train_size,
         batch_size =config.batch_size,
+        tokenizer = tokenizer,
         )
     
     

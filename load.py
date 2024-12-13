@@ -1458,7 +1458,8 @@ class McqDatasetWrapper:
         model_name_or_path: str = Config['models']['bert-base-uncased']['model_path'],  
         max_seq_length: int = 512,  
         label_map: Dict[str, int] = None,
-        split = None  
+        split = None,
+        tokenizer=None  
     ):  
         """  
         初始化预处理器  
@@ -1468,7 +1469,10 @@ class McqDatasetWrapper:
             max_seq_length: 最大序列长度  
             label_map: 标签映射字典，例如 {"A": 0, "B": 1, "C": 2, "D": 3}  
         """  
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)  
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)  
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
         self.model_config=self.model.config
         self.max_seq_length = max_seq_length  
@@ -2256,7 +2260,15 @@ def preprocess_func_peft(dataset_name, examples, wrapper: McqDatasetWrapper, fir
 
 
 
-def preprocess_dataset_peft(dataset_name, model_path, batch_size, max_length=512, seq_cls_type='binary', train_size=22000)->Dataset:
+def preprocess_dataset_peft(
+        dataset_name, 
+        model_path, 
+        batch_size, 
+        max_length=512, 
+        seq_cls_type='binary', 
+        train_size=22000,
+        tokenizer = None,
+    )->Dataset:
     """  
     处理整个数据集  [dataset必须同时包含train, test, validation(dev)] [针对PEFT任务]
                     # train and validation will be put to dataloader for training and evaluation
@@ -2270,7 +2282,7 @@ def preprocess_dataset_peft(dataset_name, model_path, batch_size, max_length=512
         
         preprocessed_dataset: 处理后的数据集，包含train, test, validation(dev) 3个部分 
     """ 
-    wrapper = McqDatasetWrapper(model_name_or_path=model_path, max_seq_length=max_length)
+    wrapper = McqDatasetWrapper(model_name_or_path=model_path, max_seq_length=max_length, tokenizer=tokenizer)
     
     
     print("************************")

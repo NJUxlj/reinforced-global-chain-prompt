@@ -619,7 +619,8 @@ def prepare_model_tokenizer(model_path, auto_model_class = AutoModel, tokenizer_
     tokenizer = tokenizer_class.from_pretrained(model_path, padding_side=padding_side)    # , use_fast=True)
     if tokenizer.pad_token is None:  
         tokenizer.pad_token = tokenizer.eos_token  
-        tokenizer.pad_token_id = tokenizer.eos_token_id  
+        tokenizer.pad_token_id = tokenizer.eos_token_id 
+        print(f"Set pad_token to eos_token: {tokenizer.pad_token}")  
     
     print("pad_token_id = ", tokenizer.pad_token_id)
     # print("eos_token_id = ", tokenizer.eos_token_id)

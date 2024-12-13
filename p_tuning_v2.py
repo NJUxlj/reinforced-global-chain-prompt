@@ -240,10 +240,14 @@ class PTuningV2ForSequenceClassification(nn.Module):
         self.device = device
         # 加载预训练的BERT模型  
         # 加载预训练模型  
-        self.model = config.auto_model_class.from_pretrained(  
-            config.model_path,  
-            num_labels=config.num_labels  
-        ) 
+        if not model:
+            self.model = config.auto_model_class.from_pretrained(  
+                config.model_path,  
+                num_labels=config.num_labels  
+            ) 
+        else:
+            self.model = model
+            
         self.model.to(self.device) 
         self.model_config = self.model.config
         
@@ -261,7 +265,7 @@ class PTuningV2ForSequenceClassification(nn.Module):
         # 初始化前缀编码器  
         self.prefix_encoder = PrefixEncoder(config, self.model_config, device=self.device)  
         
-        self.dropout = torch.nn.Dropout(self.model_config.hidden_dropout_prob).to(self.device)
+        # self.dropout = torch.nn.Dropout(self.model_config.hidden_dropout_prob).to(self.device)
         
         # self.prefix_tokens = torch.arange(self.prefix_encoder.prefix_length).long() 
         
@@ -339,7 +343,7 @@ class PTuningV2ForSequenceClassification(nn.Module):
         
         # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
         
-        if self.model_type=='qwen2' or self.model_type=='gpt2':
+        if self.model_type=='qwen2':
             last_hidden_state = outputs.last_hidden_state  
             sequence_lengths = attention_mask.sum(dim=1) - 1  # 减1获取最后一个非padding位置  shape = (batch_size,)
             batch_size = input_ids.shape[0]  
@@ -352,15 +356,42 @@ class PTuningV2ForSequenceClassification(nn.Module):
             # RobertaClassificationHead 里面自己会自动取 [:,0,:]
             last_hidden_state = outputs.last_hidden_state
             cls_token = last_hidden_state
+        elif self.model_type=='gpt2':
+            # 使用最后一个非padding token的隐藏状态  
+            last_hidden_state = outputs.last_hidden_state  
+            cls_token = last_hidden_state
         else:
             # 类似于 Bert这样的
             cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
             # cls_token = self.dropout(cls_token)
 
 
-        # cls_token = self.dropout(cls_token)
-        logits = self.classifier(cls_token) # shape = (batch_size, num_labels)
+
+
+        if self.model_type == 'gpt2':
+            batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0] 
+
+            logits= self.classifier(cls_token) # shape = (batch_size, seq_len, num_labels)
+            
+            # 处理填充token相关的逻辑  
+            if self.model_config.pad_token_id is None and batch_size != 1:  
+                raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")  
+            if self.model_config.pad_token_id is None:  
+                sequence_lengths = -1  
+            else:  
+                if input_ids is not None:  
+                    # 找到每个序列中最后一个非填充token的位置  
+                    sequence_lengths = torch.eq(input_ids, self.model_config.pad_token_id).int().argmax(-1) - 1  
+                    sequence_lengths = sequence_lengths % input_ids.shape[-1]  
+                    sequence_lengths = sequence_lengths.to(logits.device)  
+                else:  
+                    sequence_lengths = -1  
+            logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths] # shape = (batch_size, num_labels)
+        else:
+            logits = self.classifier(cls_token) # shape = (batch_size, num_labels)
         # logits = logits.reshape(-1, config.num_labels)
+        
+        
         
         loss = None
         if labels is not None:
@@ -533,6 +564,7 @@ def train_p_tuning_v2(config: PtuningV2Config=None):
         max_length=max_length,
         train_size=config.train_size,
         batch_size =config.batch_size,
+        tokenizer=tokenizer,
         )
     
     

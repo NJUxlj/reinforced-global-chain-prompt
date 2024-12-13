@@ -170,6 +170,7 @@ def train_prompt_tuning(config:PromptTuningTrainerConfig):
         max_length=max_length, 
         train_size=config.train_size,
         batch_size =config.batch_size,
+        tokenizer=tokenizer
         )
     
     train_ds = processed_ds["train"]

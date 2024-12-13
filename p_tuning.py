@@ -156,6 +156,7 @@ def train_p_tuning(config:PtuningConfig):
         max_length=max_length, 
         train_size=config.train_size,
         batch_size =config.batch_size,
+        tokenizer=tokenizer,
         )
     
     
