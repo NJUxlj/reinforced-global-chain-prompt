@@ -346,10 +346,19 @@ class PTuningV2ForSequenceClassification(nn.Module):
             # 在每个样本中锁定最后那个非padding位置
             sequence_output = last_hidden_state[torch.arange(batch_size), sequence_lengths]  # shape = (batch_size, hidden_size)
             cls_token = sequence_output
+            # cls_token = self.dropout(cls_token)  # qwen2 的分类器自带dropout
+                  
+        elif self.model_type=='roberta':
+            # RobertaClassificationHead 里面自己会自动取 [:,0,:]
+            last_hidden_state = outputs.last_hidden_state
+            cls_token = last_hidden_state
         else:
+            # 类似于 Bert这样的
             cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
+            # cls_token = self.dropout(cls_token)
 
-        cls_token = self.dropout(cls_token)
+
+        # cls_token = self.dropout(cls_token)
         logits = self.classifier(cls_token) # shape = (batch_size, num_labels)
         # logits = logits.reshape(-1, config.num_labels)
         

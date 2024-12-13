@@ -54,14 +54,14 @@
 
 # -------------------------------
 
-accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
-rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file default_config.yaml p_tuning_v2.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10
+# rm -rf ~/.cache/huggingface/datasets/
 
 
 
