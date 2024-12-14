@@ -1,2 +1,0 @@
-2024-11-24 19:20:27,113 - __main__ - INFO - {'epoch': 0, 'avg_loss': nan, 'accuracy': 0.75, 'precision': 0.5625, 'recall': 0.75, 'f1': 0.6428571428571428}
-2024-11-24 21:04:28,584 - __main__ - INFO - {'epoch': 1, 'avg_loss': nan, 'accuracy': 0.75, 'precision': 0.5625, 'recall': 0.75, 'f1': 0.6428571428571428}

@@ -1,2 +1,0 @@
-2024-11-24 11:56:10,444 - __main__ - INFO - {'epoch': 0, 'avg_loss': tensor(nan, device='cuda:0'), 'accuracy': 0.75, 'precision': 0.5625, 'recall': 0.75, 'f1': 0.6428571428571428}
-2024-11-24 12:34:03,626 - __main__ - INFO - {'epoch': 1, 'avg_loss': tensor(nan, device='cuda:0'), 'accuracy': 0.75, 'precision': 0.5625, 'recall': 0.75, 'f1': 0.6428571428571428}
