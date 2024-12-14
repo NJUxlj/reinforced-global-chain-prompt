@@ -231,77 +231,177 @@
 
 
 # GPT2-Large
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
  
 
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
 
-accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
-accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
-accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
-accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
 
 
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
-accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 4 --num_epochs 10 --suffix_ratio 10
 
 
 
 
 # Ablation
 ## gpt2-medium    suffix length
-rm -rf ~/.cache/huggingface/datasets/
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+# rm -rf ~/.cache/huggingface/datasets/
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+# --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+
+# rm -rf ~/.cache/huggingface/datasets/
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+
+
+
+# # prefix initialization method
+
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+
+
+
+
+
+
+
+
+# Results
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-base-uncased --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-base-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-base-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-base-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-large-uncased --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-large-uncased --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-large-uncased --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name bert-large-uncased --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+
+
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name roberta-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name roberta-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name roberta-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name roberta-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2 --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2 --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2 --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+
+
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 22000
+
+
+
+
+
+
+
+
+# Ablation
+# ## gpt2-medium    suffix length
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000    
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
 
-rm -rf ~/.cache/huggingface/datasets/
-
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5 --train_size 11000
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50 --train_size 11000
 
 
 
 # prefix initialization method
 
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
-# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method lda --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
 
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name race --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name sciq --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name dream --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-large --dataset_name commonsense_qa --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name race --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name sciq --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name dream --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2-medium --dataset_name commonsense_qa --classes_initiate_method normal --batch_size 2 --num_epochs 10 --suffix_ratio 10 --train_size 11000
 
