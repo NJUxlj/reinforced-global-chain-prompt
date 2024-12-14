@@ -31,7 +31,7 @@ from pathlib import Path
 
 
 # 初始化分词器  
-tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])  
+# tokenizer = AutoTokenizer.from_pretrained(Config["models"]["bert-base-uncased"]["model_path"])  
 
 
 @dataclass  

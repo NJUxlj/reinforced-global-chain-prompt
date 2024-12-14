@@ -1737,6 +1737,7 @@ def get_classes_by_lda(dataset_path, model, tokenizer, config, embedding_size, n
 
 
 def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingArguments):
+    check_cuda_setup()
     setup_distributed()
     
     fix_seed(config.seed)

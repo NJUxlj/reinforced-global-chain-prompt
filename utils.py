@@ -52,8 +52,34 @@ from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
 
 import os  
+import sys
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  
 os.environ['TORCH_USE_CUDA_DSA'] = '1' 
+
+
+
+def check_cuda_setup():  
+    """  
+    检查 CUDA 环境设置并打印相关信息  
+    """  
+    print("\n************************ Check CUDA Setup ************************")
+    print(f"Python version: {sys.version}")  
+    print(f"PyTorch version: {torch.__version__}")  
+    print(f"CUDA available: {torch.cuda.is_available()}")  
+    if torch.cuda.is_available():  
+        print(f"CUDA version: {torch.version.cuda}")  
+        print(f"Current CUDA device: {torch.cuda.current_device()}")  
+        print(f"Device name: {torch.cuda.get_device_name()}")  
+        print(f"Device capability: {torch.cuda.get_device_capability()}")  
+    
+    # 测试 CUDA 内存分配  
+    try:  
+        x = torch.rand(10).cuda()  
+        print("CUDA memory allocation test passed")  
+    except RuntimeError as e:  
+        print(f"CUDA memory allocation test failed: {e}")  
+        
+    print("***************************************************************\n\n")
 
 
 def setup_cuda_debug_environment():  
@@ -892,6 +918,10 @@ def setup_distributed(use_cuda=True)->Tuple[torch.device, int]:
         return torch.device("cpu"), 0
     
     os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+    
+    # 设置 timeout  
+    os.environ['NCCL_TIMEOUT'] = '1800'  
+    os.environ['NCCL_DEBUG'] = 'INFO' 
     
     # 检查进程组是否已经初始化  
     if not dist.is_initialized():
