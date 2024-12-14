@@ -516,13 +516,15 @@ def print_model_info(model:AutoModelForSequenceClassification):
     print("\nClassifier Architecture:")  
     print(model.classifier)  
     
-    # 2. 打印分类器中dense层的权重形状  
-    dense_weight = model.classifier.dense.weight  
-    print("\nDense Layer Weight Shape:", dense_weight.shape)  
+    # 2. 打印分类器中dense层的权重形状 
+    if hasattr(model.classifier, 'dense'): 
+        dense_weight = model.classifier.dense.weight  
+        print("\nDense Layer Weight Shape:", dense_weight.shape)  
     
     # 3. 打印分类器中out_proj层的权重形状  
-    out_proj_weight = model.classifier.out_proj.weight  
-    print("Output Projection Weight Shape:", out_proj_weight.shape)  
+    if hasattr(model.classifier, 'out_proj'):
+        out_proj_weight = model.classifier.out_proj.weight  
+        print("Output Projection Weight Shape:", out_proj_weight.shape)  
     
     # 4. 打印整个模型的参数数量  
     total_params = sum(p.numel() for p in model.parameters())  
