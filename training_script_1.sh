@@ -267,10 +267,10 @@
 # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5
 # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
 # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name race --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50
 
 # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 1
-accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5
+# accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 5
 # accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 10
 accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20
 accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 50
