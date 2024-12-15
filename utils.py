@@ -504,7 +504,29 @@ def get_max_length_from_model(model):
     else:
         raise ValueError("Error model object, please check your config, it should have either [max_position_embeddings | max_sequence_length]") 
 
+def get_classifier(model:AutoModelForSequenceClassification):
+    """
+    获取预训练模型的分类器
+    """
+    # 处理被Accelerator(DDP)包装的模型
+    if hasattr(model, "module"):
+        print("This model is wrapped by Accelerator(DDP), we use model.module")
+        model = model.module
 
+    classifier = None
+    # 获取分类器
+    if hasattr(model, 'classifier'):
+        # BERT、RoBERTa 等模型的分类器
+        classifier = model.classifier
+        print(f"分类器类型: {type(classifier).__name__}")
+    elif hasattr(model, 'score'):
+        # 某些模型可能使用 score 作为分类器名称
+        classifier = model.score
+        
+    else:
+        raise AttributeError("无法找到模型的分类器层")
+    
+    return classifier
 
 def print_model_info(model:AutoModelForSequenceClassification):  
     """打印模型的详细信息"""  
@@ -514,15 +536,18 @@ def print_model_info(model:AutoModelForSequenceClassification):
     
     # 1. 打印分类器的结构  
     print("\nClassifier Architecture:")  
-    print(model.classifier)  
+    if hasattr(model,'classifier'):
+        print(model.classifier)  
+    elif hasattr(model,'score'):
+        print(model.score)
     
     # 2. 打印分类器中dense层的权重形状 
-    if hasattr(model.classifier, 'dense'): 
+    if hasattr(model,'classifier') and hasattr(model.classifier, 'dense'): 
         dense_weight = model.classifier.dense.weight  
         print("\nDense Layer Weight Shape:", dense_weight.shape)  
     
     # 3. 打印分类器中out_proj层的权重形状  
-    if hasattr(model.classifier, 'out_proj'):
+    if hasattr(model,'classifier') and hasattr(model.classifier, 'out_proj'):
         out_proj_weight = model.classifier.out_proj.weight  
         print("Output Projection Weight Shape:", out_proj_weight.shape)  
     

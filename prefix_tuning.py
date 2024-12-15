@@ -31,6 +31,7 @@ from datasets import (
 )
 
 from transformers import (
+    RobertaModel,
     set_seed,
     default_data_collator,
     AutoModelForCausalLM, 
@@ -38,11 +39,13 @@ from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
     AutoModelForMultipleChoice,
-    get_linear_schedule_with_warmup
+    get_linear_schedule_with_warmup,
+    PreTrainedModel
 )
 from peft import (
     TaskType,
     PeftType,
+    PeftModel,
     PromptEncoderConfig, 
     get_peft_model, 
     get_peft_config,
@@ -168,6 +171,143 @@ def verify_peft_config(model, peft_config:PrefixTuningConfig, prefix_trainer_con
     '''
     print(f"Expected tensor size for [Prefix-Tuning]'s prefix tokens: {expected_size}")  
     
+    
+    
+class PrefixcTuningModelForSequenceClassification(nn.Module):
+    def __init__(self, peft_model:PeftModel, seq_cls_model:AutoModelForSequenceClassification):
+        super().__init__()
+        self.peft_model = peft_model
+        self.base_model:PreTrainedModel = peft_model.base_model
+        self.seq_cls_model = seq_cls_model
+        self.model_config=self.seq_cls_model.config
+        self.config = self.seq_cls_model.config
+        self.model_type =self.model_config.model_type
+        
+        self.classifier = get_classifier(self.seq_cls_model)
+        
+    
+    
+    def forward(
+        self, 
+        input_ids, 
+        attention_mask, 
+        labels: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor]=None,
+        head_mask=None,
+        inputs_embeds=None,
+        output_attentions:bool=True,
+        output_hidden_states:bool=True,
+        return_dict:bool=True, # 返回 SequenceClassifierOutput 对像
+        ):  
+        
+        device = input_ids.device  
+        batch_size = input_ids.size(0) if input_ids is not None else inputs_embeds.size(0)
+        
+        # past_key_values = self.prefix_encoder(batch_size) # shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+        
+        
+        
+        # # 准备前缀的注意力掩码  
+        # prefix_attention_mask = torch.ones(  
+        #     batch_size, 
+        #     self.prefix_encoder.prefix_length, 
+        #     device=attention_mask.device  
+        # )  # shape = (batch_size, prefix_length)
+        
+        # attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)   # shape = (batch_size, max_length), where prefix_length + input_length = max_length
+        
+        if self.model_type != 'gpt2':
+            outputs = self.peft_model(  
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  # shape = (batch_size, max_length)
+                token_type_ids=token_type_ids if self.model_type == "bert" else None,  
+                position_ids=position_ids if self.model_type == "bert" else None,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds, # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是重新计算
+                output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                return_dict=return_dict,
+                # past_key_values=past_key_values, # shape = (2*n_layer, batch_size, n_head, prefix_length, hidden_size // n_head)
+            )   # last_hidden_state, pooled_output = model(input_ids)
+        else:
+            outputs = self.peft_model(  
+                input_ids=input_ids,  
+                attention_mask=attention_mask,  # shape = (batch_size, max_length)
+                inputs_embeds=inputs_embeds, # 直接使用已经计算好的词嵌入（word embeddings，比如从bert提取的）, 而不是重新计算
+                output_attentions=output_attentions, # 当设置为 True 时，模型会在输出中包含每一层的注意力权重（attention weights）
+                output_hidden_states=output_hidden_states, # 当设置为 True 时，模型会在输出中包含每一层的隐藏状态
+                return_dict=return_dict,
+            )   # last_hidden_state, pooled_output = model(input_ids)
+        
+        # pooled_output = outputs[1] # shape = (batch_size, hidden_size)
+        
+        if self.model_type=='qwen2':
+            last_hidden_state = outputs.last_hidden_state  
+            sequence_lengths = attention_mask.sum(dim=1) - 1  # 减1获取最后一个非padding位置  shape = (batch_size,)
+            batch_size = input_ids.shape[0]  
+            # 在每个样本中锁定最后那个非padding位置
+            sequence_output = last_hidden_state[torch.arange(batch_size), sequence_lengths]  # shape = (batch_size, hidden_size)
+            cls_token = sequence_output
+            # cls_token = self.dropout(cls_token)  # qwen2 的分类器自带dropout
+                  
+        elif self.model_type=='roberta':
+            # RobertaClassificationHead 里面自己会自动取 [:,0,:]
+            last_hidden_state = outputs.last_hidden_state
+            cls_token = last_hidden_state
+        elif self.model_type=='gpt2':
+            # 使用最后一个非padding token的隐藏状态  
+            last_hidden_state = outputs.last_hidden_state  
+            cls_token = last_hidden_state
+        else:
+            # 类似于 Bert这样的
+            cls_token = outputs.last_hidden_state[:, 0, :] # shape = (batch_size, hidden_size)
+            # cls_token = self.dropout(cls_token)
+
+
+
+
+        if self.model_type == 'gpt2':
+            batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0] 
+
+            logits= self.classifier(cls_token) # shape = (batch_size, seq_len, num_labels)
+            
+            # 处理填充token相关的逻辑  
+            if self.model_config.pad_token_id is None and batch_size != 1:  
+                raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")  
+            if self.model_config.pad_token_id is None:  
+                sequence_lengths = -1  
+            else:  
+                if input_ids is not None:  
+                    # 找到每个序列中最后一个非填充token的位置  
+                    sequence_lengths = torch.eq(input_ids, self.model_config.pad_token_id).int().argmax(-1) - 1  
+                    sequence_lengths = sequence_lengths % input_ids.shape[-1]  
+                    sequence_lengths = sequence_lengths.to(logits.device)  
+                else:  
+                    sequence_lengths = -1  
+            logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths] # shape = (batch_size, num_labels)
+        else:
+            logits = self.classifier(cls_token) # shape = (batch_size, num_labels)
+        # logits = logits.reshape(-1, config.num_labels)
+        
+        
+        
+        loss = None
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+            
+        if not return_dict: # 输出嵌套元组
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+        
+        return MultipleChoiceModelOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+    
 
 def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     fix_seed(config.seed)
@@ -273,6 +413,7 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     # Prefix-tuning
     peft_config = PrefixTuningConfig(
         peft_type="PREFIX_TUNING",
+        inference_mode=False,
         task_type=TaskType.SEQ_CLS, 
         num_virtual_tokens=prefix_length, 
         token_dim = config.prefix_hidden_size,      
@@ -288,22 +429,36 @@ def train_prefix_tuning(config:PrefixTuningTrainerConfig=None):
     # Output Shape: (batch_size, total_virtual_tokens, token_dim)
     
     # 使用 get_peft_model 包装模型时，PEFT 库通常会自动冻结基础模型的参数，并将 PEFT 参数设置为可训练。
-    model = get_peft_model(model, peft_config)
-    model.to(accelerator.device)
+    base_model=None
+    if hasattr(model, "base_model"):
+        base_model = model.base_model
+    elif hasattr(model, 'model'):
+        base_model = model.model
+    elif hasattr(model,'bert'):
+        base_model = model.bert
+    elif hasattr(model,'roberta'):
+        base_model = model.roberta
     
-    verify_peft_config(model, peft_config, config)
+    peft_model = get_peft_model(base_model, peft_config)
+    
+    verify_peft_config(peft_model, peft_config, config)
     
     # make sure to frozen the base model parameters
-    for param in model.base_model.parameters():  
+    for param in peft_model.base_model.parameters():  
         param.requires_grad = False  
         
     # make sure that the prefix tokens is trainable
-    for name, param in model.named_parameters():  
+    for name, param in peft_model.named_parameters():  
         if 'prefix_encoder' in name:  
             param.requires_grad = True 
     
+    peft_model.print_trainable_parameters()
     
-    model.print_trainable_parameters()
+    model = PrefixcTuningModelForSequenceClassification(peft_model, model)
+    
+    
+    model.to(accelerator.device)
+    
     
 
 
