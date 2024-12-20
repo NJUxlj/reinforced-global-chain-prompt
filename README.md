@@ -33,110 +33,128 @@ et al. 2021; Liu et al. 2024) on all the experimented MCQ datasets, with a large
 
 ---
 
+## 评价指标
+Accuracy, Precision, Recall, F1 Score
+
 ## 实验配置
 ### 模型
 1. GPT2, GPT2-Medium
 3. bert-base, bert-large, roberta
 4. GPT-4o (only for the Auto-CoT)
-
-
-### 评价指标
-Accuracy, Precision, Recall, F1 Score
-
-
-
-
-
-## 生成 `requirements.txt` 文件
+  - 你需要一个OpenAI的API-KEY, 并且提前写入到系统的环境变量中：对于linux系统，建议直接写入.bashrc文件中, 免得每次开机都要重新配一遍。
 ```shell
+vim ~/.bashrc
+# 然后在文件最下方写入：
+export OPENAI_API_KEY="... YOUR API KEY ..."
+# 然后保存退出，然后在命令行中输入：
+source ~/.bashrc
+```
+
+
+### Pytorch & CUDA
+1. pytorch: 2.5.0
+2. cuda: 12.2
+
+### Machines & GPUs
+1. 首先登录 https://www.autodl.com/ ， 注册一个账号。
+2. 点击`算力市场`, 在 `选择地区`这一行再点击 `V100`专区，进去以后，`GPU数量至少选2（项目默认使用分布式训练）` 。
+3. 镜像选择:
+  -  `社区镜像`：pytorch和cuda的版本号和我的项目完全匹配，但是系统存储自带很多项目和缓存，需要自己动手清理，不清理可能会在tokenize的过程中提示内存不足。
+  ![image](./image/社区镜像.png)
+  - `基础镜像`：版本号：pytorch:2.5.1, cuda:12.4. 基本匹配，但我没试过。
+  ![image](./image/基础镜像.png)
+
+4. 等待主机初始化完成，然后点击运行，进入IDE界面后，建议使用VSCode的Remote-SSH插件， 然后在VSCode中点击左下角的蓝色按钮，然后在下拉菜单中点击 "连接到主机 Remote-SSH"，跟随提示一直按回车就行，直到输入主机名和密码。
+ ![image](./image/remote-ssh.png)
+
+ 5. 进入主机后， 将项目代码文件夹直接从你自己的电脑上拖到云主机的 ~/autodl-tmp/ 目录下
+ 6. 将所有数据集拖到项目目录内的data文件夹下 (如果原来就有那就不用拖了)。
+![image](./image/data文件夹.png)
+
+## 生成 `requirements.txt` 文件 （有可能不准确，不推荐做）
+```shell
+pip install pipreqs
 pipreqs . --force
 ```
 
-## 推送项目到仓库
+## 安装项目依赖
+### 方法1
 ```shell
-git add .
-# 先将大文件移出暂存库
-git rm -rf --cached save data ... 文件夹名
-# 检查暂存库的内容
-git status
+# 首先cd到项目根目录，然后执行以下命令：
+pip install -r requirements.txt
 ```
 
-- 然后在项目目录中创建一个.gitignore 文件，内容如下：
-
-```text
-\save\
-\data\
-```
-
+### 方法2（最稳健的方法，但是可能缺少若干包，你可以先把脚本跑起来，通过报错来寻找缺少的包）
 ```shell
-git add .gitignore
-git commit -m 'add .gitignore'
-git push
+# 使用项目根目录中的badouai.yaml配置文件，创建一个新的conda环境
+conda env create --file badouai.yml
 ```
 
-- 如果还不行，需要下额外的包：
 
-```shell
-pip install git-filter-repo
-
-# 使用 git filter-repo 移除大文件  
-git filter-repo --strip-blobs-bigger-than 20M  
-
-git remote add origin <远端仓库地址>
-git push origin --force  
-
-# 如果没有同步远端，则：
-git push --set-upstream origin main --force
-```
 
 ## 运行项目
-main.py
+### 配置 accelerator 的 config 文件
+注：如果你使用的是2xGPU, 请把Accelerate的配置文件替换为 default_config.yaml (双卡专用)，
+如果是3xGPU, 请把配置文件替换为 three_gpu.yaml (3卡专用), 如果是4张，请替换为 four_gpu.ymal, 如果是4张以上，请自己在控制台输入`accelerator config`, 然后根据提示创建一个新的配置文件 (请按照我的案例进行配置)。
+```yaml
+compute_environment: LOCAL_MACHINE
+debug: false
+distributed_type: MULTI_GPU
+downcast_bf16: 'no'
+enable_cpu_affinity: false
+gpu_ids: all
+machine_rank: 0
+main_training_function: main
+mixed_precision: 'no'
+num_machines: 1
+num_processes: 4
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+```
 
-## 训练流程
-![image](./image/Snipaste_2024-10-21_18-12-23.png)
+### 运行Baas-Prompt和所有baselines
+```shell
+cd /path/to/this/project/blackprompt-bidirectional-autocot-prompt-tuning/
 
-![image](./image/Snipaste_2024-10-21_18-12-33.png)
+# 运行Baas-Prompt
 
-![image](./image/Snipaste_2024-10-21_18-11-39.png)
+
+
+# 运行Prompt-Tuning
+
+
+# 运行P-Tuning
+
+
+# 运行 P-Tuning V2
+
+
+
+
+
+# 对 Suffix Length 进行 Ablation Study:
+
+
+
+
+# 对 Prefix Initialization Method 进行 Ablation Study:
+
+
+
+
+```
+
+
 
 ## 实验结果
+![image](./image/result1.png)
 
 
-| Method       | Dataset |   Model  | Accuracy | Precision | Recall | F1 Score |  
-|--------------|---------|----------|----------|-----------|--------|----------|  
-| LoRA         | RACE & MedQA & SQuAD   |   bert-base-uncased   | 0.86     | 0.85      | 0.84   | 0.85   |  
-|              |         |   qwen2.5-0.5B    | 0.78     | 0.77      | 0.76   | 0.77     |  
-|              |         |   llama-3.2-1B       | 0.82     | 0.81      | 0.80   | 0.81     |  
-|              |         |   GPT4o       | 0.82     | 0.81      | 0.80   | 0.81     |
-| AdaLoRA      |   RACE & MedQA & SQuAD      |   bert-base-uncased | 0.88     | 0.87 | 0.86   | 0.87  |  
-|             |    |      qwen2.5-0.5B     | 0.80     | 0.79      | 0.78   | 0.79     |  
-|             |    |     llama-3.2-1B     | 0.85     | 0.84      | 0.83   | 0.84     |  
-| DoRA         | RACE & MedQA & SQuAD    |          | 0.85     | 0.84      | 0.83   | 0.84     |  
-|          |    |          | 0.77     | 0.76      | 0.75   | 0.76     |  
-|          |    |          | 0.81     | 0.80      | 0.79   | 0.80     |  
-| X-LoRA  | RACE & MedQA & SQuAD   |          | 0.85     | 0.84      | 0.83   | 0.84     |
-|          |    |          | 0.77     | 0.76      | 0.75   | 0.76     |
-| O-LoRA  | RACE & MedQA & SQuAD   |          | 0.85     | 0.84      | 0.83   | 0.84     |
-|          |    |          | 0.77     | 0.76      | 0.75   | 0.76     |
-| AM-LoRA | RACE & MedQA & SQuAD   |          | 0.85     | 0.84      | 0.83   | 0.84     |
-|          |    |          | 0.77     | 0.76      | 0.75   | 0.76     |
-| Prompt-Tuning | RACE & MedQA & SQuAD   |          | 0.83     | 0.82      | 0.81   | 0.82     |  
-|      |      |          | 0.75     | 0.74      | 0.73   | 0.74     |  
-|      |      |          | 0.79     | 0.78      | 0.77   | 0.78     |  
-| Prefix-Tuning | RACE & MedQA & SQuAD   |          | 0.84     | 0.83      | 0.82   | 0.83     |  
-|      |    |          | 0.76     | 0.75      | 0.74   | 0.75     |
-|      |    |          | 0.81     | 0.80      | 0.79   | 0.80     |
-| P-Tuning     | RACE & MedQA & SQuAD    |          | 0.84     | 0.83      | 0.82   | 0.83     |  
-|      |    |          | 0.76     | 0.75      | 0.74   | 0.75     |  
-|      |    |          | 0.80     | 0.79      | 0.78   | 0.79     |
-| P-Tuning v2  | RACE & MedQA & SQuAD    |          | 0.85     | 0.84      | 0.83   | 0.84     |
-|      |         |          | 0.77     | 0.76      | 0.75   | 0.76     |
-|      |         |          | 0.81     | 0.80      | 0.79   | 0.80     |
-| BlackPrompt  | RACE & MedQA & SQuAD    |          | 0.85     | 0.84      | 0.83   | 0.84     |
-|            |        |          | 0.77     | 0.76      | 0.75   | 0.76     |
-|            |          |          | 0.81     | 0.80      | 0.79   | 0.80     |
-
-
+![image](./image/result2.png)
 
 
 
