@@ -41,7 +41,7 @@ We demonstrate that BaasPrompt outperforms existing single-layer prompt-based me
 ---
 
 ## System Sketch
-![image](./image/BaasPrompt.pdf)
+![image](./image/BaasPrompt.png)
 
 
 
