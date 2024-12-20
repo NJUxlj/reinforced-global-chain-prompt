@@ -41,7 +41,7 @@ We demonstrate that BaasPrompt outperforms existing single-layer prompt-based me
 ---
 
 ## System Sketch
-![image](https://github.com/user-attachments/assets/a2b4f441-792d-4520-b918-9be83b69addf)
+![image](./image/BaasPrompt.pdf)
 
 
 
