@@ -96,6 +96,7 @@ conda env create --file badouai.yml
 ### 配置 accelerator 的 config 文件
 注：如果你使用的是2xGPU, 请把Accelerate的配置文件替换为 default_config.yaml (双卡专用)，
 如果是3xGPU, 请把配置文件替换为 three_gpu.yaml (3卡专用), 如果是4张，请替换为 four_gpu.ymal, 如果是4张以上，请自己在控制台输入`accelerator config`, 然后根据提示创建一个新的配置文件 (请按照我的案例进行配置)。
+
 ```yaml
 compute_environment: LOCAL_MACHINE
 debug: false
@@ -116,35 +117,140 @@ tpu_use_sudo: false
 use_cpu: false
 ```
 
-### 运行Baas-Prompt和所有baselines
+### 运行AutoCoT, 并获取推理链embedding
+
 ```shell
-cd /path/to/this/project/blackprompt-bidirectional-autocot-prompt-tuning/
+cd blackprompt-bidirectional-autocot-prompt-tuning
+cd autocot
 
-# 运行Baas-Prompt
+# 依次运行以下指令：
+python autocot_api.py \
+--dataset race \
+--method zero_shot_cot
 
 
+
+python autocot_api.py \
+--dataset sciq \
+--method zero_shot_cot
+
+python autocot_api.py \
+--dataset dream \
+--method zero_shot_cot
+
+
+python autocot_api.py \
+--dataset commonsense_qa \
+--method zero_shot_cot
+
+
+
+
+# 完事以后再依次运行第二组指令：
+python run_autocot_demo.py \
+--task race \
+--pred_file cot_log/race_zero_shot_cot.log \
+--demo_save_dir demos/race \
+--max_ra_len 20
+
+
+python run_autocot_demo.py \
+--task sciq \
+--pred_file cot_log/sciq_zero_shot_cot.log \
+--demo_save_dir demos/sciq \
+--max_ra_len 20
+
+python run_autocot_demo.py \
+--task dream \
+--pred_file cot_log/dream_zero_shot_cot.log \
+--demo_save_dir demos/dream \
+--max_ra_len 20
+
+python run_autocot_demo.py \
+--task commonsense_qa \
+--pred_file cot_log/commonsense_qa_zero_shot_cot.log \
+--demo_save_dir demos/commonsense_qa \
+--max_ra_len 20
+
+
+
+
+# 完事以后再依次运行第三组指令：
+python run_autocot_inference.py \
+--dataset race \
+--demo_path demos/race \
+--output_dir experiment/race \
+--method auto_cot \
+--max_length_cot 2048
+
+python run_autocot_inference.py \
+--dataset sciq \
+--demo_path demos/sciq \
+--output_dir experiment/sciq \
+--method auto_cot \
+--max_length_cot 2048
+
+python run_autocot_inference.py \
+--dataset dream \
+--demo_path demos/dream \
+--output_dir experiment/dream \
+--method auto_cot \
+--max_length_cot 2048
+
+python run_autocot_inference.py \
+--dataset commonsense_qa \
+--demo_path demos/commonsense_qa \
+--output_dir experiment/commonsense_qa \
+--method auto_cot \
+--max_length_cot 2048
+```
+
+
+
+### 运行Baas-Prompt
+```shell
+# 首先cd到项目根目录
+accelerate launch --config_file four_gpu.yaml baas_prompt.py --model_name gpt2 --dataset_name sciq --classes_initiate_method cluster --batch_size 2 --num_epochs 10 --suffix_ratio 20
+
+# --classes_initiate_method cluster： 使用clustering-based的方法初始化prefix tokens
+# --classes_initiate_method lda 使用LDA-based的方法初始化prefix tokens
+# --classes_initiate_method normal 使用TF-QDF-VS的方法初始化prefix tokens
+
+# --suffix_ratio 20： 表示suffix的长度为20%的max sequence length长度
+
+
+# --model_name: gpt2, gpt2-medium, bert-base-uncased, bert-large-uncased, roberta-large
+
+# --dataset_name: race, sciq, dream, commonsense_qa
+
+```
+
+
+### 运行所有baselines
+```shell
+# 首先cd到项目根目录
 
 # 运行Prompt-Tuning
+accelerate launch --config_file four_gpu.yaml prompt_tuning.py --model_name gpt2 --dataset_name race --batch_size 2 --num_epochs 10
 
+
+# 运行prefix-tuning
+accelerate launch --config_file four_gpu.yaml prefix_tuning.py --model_name gpt2 --dataset_name race --batch_size 2 --num_epochs 10
 
 # 运行P-Tuning
+accelerate launch --config_file four_gpu.yaml p_tuning.py --model_name gpt2 --dataset_name race --batch_size 2 --num_epochs 10
 
 
 # 运行 P-Tuning V2
-
-
+accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2 --dataset_name race --batch_size 2 --num_epochs 10
 
 
 
 # 对 Suffix Length 进行 Ablation Study:
-
-
-
+只需修改 --suffix_ratio 20 为 1, 5, 10, 20, 50 即可。
 
 # 对 Prefix Initialization Method 进行 Ablation Study:
-
-
-
+只需修改 --classes_initiate_method 为 cluster, lda 或 normal 即可。
 
 ```
 
