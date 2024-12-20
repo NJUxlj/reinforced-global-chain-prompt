@@ -254,7 +254,9 @@ accelerate launch --config_file four_gpu.yaml p_tuning_v2.py --model_name gpt2 -
 
 ```
 
-
+## 注意：
+1. 所有跑分数据都在项目目录的logs文件夹中
+2. **别用单卡运行本项目，否则必报错！**
 
 ## 实验结果
 ![image](./image/result1.png)
