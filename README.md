@@ -50,6 +50,44 @@ export OPENAI_API_KEY="... YOUR API KEY ..."
 source ~/.bashrc
 ```
 
+### 下载模型
+首先, 下载之前先去看看下面小节的环境配置引导，先去把环境配好。然后：
+```shell
+cd ~/autodl-tmp
+mkdir models
+cd models
+```
+1. GPT2
+```shell
+huggingface-cli download --resume-download openai-community/gpt2 --local-dir gpt2
+
+```
+2. GPT2-Medium
+```shell
+huggingface-cli download --resume-download openai-community/gpt2-medium --local-dir gpt2-medium
+
+```
+
+2. Bert-base
+```shell
+huggingface-cli download --resume-download google-bert/bert-base-uncased --local-dir bert-base-uncased
+```
+
+3. Bert-Large
+```shell
+huggingface-cli download --resume-download google-bert/bert-large-uncased --local-dir bert-large-uncased
+```
+
+4. Roberta-Large
+```shell
+huggingface-cli download --resume-download FacebookAI/roberta-large --local-dir roberta-large
+```
+
+5. Sentence-Bert
+```shell
+huggingface-cli download --resume-download sentence-transformers/all-MiniLM-L6-v2 --local-dir all-MiniLM-L6-v2
+```
+
 
 ### Pytorch & CUDA
 1. pytorch: 2.5.0
