@@ -57,6 +57,13 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 os.environ['TORCH_USE_CUDA_DSA'] = '1' 
 
 
+def cal_gram(module: torch.nn.Module, device:torch.device)->float:
+    g_ram = 0 # MB
+    for p in module.parameters():
+        if p.device == 'cuda:0':
+            g_ram += p.numel() * 4 / 1024 * 1024  # n*4B/1000  n * 0.004 KB * 1024
+    return g_ram
+
 
 def check_cuda_setup():  
     """  

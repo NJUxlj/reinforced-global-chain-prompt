@@ -21,33 +21,22 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 
 ---
 
-## System Components:
-1. Input Question:  
-  1. a multiple-choice question [context + question + candidate items].
-2. Bidirectional Prompt-Tuning:
-  - Prefix Prompt Tokens: Add K trainable tokens at the beginning of the model input.
-  - Suffix Prompt Tokens: Add K trainable tokens at the end of the model input. The latest 5 tokens represent the classification of the question. (this is done by a few-shot classification model)
-  - Normally, the Prefix and Suffix tokens should be initialized during pre-training, however, due to the lack of strong computing power and the intrinsic limitation of the pre-train-initialization, we prepare to initilize the prefix and suffix prompt tokens using the output reasoning steps from the Auto-CoT module.
-3. Auto Chain-of-Thought (Auto-CoT):
-  - Generates intermediate reasoning steps to an MCQ question.
-  - The Auto-CoT generated reasoning steps will be further processed by the NER and K-means module to  retrieve the 5 trainable prompt tokens used for forward prompt-tuning.
-4. Named Entity Recognition (NER):
-  - Applies NER to recognize all reasoning step strings from the Auto-CoT output.
-  - Extracts meaningful entities representing reasoning steps.
-  - For example, we finally get 1000 entities, each is represented by a word embedding.
-5. K-Means Clustering:
-  - Identifies K reasoning steps from the extracted entities.
-  - Clusters the word embeddings of all reasoning steps into K clusters using the K-means algorithm.
-  - Performs average pooling on each cluster to obtain K pooled vectors.
-6. Pooled K Vectors:
-  - The pooled vectors serve as the final K trainable forward prompt tokens for the model.
-7. LoRA Integration:
-  - Incorporates Low-Rank Adaptation (LoRA) into the system to efficiently fine-tune the large language model without updating all parameters.
-8. Language Model Processing:
-  - The modified input, enriched with bidirectional prompt tokens and optimized via LoRA, is fed into the language model.
-  - The model processes the input to generate the answer.
-9. Output Answer:
-  - The system outputs the answer to the multiple-choice question.
+## Contributions:
+We propose a novel bidirectional prompt tuning method that injects a pair of jointly aligned prefix and suffix embeddings into the input layer of the model to from a prompt template of `**[Prefix;Input;Suffix]**`. Where the prefix is initialized using the topic labels from the training set and the suffix are initialized using a global reasoning chain is marged from $K$ local chains using a **Chain Aggregator** . This new method can be comparable or surpass all of the prompt-based baselines (\citealt{lester2021powerscaleparameterefficientprompt}; \citealt{li2021prefix}; \citealt{liu2024gpt}; \citealt{liu2021ptuningv2}) on the Bert model series, leading by a largest margin of 8.1 average F1 points without relying on pre-trained soft tokens \citep{gu2021ppt}.
+
+We also introduce a new reparameterization encoder called **BAP-Encoder** that can leverage a pair of Bi-LSTMs to bidirectionally encode the prefix and suffix separately and use a cross-attention to jointly align the prefix and suffix to mitigate the deviation and inconsistency toward the task content.
+
+We demonstrate that BaasPrompt outperforms existing single-layer prompt-based methods (\citealt{lester2021powerscaleparameterefficientprompt}; \citealt{liu2024gpt}) on all the experimented MCQ datasets, with a largest gap of 32.1-points of precision and 29-points of F1 on the SciQ, and can also be comparable to or even execeed the deep prompting method like prefix-tuning \citep{li2021prefix} and p-tuning v2 \citep{liu2021ptuningv2}.
+
+---
+
+
+
+## Baas-Prompt
+
+
+
+
 
 ---
 
@@ -62,14 +51,8 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 1. remove the lora part, replace it with a "Attention Router Module"
 2. Dual Attention
 3. shareable attention
-4. 随着项目的进展，我们会在Auto-CoT steps的处理上加上若干细节
-  - 我们通过对AutoCoT的结果进行NER，会产生很多steps, 比如说100个。
-  - 原始的办法是将这些steps聚成5类，每一类取均值向量，成为5个tokens，再加到prompt后面。
-  - 能否计算100个steps和question之间的注意力分数，再使用这个分数来生成一个context vector。把这个vector作为最后的prompt token。
-  - 或者，每个任务（dataset）训练一个单独的bidirectional prompt embedding. 比如说，10个embeddings。然后使用attention来选择top-3个最重要的
 
 
-## 头脑风暴
 以下是5种可以将这10个任务特定的双向Prompt Embedding整合的方法，以防止灾难性遗忘，并在大部分MCQ任务（如RACE、medQA、SQuAD）上超越之前的高效微调方法。
 
 1. **注意力加权的上下文向量整合**：计算每个Embedding与当前问题之间的注意力分数，利用这些分数对Embeddings进行加权求和，生成一个上下文向量，作为最后的Prompt Token。这种方法可以让模型关注与当前问题最相关的知识，减少灾难性遗忘的影响。
@@ -93,10 +76,9 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 
 ## 实验配置
 ### 模型
-1. qwen2
-2. llama3
-3. bert-base-uncased
-4. GPT4o
+1. GPT2, GPT2-Medium
+3. bert-base, bert-large, roberta
+4. GPT-4o (only for the Auto-CoT)
 
 
 ### 评价指标
@@ -110,11 +92,7 @@ The system integrates bidirectional prompt-tuning, Auto Chain-of-Thought (Auto-C
 3. **F1得分（F1 Score）**：是精确率和召回率的调和平均。它常用于需要兼顾精确度和覆盖度的场景中。公式为：
    $$ \text{F1 Score} = 2 \times \frac{\text{Precision} \times \text{Recall}}{\text{Precision} + \text{Recall}} $$
 
-4. **Top-K准确率（Top-K Accuracy）**：在多个选项中，预测答案在前K个最可能的选项中即视为正确。这对于选项数量较多的多选题，或在模型使用时允许有多种答案时，特别有用。
 
-5. **平均精度（Mean Reciprocal Rank，MRR）**：评估系统返回一个排序列表结果的准确性，即正确答案（通常是某一类的概率最大的样本）是否位于前几个中。公式为：
-   $$ \text{MRR} = \frac{1}{N} \sum_{i=1}^{N} \frac{1}{\text{rank}_i} $$
-其中 $$ \text{rank}_i $$ 表示正确答案在第i次查询的排序中的排名。
 
 
 参考:

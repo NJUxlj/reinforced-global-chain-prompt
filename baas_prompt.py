@@ -44,6 +44,7 @@ from components import (
 import time
 import sys  
 import os  
+from torchsummary import summary
 # 添加项目根目录到 Python 路径  
 sys.path.append(os.path.dirname(os.path.abspath(__file__))) 
 
@@ -1861,9 +1862,15 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
         debug=config.debug,
         num_options=dataset_config.num_options
     )
-    
     baas_model.to(accelerator.device)
- 
+    
+    gram = 0 # each float = 4B
+    for p in baas_model.parameters():
+        gram += p.numel()
+    gram = gram * 4 / 1024 / 1024
+
+    print(f"=== gram: {gram} ===")
+    # return
     
     optimizer = config.optimizer_class(
         filter(lambda p: p.requires_grad, baas_model.parameters()), 
@@ -1908,6 +1915,7 @@ def train_baas_prompt(config:BaasPromptConfig, chain_encode_args:ChainEncodingAr
     print("\n\n**************************************************************************************")
     print(f"************* Start training model {model_name} on {dataset_name} using {config.peft_method} ... ************")
     print(f"****************** Prefix topic labels retrived by {config.classes_initiate_method} ************\n\n")
+    
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
