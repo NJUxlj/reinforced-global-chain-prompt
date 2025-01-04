@@ -234,9 +234,29 @@ class TextDataset(Dataset):
             return [self.texts[id] for id in idx]
         else:
             raise TypeError(f"Index must be an integer, got {type(idx)}") 
+        
+        
+        
+
+class CustomSentenceEncoder(nn.Module):
+    def __init__(self, hidden_size, model):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.linear = nn.Linear(hidden_size, hidden_size) # 用于维度转换
+        self.activation = nn.GELU()
+
+
+
+
+        
+
 
 class SentenceEncoder(nn.Module):
-    def __init__(self, hidden_size):
+    def __init__(
+            self, 
+            hidden_size,
+            model = None
+        ):
         '''
         内含 Sentence Transformer, 区别在于可以将句子编码后的hidden_size自动调整为用户输入的hidden_size
         
