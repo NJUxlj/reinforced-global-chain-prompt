@@ -4,7 +4,7 @@ from transformers import AutoModel, AutoTokenizer
 from datasets import load_metric  
 import numpy as np
 
-from config import Config
+from config.config import Config
 
 
 

@@ -9,7 +9,7 @@ import os
 import torch
 import evaluate
 import numpy as np
-from config import Config
+from config.config import Config
 
 
 from torch.utils.data import DataLoader
@@ -41,7 +41,7 @@ from p_tuning import *
 from prompt_tuning import *
 from prefix_tuning import *
 from lora import *
-from baas_prompt import *
+from models.baas_prompt import *
 
 peft_dict = {  
     "p_tuning": train_p_tuning,

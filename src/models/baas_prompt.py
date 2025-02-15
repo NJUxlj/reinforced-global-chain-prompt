@@ -30,11 +30,11 @@ from accelerate import(
 from accelerate.logging import get_logger
 
 
-from load import *
+from data_utils.load import *
 
 from utils import *
 
-from causal_modeling import *
+from models.causal_modeling import *
 
 from components import (
     SentenceEncoder,
@@ -64,7 +64,7 @@ from torch.utils.data import (
 )
 from torch.utils.data.distributed import DistributedSampler
 
-from config import *
+from config.config import *
 
 import torch
 import torch.nn as nn
@@ -98,7 +98,7 @@ from dataclasses import dataclass
 from collections import Counter
 from swanlab.integration.accelerate import SwanLabTracker
 
-from evaluation import ModelEvaluator
+from evaluation.evaluation import ModelEvaluator
 
 
 import nltk  

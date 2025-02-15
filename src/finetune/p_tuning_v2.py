@@ -6,13 +6,13 @@ import numpy as np
 import argparse
 import evaluate
 import os
-from config import Config
+from config.config import Config
 from dataclasses import dataclass
 
 
 from typing import Tuple, List, Tuple, Optional, Union, Dict, Any
 
-from load import *
+from data_utils.load import *
 
 from utils import *
 
@@ -77,7 +77,7 @@ from sklearn.metrics import (
     classification_report  
 ) 
 
-from evaluation import ModelEvaluator
+from evaluation.evaluation import ModelEvaluator
 
 
 # we follow the setting of prompt-tuning (Lester et al., 2021)

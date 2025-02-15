@@ -3,15 +3,15 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from config import Config
-from config import SAVE_DIR
+from config.config import Config
+from config.config import SAVE_DIR
 
 
 import argparse
 import evaluate
 import os
 
-from load import *
+from data_utils.load import *
 
 from utils import *
 

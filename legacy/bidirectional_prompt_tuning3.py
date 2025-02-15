@@ -26,7 +26,7 @@ from accelerate.logging import get_logger
 # logger = get_logger(__name__, log_level="INFO")
 
 
-from load import *
+from data_utils.load import *
 
 from utils import (
     prepare_model_tokenizer, 
@@ -46,8 +46,8 @@ from torch.utils.data import (
 )
 from torch.utils.data.distributed import DistributedSampler
 
-from config import Config
-from config import NUM_PROCESSES
+from config.config import Config
+from config.config import NUM_PROCESSES
 
 import torch
 import torch.nn as nn

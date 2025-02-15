@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F  
 
 from transformers import AutoModel, AutoTokenizer
-from config import Config   
+from config.config import Config   
 
 from typing import List, Tuple, Dict, Optional
 import math
@@ -43,7 +43,7 @@ from peft import (
 #     InputEncoder,
 # )
 
-from config import *
+from config.config import *
 
 import logging
 

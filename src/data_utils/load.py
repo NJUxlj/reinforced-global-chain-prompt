@@ -22,8 +22,8 @@ import json
 import os
 import re
 
-from config import Config
-from config import NUM_PROCESSES, NUM_CPU_PROCESSES
+from config.config import Config
+from config.config import NUM_PROCESSES, NUM_CPU_PROCESSES
 
 from typing import List, Dict, Tuple ,Union, Any, Optional
 

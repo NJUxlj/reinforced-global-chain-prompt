@@ -11,7 +11,7 @@ from sklearn.metrics import (
 )  
 import evaluate  # huggingface evaluate library  
 
-from load import DatasetConfig
+from data_utils.load import DatasetConfig
 
 
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import AdamW, Adam
-from config import Config
+from config.config import Config
 import numpy as np
 import evaluate
 import os
@@ -19,7 +19,7 @@ from typing import Tuple, List, Tuple, Optional, Union, Dict, Any
 
 
 
-from load import *
+from data_utils.load import *
 
 from utils import *
 
@@ -74,7 +74,7 @@ from swanlab.integration.accelerate import SwanLabTracker
 
 from tqdm import tqdm
 
-from evaluation import ModelEvaluator
+from evaluation.evaluation import ModelEvaluator
 
 
 

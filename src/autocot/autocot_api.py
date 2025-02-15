@@ -15,8 +15,8 @@ sys.path.insert(0, current_directory)
 
 
 # from autocot_utils import *
-from load import *
-from config import NUM_CPU_PROCESSES
+from data_utils.load import *
+from config.config import NUM_CPU_PROCESSES
 from autocot_utils import (
     setup_logger,
     LoggerWriter,
@@ -111,7 +111,7 @@ def cot(method, question):
 
 
 
-# 此脚本并不依赖于parseargs, 我已经把必须的参数打包成了Arguments类，放在autocot_utils.py里
+# This script doesn't depend on parseargs, I've packed the required arguments into the Arguments class and put them in autocot_utils.py
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Zero-shot-CoT")

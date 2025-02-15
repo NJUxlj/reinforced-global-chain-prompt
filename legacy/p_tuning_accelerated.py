@@ -3,8 +3,8 @@ import torch
 import csv
 import evaluate
 import numpy as np
-from config import Config
-from load import (
+from config.config import Config
+from data_utils.load import (
     preprocess_function_race_pt, 
     preprocess_function_race,
     load_dataset_from_huggingface,

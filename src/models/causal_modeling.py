@@ -8,7 +8,7 @@ from transformers import (
     AutoModelForSequenceClassification
 )
 
-from config import Config
+from config.config import Config
 
 from typing import List, Tuple, Dict, Optional
 

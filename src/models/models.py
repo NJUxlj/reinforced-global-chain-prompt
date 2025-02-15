@@ -12,7 +12,7 @@ from transformers import (
     PretrainedConfig
 )
 from accelerate import Accelerator
-from config import Config, BudgetSchedulerConfig   
+from config.config import Config, BudgetSchedulerConfig   
 
 from typing import List, Tuple, Dict, Optional, Any, Union
 import math
@@ -21,7 +21,7 @@ import math
 from sentence_transformers import SentenceTransformer, models
 
 from wrapper import *
-from config import *
+from config.config import *
 from utils import (
     get_base_model_using_model,
 )

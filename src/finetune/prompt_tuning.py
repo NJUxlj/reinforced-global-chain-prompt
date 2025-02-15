@@ -4,12 +4,12 @@ from torch.optim import Adam
 import numpy as np
 import os  
 import shutil  
-from config import Config
+from config.config import Config
 from dataclasses import dataclass
 from collections import Counter
 import time
 
-from load import *
+from data_utils.load import *
 from utils import *
 
 
@@ -19,7 +19,7 @@ from datasets import (
     load_dataset
 )
 
-from evaluation import ModelEvaluator
+from evaluation.evaluation import ModelEvaluator
 
 from transformers import (
     set_seed,

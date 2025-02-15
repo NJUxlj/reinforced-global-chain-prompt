@@ -23,13 +23,13 @@ from transformers import (
 
 
 
-from config import Config
-from config import NUM_CPU_PROCESSES
-from config import SENTENCE_TRANSFORMER_PATH
+from config.config import Config
+from config.config import NUM_CPU_PROCESSES
+from config.config import SENTENCE_TRANSFORMER_PATH
 from utils import setup_distributed
 
 
-from causal_modeling import RollbackDecoderWithHead
+from models.causal_modeling import RollbackDecoderWithHead
 
 from dataclasses import dataclass
 

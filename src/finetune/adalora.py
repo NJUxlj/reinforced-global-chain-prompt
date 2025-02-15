@@ -3,14 +3,14 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from config import Config
+from config.config import Config
 from dataclasses import dataclass
 
 import argparse
 import evaluate
 import os
 
-from load import (
+from data_utils.load import (
     load_dataset_from_huggingface,
     preprocess_race,
     preprocess_function_race

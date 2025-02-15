@@ -10,7 +10,7 @@ import os
 parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
 # 将父目录添加到sys.path  
 sys.path.insert(0, parent_directory) 
-from config import Config
+from config.config import Config
 
 class RoutedCrossAttention(nn.Module):  
     def __init__(  

@@ -5,10 +5,10 @@ from torch.optim import Adam
 import csv
 import evaluate
 import numpy as np
-from config import Config
+from config.config import Config
 
 from dataclasses import dataclass
-from load import *
+from data_utils.load import *
 from utils import *
 from typing import Tuple, List, Tuple, Optional, Union, Dict, Any
 
@@ -66,7 +66,7 @@ from sklearn.metrics import (
     classification_report  
 )
 
-from evaluation import ModelEvaluator
+from evaluation.evaluation import ModelEvaluator
 
 # we follow the setting of prompt-tuning (Lester et al., 2021)
 @dataclass  

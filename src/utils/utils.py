@@ -6,7 +6,7 @@ import random
 import argparse
 import numpy as np
 from itertools import product
-from config import Config
+from config.config import Config
 
 import datetime
 
@@ -46,7 +46,7 @@ from transformers import (
 
 from wrapper import *
 
-from config import Config
+from config.config import Config
 
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support

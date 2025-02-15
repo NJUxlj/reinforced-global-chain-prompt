@@ -26,9 +26,9 @@ from sklearn.cluster import KMeans
 from sentence_transformers import SentenceTransformer 
 from collections import defaultdict  
 
-from load import *
+from data_utils.load import *
 
-from config import Config
+from config.config import Config
 
 import openai
 from openai import OpenAI
