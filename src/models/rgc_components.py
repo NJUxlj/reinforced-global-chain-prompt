@@ -20,9 +20,9 @@ import math
 
 from sentence_transformers import SentenceTransformer, models
 
-from wrapper import *
+from src.utils.wrapper import *
 from config.config import *
-from utils import (
+from src.utils.utils import (
     get_base_model_using_model,
 )
 
@@ -31,6 +31,9 @@ from utils import (
 this file contains various model components, such as:
 
 prompt encoder, cross-attention, gated-cross-attention, sparse-attention ...
+
+
+This file defines all the model components that are required during the RGC-Tuning
 
 
 '''
